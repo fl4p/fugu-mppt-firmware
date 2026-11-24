@@ -33,6 +33,16 @@
 //     wx-shade-walk                   a shadow walks across the substrings, the global peak moves several times
 //     wx-shade-cloud    shaded substring under the cloud series (second peak comes and goes)
 //     wx-shade-learn    wx-shade2 shade for two sweeps (learns the substrings), clear at 1900 s, back at 2000..2300 s
+//     wx-shade-gen      SIM_SHADE=k,s,mode[,k2,s0,tr]: k substrings at s, k2 at (1 + s) / 2; mode a: shade comes over
+//                       120..120 + tr s (tr 300), l: lifts, r: ramps from s0, s: static, u: unshaded boot, steps
+//                       to s0 at 120 s and to s at 120 + tr s, v: as u with the k2 unshaded before 120 + tr s (SIM_P, default 300 W; T 1800 s); needs
+//                       SIM_CONF=tracker.conf:pv_substrings=6 for scans; SIM_VOCDRIFT=d[,t1,t0]: Voc x (1 + d) from t0 (0) to t1 (T)
+//     scan-static       no closed loop: scan probe placement against the exact plant's maxima over a shade grid,
+//                       one STATIC line per case and share variant (SIM_STATIC_KDEF=1: Vmpp/Voc not learned)
+//     every wx run with scans: one "== PROBE" line per scan (probes vs the plant's maxima and power at the scan start;
+//     outcome from the maximum the operating point is on 5 s after the scan: ok / HIT / MISS-place / MISS-noise /
+//     WRONG / PARTIAL / light), "== PROBES" totals; probe factors below / above
+//     the operating point: SIM_SCAN_LOW, SIM_SCAN_UP (PeakScan::probeLow/High; SIM_SCAN_UP=0.97: the rule before 11-24)
 //     wx-dawn, wx-dusk  irradiance through the start threshold; wx-dawn: no-MPP backoff doubles 30..300 s ("== NOMPP")
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: off 4 s per failure, the restart keeps the old zeros,
@@ -227,6 +237,8 @@ static std::vector<std::string> g_logSince; // log lines after the scenario even
 static double g_eventT = -1;
 static std::vector<double> g_slowDownT; // "Slow mode, duty" log times (slow-mode entries)
 static std::vector<std::pair<double, char>> g_scanT; // "scan:" log times; m = moved, l = light changed, - = stayed
+static char g_scanEnd = 0; // last "scan: P" line: m, l, -; 0 = consumed
+static float g_scanBestV = 0;
 // sweep verdict events: v verified, f flagged, F flagged + scan, p return-pass probe, r re-sweep scheduled, L learned,
 // 1 single peak learned, s scan
 static std::string g_verdict;
@@ -379,6 +391,12 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     if (strstr(msg, "learned from the sweep")) g_verdict += 'L';
     if (strstr(msg, "single peak learned")) g_verdict += '1';
     if (!strncmp(msg, "scan: P", 7)) g_verdict += 's';
+    if (!strncmp(msg, "scan: P", 7)) {
+        const char *b = strstr(msg, " at ");
+        b = b ? strstr(b + 4, " at ") : nullptr;
+        g_scanBestV = b ? (float) atof(b + 4) : 0;
+        g_scanEnd = strstr(msg, "moving") ? 'm' : strstr(msg, "light changed") ? 'l' : '-';
+    }
     if (!strncmp(msg, "scan:", 5))
         g_scanT.emplace_back(tNow(), strstr(msg, "moving") ? 'm' : strstr(msg, "light changed") ? 'l' : '-');
     char line[640];
@@ -947,6 +965,7 @@ struct Wx {
     size_t sweeps = 0, maxCals = 0; // maxCals: CALFAIL check, 0 = off
     float isc = 0, g[6] = {1, 1, 1, 1, 1, 1}, vocNow = 0;
     float half = 0, vocDrift = 0;           // half-substring shade, Voc drift over T (fraction)
+    double driftT = 0, driftT0 = 0;          // Voc drift from driftT0 to driftT (0: T)
     bool exact = false;                      // exact series-string plant
     float gm[6] = {1, 1, 1, 1, 1, 1};        // per-substring Isc mismatch
     float ramp = 0, wobA = 0, wobF = 0;      // irradiance x exp(ramp (t - 120 s)), x (1 + wobA sin(2 pi wobF t))
@@ -988,7 +1007,8 @@ struct Wx {
         }
         g_vconv.setPvString(n, g, n > 1 && w[1] > 0 ? w : nullptr, vd);
         if (vocDrift != 0) {
-            const float v = voc * (1 + vocDrift * (float) (t / T));
+            const double t1 = driftT > 0 ? driftT : T;
+            const float v = voc * (1 + vocDrift * (float) std::clamp((t - driftT0) / (t1 - driftT0), 0.0, 1.0));
             if (std::fabs(v - vocNow) > 1e-3f) g_vconv.setPv(isc, vocNow = v, k);
         }
         if (vocLog > 0 || !vocT.empty()) {
@@ -1245,6 +1265,24 @@ static int runWx(const std::string &name, Wx &wx) {
     Peak pk[6];
     float valley[6], key[7] = {-1, -1, -1, -1, -1, -1, -1};
     int nPk = 0, maxPk = 0;
+    // scan probes against the plant at the scan start (maxima and probe powers from one plant state); the outcome from
+    // where the operating point landed 5 s after the scan ended, on the plant then (PROBE lines)
+    struct ProbeRec {
+        Peak pk[6];
+        float valley[6], vc[6], rel[6], v0, bestV;
+        int n, nc, iG, iOp;
+        char end;
+        double tIdle;
+    } pr{};
+    bool prAct = false;
+    int prN[7] = {}; // ok, hit, miss (placement), miss (noise), wrong, partial, light
+    double prErrG = 0, prErrGMax = 0, prRelG = 0;
+    int prNG = 0;
+    auto basin = [](const ProbeRec &r, float v) {
+        int b = 0;
+        while (b + 1 < r.n && v > r.valley[b]) ++b;
+        return b;
+    };
     // tracker steady state: duty and Vin while tracking, slow-mode time, reversals, slow-mode entries
     double dN = 0, dS = 0, dS2 = 0, vS = 0, vS2 = 0, tSlow = 0, lossSlow = 0;
     float slowDvMax = 0; // largest |Vin - Vmpp| / Vmpp in slow mode
@@ -1378,6 +1416,51 @@ static int runWx(const std::string &name, Wx &wx) {
         const bool on = !converter.disabled();
         const bool sweeping = mppt.isSweeping() || (mppt.getState() == MpptControlMode::Sweep && !SCAN_ACTIVE());
         const bool isWrong = on && !sweeping && !SCAN_ACTIVE() && iG >= 0 && iOp != iG && pG > pk[iOp].p * 1.02f;
+#if SCAN_ACTIVE_DEFINED
+        {
+            const auto &s = mppt.scan;
+            const bool act = s.active() && !s.ret;
+            if (g_scanEnd && pr.n && !pr.end) pr.end = g_scanEnd, pr.bestV = g_scanBestV, pr.tIdle = -1;
+            g_scanEnd = 0;
+            if (pr.end && !s.active() && pr.tIdle < 0) pr.tIdle = tb;
+            // landed: 5 s after the scan went idle, or earlier when a sweep or the next scan starts
+            if (pr.end && (pr.end == 'l' || (pr.tIdle >= 0 && tb >= pr.tIdle + 5) || sweeping || (act && !prAct))) {
+                const float pOp = pr.pk[pr.iOp].p, g = pr.pk[pr.iG].p / pOp;
+                float relG = 0, errG = NAN;
+                char buf[400];
+                int o = snprintf(buf, sizeof buf, "== PROBE t=%.0f v0 %.1f op %.1fV/%.1fW G %.1fV/%.1fW x%.3f |", tb, pr.v0,
+                                 pr.pk[pr.iOp].v, pOp, pr.pk[pr.iG].v, pr.pk[pr.iG].p, g);
+                for (int i = 0; i < pr.nc; ++i) {
+                    const int b = basin(pr, pr.vc[i]);
+                    const float e = pr.vc[i] / pr.pk[b].v - 1;
+                    if (b == pr.iG && pr.rel[i] > relG) relG = pr.rel[i], errG = e;
+                    o += snprintf(buf + o, sizeof buf - o, " %.1fV@%.1f %+.1f%% x%.3f", pr.vc[i], pr.pk[b].v, 100 * e, pr.rel[i]);
+                }
+                // the plant now: start basin, landed basin, global
+                int b0 = 0;
+                while (b0 + 1 < nPk && pr.v0 > valley[b0]) ++b0;
+                const int bl = iOp;
+                const float gNow = iG < 0 ? 1 : pk[iG].p / pk[bl].p;
+                int c;
+                const char *cn[] = {"ok", "HIT", "MISS-place", "MISS-noise", "WRONG", "PARTIAL", "light"};
+                if (pr.end == 'l') c = 6;
+                else if (pr.end == 'm' && bl != b0) c = bl == iG ? 1 : pk[bl].p > pk[b0].p ? 5 : 4;
+                else c = gNow <= 1.03f ? 0 : relG > 1.03f ? 3 : 2;
+                ++prN[c];
+                if (pr.iOp != pr.iG && g > 1.03f && !std::isnan(errG))
+                    ++prNG, prErrG += std::fabs(errG), prErrGMax = std::max(prErrGMax, (double) std::fabs(errG)), prRelG += relG / g;
+                printf("%s | landed %.1fV, G now %.1fV x%.3f | %s%s\n", buf, vin, iG < 0 ? 0.f : pk[iG].v, gNow, cn[c],
+                       pr.iOp != pr.iG && std::isnan(errG) ? " (G not probed)" : "");
+                pr.n = 0, pr.end = 0;
+            }
+            if (act && !prAct && iG >= 0) {
+                std::copy_n(pk, 6, pr.pk), std::copy_n(valley, 6, pr.valley), std::copy_n(s.vc, 6, pr.vc);
+                pr.n = nPk, pr.nc = s.nc, pr.v0 = s.v0, pr.iG = iG, pr.iOp = basin(pr, s.v0), pr.end = 0;
+                for (int i = 0; i < pr.nc; ++i) pr.rel[i] = pr.vc[i] * g_vconv.pvCurrent(pr.vc[i]) / pr.pk[pr.iOp].p;
+            }
+            prAct = act;
+        }
+#endif
 
         if (tb >= nextTr) {
             printf("%9.2f  %.3f %.3f %.3f | %5.1f %6.1f | %5.1f %6.1f  %d(%d) | %-11s %4u %2u%s\n", tNow(), wx.g[0],
@@ -1471,6 +1554,10 @@ static int runWx(const std::string &name, Wx &wx) {
            " GMPP, %.1f J per scan; wrong-peak loss %.2f %%\n", name.c_str(), nScan, nMoved, nLight, tCat[SCAN],
            loss[SCAN] / 3600, loss[SCAN] * pc, nScan ? loss[SCAN] / (double) nScan : 0.0, loss[WRONG] * pc);
     for (auto &[t, c]: g_scanT) if (t >= wx.statsFrom && nScan <= 40) printf("==   scan at t=%.1f s %c\n", t, c);
+    printf("== PROBES %-18s ok %d hit %d miss-place %d miss-noise %d wrong %d partial %d light %d | probe in the global"
+           " basin (op off it, gain > 3 %%): %d, |dV| mean %.1f %% max %.1f %%, read / true gain %.3f\n", name.c_str(), prN[0],
+           prN[1], prN[2], prN[3], prN[4], prN[5], prN[6], prNG, prNG ? 100 * prErrG / prNG : 0.0, 100 * prErrGMax,
+           prNG ? prRelG / prNG : 0.0);
     if (mppt.scan.unsaved()) { // learned in this run: the save and the reload
         mppt.scanSave();
         ConfFile tc{"/littlefs/conf/tracker.conf"};
@@ -1603,7 +1690,7 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         if (const char *e = getenv("SIM_HALF")) wx.half = atof(e);
         if (const char *e = getenv("SIM_G")) // per-substring Isc mismatch factors
             sscanf(e, "%f,%f,%f,%f,%f,%f", wx.gm, wx.gm + 1, wx.gm + 2, wx.gm + 3, wx.gm + 4, wx.gm + 5);
-        if (const char *e = getenv("SIM_VOCDRIFT")) wx.vocDrift = atof(e);
+        if (const char *e = getenv("SIM_VOCDRIFT")) sscanf(e, "%f,%lf,%lf", &wx.vocDrift, &wx.driftT, &wx.driftT0);
     };
     if (sc == "wx-cloud" || sc == "wx-cloud-n1") { // -n1: single peak known (pv_substrings=1)
         wx.cloud = kCloud1120, wx.T = 900;
@@ -1622,6 +1709,24 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
         } else {
             // one module shaded 0.3 -> 0.72: global 34 V peak -> 68.8 V peak 50 % above it
             wx.sub[3] = wx.sub[4] = wx.sub[5] = {{120, 0.3f}, {420, 0.72f}}, wx.T = 2400;
+        }
+    } else if (sc == "wx-shade-gen") {
+        // SIM_SHADE=k,s,mode[,k2,s0,tr]: the last k substrings at s, k2 before them at (1 + s) / 2; mode a: shade ramps
+        // in over 120..120 + tr s (tr 300; boot sweep unshaded), l: lifts, r: ramps from s0 to s, s: static, u: boot sweep
+        // unshaded, steps to s0 at 120 s and to s at 120 + tr s, v: as u, the k2 unshaded until 120 + tr s. SIM_P (300 W)
+        fry6(getenv("SIM_P") ? atof(getenv("SIM_P")) : 300.f), wx.T = 1800;
+        int k = 2, k2 = 0;
+        float sh = 0.6f, s0 = 1, tr = 300;
+        char mode = 'a';
+        if (const char *e = getenv("SIM_SHADE")) sscanf(e, "%d,%f,%c,%d,%f,%f", &k, &sh, &mode, &k2, &s0, &tr);
+        if (mode == 'l') s0 = sh, sh = 1;
+        for (int i = 6 - k - k2; i < 6; ++i) {
+            const float f = i >= 6 - k ? sh : 0.5f * (1 + sh), f0 = i >= 6 - k ? s0 : 0.5f * (1 + s0);
+            wx.sub[i] = mode == 's' ? Track{{0, f}}
+                        : mode == 'u' || mode == 'v'
+                            ? Track{{120, 1}, {125, mode == 'v' && i < 6 - k ? 1 : f0}, {120 + tr, mode == 'v' && i < 6 - k ? 1 : f0},
+                                    {125 + tr, f}}
+                                      : Track{{120, f0}, {120 + tr, f}};
         }
     } else if (sc == "wx-shade-learn") {
         fry6(215), wx.T = 3400;
@@ -3263,9 +3368,128 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     return ok ? 0 : 1;
 }
 
+// scan-static: probe placement of PeakScan::update() against the exact plant's maxima, no closed loop. Grid: n = 4..6
+// substrings (string Voc 80 V, SIM_STATIC_N: one n), last k at s (k2 before them at (1 + s) / 2), module Vmpp/Voc kp,
+// Voc now vs at the sweep (heating); SIM_STATIC_VARS=a,b: only these variants; "land": the maximum moved to / the global;
+// every reachable maximum as the operating point; share variants (weight w on vs0, wn if m0 == n, whi if Vin/m0 >
+// vs0, probe factor lo). One STATIC line per case and variant: per target maximum the best probe in its basin
+// (dV, read / true power), the decision (move to basin / stay) against the truth.
+static int scanStatic() {
+    struct Var {
+        const char *nm;
+        float w, wn, whi, lo, hi = -1;
+        bool hiVs = false;
+        float up = -1; // m > m0 probes at up x m x share
+    };
+    const Var vars[] = {{"base", .5f, -1, -1, .97f}, {"A", .5f, 1, -1, .97f}, {"A2", .5f, -1, 1, .97f},
+                        {"B94", .5f, -1, -1, .94f}, {"B92", .5f, -1, -1, .92f}, {"C75", .75f, -1, -1, .97f},
+                        {"A+B94", .5f, 1, -1, .94f}, {"r0", 0, -1, -1, .97f}, {"vs", 1, -1, -1, .97f},
+                        {"D1", .5f, -1, -1, .97f, 1, true}, {"D2", .5f, -1, -1, .97f, 1, false},
+                        {"D3", .5f, -1, -1, .97f, 1.03f, true}, {"D2+A", .5f, 1, -1, .97f, 1, false},
+                        {"D4", .5f, -1, -1, .97f, 1.03f, false}, {"D5", .5f, -1, -1, .97f, 1.06f, false},
+                        {"D6", .5f, -1, -1, .97f, -1, false, 1.03f}, {"D7", .5f, -1, -1, .97f, -1, false, 1.0f},
+                        {"u0.980", .5f, -1, -1, .97f, -1, false, 0.98f}, {"u0.990", .5f, -1, -1, .97f, -1, false, 0.99f},
+                        {"u1.005", .5f, -1, -1, .97f, -1, false, 1.005f}, {"u1.010", .5f, -1, -1, .97f, -1, false, 1.01f}, {"u1.015", .5f, -1, -1, .97f, -1, false, 1.015f},
+                        {"u1.020", .5f, -1, -1, .97f, -1, false, 1.02f}, {"u1.040", .5f, -1, -1, .97f, -1, false, 1.04f},
+                        {"u1.050", .5f, -1, -1, .97f, -1, false, 1.05f}};
+    // SIM_STATIC_VARS=base,D6,...: only these variants (all by default)
+    const char *only = getenv("SIM_STATIC_VARS");
+    auto wanted = [&](const char *nm) {
+        if (!only) return true;
+        const size_t l = strlen(nm);
+        for (const char *q = only; (q = strstr(q, nm)); q += l)
+            if ((q == only || q[-1] == ',') && (q[l] == ',' || !q[l])) return true;
+        return false;
+    };
+    const float vocS = 80, vMin = 1.05f * 1.18f * 26.6f, margin = 0.03f;
+    const bool learned = !getenv("SIM_STATIC_KDEF"); // kVmp from an unshaded sweep, else the 0.82 default
+    // n substrings in a string of Voc 80 V; SIM_STATIC_N=6: fry6 only
+    const int nOnly = getenv("SIM_STATIC_N") ? atoi(getenv("SIM_STATIC_N")) : 0;
+    for (int n = 4; n <= 6; ++n)
+    for (float kp: {0.80f, 0.86f})
+        for (float drift: {0.02f, 0.f, -0.04f, -0.08f, -0.12f})
+            for (int k = 1; k <= std::min(4, n - 1); ++k)
+                for (int k2 = 0; k2 <= (k <= 3 ? 1 : 0); ++k2)
+                    for (float sh = 0.3f; sh < 0.96f; sh += 0.05f) {
+                        float g[6] = {1, 1, 1, 1, 1, 1};
+                        if (nOnly && n != nOnly) continue;
+                        for (int i = 0; i < n; ++i) g[i] = i >= n - k ? sh : i >= n - k - k2 ? 0.5f * (1 + sh) : 1;
+                        // the sweep: unshaded, cold (kVmp learned there)
+                        const float ones[6] = {1, 1, 1, 1, 1, 1};
+                        g_vconv.setPvExact(true);
+                        g_vconv.setPv(6.f, vocS, kp), g_vconv.setPvString(n, ones, nullptr, 0.45f);
+                        Peak pk[6];
+                        float valley[6];
+                        int np = pvPeaks(pk, valley);
+                        float kVmp = 0.82f;
+                        if (learned && np >= 1 && pk[np - 1].v / vocS > 0.74f && pk[np - 1].v / vocS < 0.86f) kVmp = pk[np - 1].v / vocS;
+                        g_vconv.setPv(6.f, vocS * (1 + drift), kp), g_vconv.setPvString(n, g, nullptr, 0.45f);
+                        np = pvPeaks(pk, valley);
+                        auto basin = [&](float v) {
+                            int b = 0;
+                            while (b + 1 < np && v > valley[b]) ++b;
+                            return b;
+                        };
+                        auto P = [](float v) { return v * g_vconv.pvCurrent(v); };
+                        const float iEnv = g_vconv.pvCurrent(vMin);
+                        int iG = -1;
+                        for (int i = 0; i < np; ++i) if (pk[i].v >= vMin && (iG < 0 || pk[i].p > pk[iG].p)) iG = i;
+                        for (int op = 0; op < np; ++op) {
+                            if (pk[op].v < vMin) continue;
+                            const float vin = pk[op].v, pw = pk[op].p, vs0 = kVmp * vocS / n;
+                            const int m0 = std::clamp((int) std::lround(vin / vs0), 1, n);
+                            for (auto &V: vars) {
+                                if (!wanted(V.nm)) continue;
+                                const float x = m0 == n && V.wn >= 0 ? V.wn : vin / m0 > vs0 && V.whi >= 0 ? V.whi : V.w;
+                                const float shr = (1 - x) * vin / (float) m0 + x * vs0;
+                                float best = 0, bestV = 0;
+                                char buf[300];
+                                int o = 0;
+                                float dvB[6], rdB[6];
+                                for (int i = 0; i < 6; ++i) dvB[i] = NAN, rdB[i] = 0;
+                                for (int m = 1; m <= n; ++m) {
+                                    const float v = m == n && V.hi > 0 ? V.hi * (float) n * (V.hiVs ? vs0 : shr)
+                                                    : m > m0 && V.up > 0 ? V.up * (float) m * shr
+                                                                         : V.lo * (float) m * shr;
+                                    if (m == m0 || v < vMin || v > 0.95f * vocS ||
+                                        (m < m0 && (float) m * shr * iEnv < pw * (1 + margin)))
+                                        continue;
+                                    const int b = basin(v);
+                                    const float rd = P(v) / pk[b].p;
+                                    if (b != op && rd > rdB[b]) rdB[b] = rd, dvB[b] = v / pk[b].v - 1;
+                                    if (P(v) > best) best = P(v), bestV = v;
+                                }
+                                const float g0 = best / pw;
+                                const int to = g0 > 1 + margin ? basin(bestV) : op;
+                                const float gT = pk[iG].p / pw;
+                                const char *cls = to == op ? (gT > 1 + margin ? (rdB[iG] > 0 ? "MISS" : "MISS-unprobed") : "ok")
+                                                           : to == iG ? "HIT" : pk[to].p > pw ? "PARTIAL" : "WRONG";
+                                for (int b = 0; b < np; ++b)
+                                    if (b != op && pk[b].v >= vMin)
+                                        o += snprintf(buf + o, sizeof buf - o, " %.1fV/%.0fW:%s", pk[b].v, pk[b].p,
+                                                      std::isnan(dvB[b]) ? "none" : "");
+                                (void) buf;
+                                printf("STATIC n %d kp %.2f drift %+.2f k %d k2 %d s %.2f op %d/%d %.1fV m0 %d gT %.3f var %-6s"
+                                       " sh %.2f | G dV %+.1f%% read %.3f | %s land %.1fV x%.4f", n, kp, drift, k, k2, sh, op,
+                                       np, vin, m0, gT, V.nm, shr, op == iG ? 0.f : 100 * dvB[iG], op == iG ? 1.f : rdB[iG],
+                                       cls, pk[to].v, pk[to].p / pk[iG].p);
+                                for (int b = 0; b < np; ++b)
+                                    if (b != op && pk[b].v >= vMin)
+                                        printf(" [%.1fV %.0fW %s%+.1f%% x%.3f]", pk[b].v, pk[b].p, b == iG ? "G " : "",
+                                               100 * dvB[b], rdB[b]);
+                                printf("\n");
+                            }
+                        }
+                    }
+    return 0;
+}
+
 static int simMain(int argc, char **argv) {
     std::string sc = argc > 1 ? argv[1] : "sanity";
     g_simLogHook = logHook;
+    if (sc == "scan-static") return scanStatic();
+    if (const char *e = getenv("SIM_SCAN_LOW")) PeakScan::probeLow = (float) atof(e);
+    if (const char *e = getenv("SIM_SCAN_UP")) PeakScan::probeHigh = (float) atof(e);
     if (const char *f = getenv("SIM_FINE")) sscanf(f, "%lf,%lf", &g_fineT0, &g_fineT1);
     if (const char *f = getenv("SIM_TTRACE")) sscanf(f, "%lf,%lf", &g_trkT0, &g_trkT1);
     // suffix -p0: limits.conf reverse_current_paranoia=0 (Vout-OV threshold 1.5x instead of 1.03x Vbat_max)
