@@ -497,18 +497,23 @@ void MpptController::updateManual() {
 
     const int16_t rampStep = std::max(1, (int) std::lround((float) converter.pwmMaxDriver() / 512.f));
 
-    const float mcZ = mcBfZero.load(std::memory_order_relaxed);
-    if (inBackoff() || charger.wireGuard.tripped() || charger.params.awaitingDetect()
-        || (converter.disabled() && tempStartBlock())) {
-        if (!converter.disabled()) converter.disable();
-        if (mcZ == mcZ && bflow.state()) bflow.enable(false);
-        return;
-    }
-    if (mcZ == mcZ) {
+    const bool hold = inBackoff() || charger.wireGuard.tripped() || charger.params.awaitingDetect() ||
+                      (converter.disabled() && tempStartBlock());
+    if (hold && !converter.disabled()) converter.disable();
+    const float mcZ = mcBfZero.load(std::memory_order_acquire);
+    if (mcZ == mcZ && !converter.boost()) { // boost: measure-coil closes BF itself (battery feeds the coil)
         if (converter.disabled()) {
             if (bflow.state()) bflow.enable(false);
-        } else if (!bflow.state() && sensors.Iout->ewm.avg.get() - mcZ > 0.1f) bflow.enable(true);
+        } else if (!bflow.state()) {
+            // lower bound of protect()'s reverse-current filter: fails whenever that opened BF
+            const auto &s = *sensorPhysicalI;
+            if (fminf(s.ewm.avg.get(), std::min(s.last, s.previous)) - mcZ > 0.1f) {
+                bflow.enable(true);
+                if (bflow.state() && mcSyncRect.load(std::memory_order_relaxed)) converter.enableSyncRect(true, true);
+            }
+        }
     }
+    if (hold) return;
 
     if (bfTest.mode.load(std::memory_order_relaxed)) bfTestRt();
     const uint16_t target = manualTarget.load(std::memory_order_relaxed);
@@ -516,7 +521,7 @@ void MpptController::updateManual() {
         if (!converter.disabled()) {
             if (converter.getCtrlOnPwmCnt() <= converter.pwmCtrlMin) {
                 converter.disable();
-                if (mcZ == mcZ) bflow.enable(false);
+                if (mcZ == mcZ && !converter.boost()) bflow.enable(false);
             } else
                 converter.pwmPerturb(-rampStep);
         }

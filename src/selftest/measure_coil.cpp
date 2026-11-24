@@ -95,6 +95,12 @@ static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
 }
 
+// converter off, or a protection shutdown cancelled the BF request (the sweep would go on with BF open)
+static bool stopped() {
+    const float z = mppt.mcBfZero.load();
+    return converter.disabled() || z != z;
+}
+
 // coil current with the converter off: ramp down, settle, median of 5 EWM reads (NAN: still on)
 static float readZero(uint32_t dwellMs) {
     mppt.setManualTarget(0);
@@ -205,8 +211,9 @@ static float sweepL0(const MeasArgs &a) {
         }
     }
     // buck: BF closed once forward current flows (as MPPT closes it), by the RT loop each sample: open, its body diode
-    // carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L
-    if (!boost) mppt.mcBfZero.store(z0);
+    // carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L. Boost: BF stays
+    // closed from above; z0 only arms the shutdown cancel
+    mppt.mcBfZero.store(z0);
     const char *iName = boost ? "Iin" : "Iout";
     UART_LOG("      H      D    Vin   Vout   %4s mode    L_uH", iName);
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
@@ -222,7 +229,7 @@ static float sweepL0(const MeasArgs &a) {
         if (boost && (float) H / pwmMax > 0.9f * (1 - vin / vout)) { UART_LOG("  near CCM; stopping"); break; }
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
-        if (s_tripped || converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
+        if (s_tripped || stopped()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
         float D = (float) r.H / converter.periodCounts(), bi = r.vin, bo = r.vout; // period basis, as dcmCurrent()
         if (boost) coilfit::asBuck(bi, bo);
         float L = (r.iout <= 0.02f || bi <= bo || bo <= 0) ? NAN : (bi - bo) * bi * D * D / (2.0f * bo * fsw * r.iout);
@@ -290,12 +297,15 @@ static void sweepLs(const MeasArgs &a) {
     if (vin0 <= vout0 + 1.0f) { UART_LOG("measure-coil: need Vin>Vout+1 (Vin=%.2f Vout=%.2f)", vin0, vout0); return; }
     int hs = a.arg1 > 0 ? a.arg1 : max(2, (int) lroundf(0.25f * (vout0 / vin0) * pwmMax));
 
-    converter.enableSyncRect(true, true);        // LS sweep needs sync rect on regardless of paranoia
-    mppt.bflow.enable(true);
+    const float z0 = readZero(max<uint32_t>(a.dwellMs, 2000));
+    if (z0 != z0) { UART_LOG("measure-coil: converter did not stop for the Iout zero"); return; }
+    // BF and sync rect (needed regardless of paranoia) closed by the RT loop on forward current
+    mppt.mcSyncRect.store(true, std::memory_order_relaxed);
+    mppt.mcBfZero.store(z0);
 
     Reading r{};
     settleAndRead((uint16_t) hs, max<uint32_t>(a.dwellMs, 4000), r);
-    if (converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); return; }
+    if (stopped()) { UART_LOG("  converter disabled (protection?); aborting"); return; }
     float vi = r.vin, vo = r.vout;
     if (vi <= vo || !r.dcm) {
         UART_LOG("measure-coil: need DCM with Vin>Vout (got %s Vin=%.2f Vout=%.2f); lower hs",
@@ -319,7 +329,7 @@ static void sweepLs(const MeasArgs &a) {
     for (int ls = ls_lo; ls <= ls_hi && n < MEAS_MAX_PTS; ls += step) {
         converter.setManualRect(ls);
         vTaskDelay(pdMS_TO_TICKS(a.dwellMs));
-        if (converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
+        if (stopped()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
         float ii[5], vv[5], oo[5];
         for (int k = 0; k < 5; ++k) {
             ii[k] = sensors.Iout->ewm.avg.get();
@@ -385,6 +395,8 @@ static void measureCoilTask(void *arg) {
         UART_LOG("measure-coil: RT transition timed out");
     } else if (!sensors.Vin || !sensors.Vout || !coilI()) {
         UART_LOG("measure-coil: missing Vin/Vout/I sensor");
+    } else if (!converter.boost() && mppt.sensorPhysicalI != sensors.Iout) { // buck: the RT's BF request reads it
+        UART_LOG("measure-coil: needs a physical Iout sensor");
     } else {
         if (a.ls) sweepLs(a); else l0 = sweepL0(a);
     }
@@ -395,6 +407,7 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     mppt.mcBfZero.store(NAN);
+    mppt.mcSyncRect.store(false, std::memory_order_relaxed);
     const bool off = converter.disabled();
     if (boost) mppt.setExplicitOvLimit(ov0);
     s_hvTrip = 0;

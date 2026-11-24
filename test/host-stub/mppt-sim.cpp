@@ -210,6 +210,7 @@
 #include "sim_alloc.h"
 #include "selftest/coil_fit.h"
 #include "selftest/bflow_test.h"
+#include "selftest/measure_coil.h"
 #include "plant_boards.h"
 #include "lfp_pack.h"
 
@@ -389,6 +390,8 @@ static void ioMinTick() {
         g_ioMin = i, g_ioMinD = converter.getCtrlOnPwmCnt(), g_ioMinLs = converter.getRectOnPwmCnt();
 }
 
+static void mcLog(const char *msg);
+static void mcTick();
 static void logHook(char lvl, const char *tag, const char *msg) {
     if (strstr(msg, "hs_clamp ignored")) g_clampIgnoredLog = true;
     if (strstr(msg, "-> pwmRectMin=")) ++g_lsMinN;
@@ -407,6 +410,7 @@ static void logHook(char lvl, const char *tag, const char *msg) {
     if (!strncmp(msg, "Calibration failed", 18)) g_calFailT.push_back(tNow());
     if (!strcmp(msg, "Start calibration")) ++g_calStarts;
     if (strstr(msg, "disable backflow")) ++g_bfLowI;
+    if (!strncmp(msg, "measure-coil", 12) || g_tickHook == mcTick) mcLog(msg);
     if (!strncmp(msg, "Slow mode, duty", 15)) g_slowDownT.push_back(tNow());
     if (!strncmp(msg, "sweep verified", 14)) g_verdict += 'v';
     if (!strncmp(msg, "sweep flagged", 13)) g_verdict += strstr(msg, "scan now") ? 'F' : 'f';
@@ -2094,8 +2098,8 @@ static int runRectCal(const std::string &name, const std::string &sc) {
     return 0;
 }
 
-// `measure-coil l0` against the plant: mirrors measureCoilTask()/sweepL0() of src/selftest/measure_coil.cpp
-// (the console task's waits become simulated time), estimator shared through selftest/coil_fit.h.
+// ring-coil: `measure-coil l0` mirrored from measureCoilTask()/sweepL0() of src/selftest/measure_coil.cpp, to compare
+// the old median with the ring fit (mc-flat* run the real task); estimator shared through selftest/coil_fit.h.
 static bool simPsuWait(uint32_t ticket) {
     for (int i = 0; i < 1000 && !mppt.isPsuCommandDone(ticket); ++i) run(0.001, 0);
     return mppt.isPsuCommandDone(ticket);
@@ -2144,9 +2148,6 @@ static float simReadZero(uint32_t dwellMs) {
     for (float &x: c) x = sensors.Iout->ewm.avg.get(), run(0.05, 0);
     return med5(c);
 }
-
-static uint32_t g_mcBfOffTicks; // RT iterations that ended with the BF closed and the converter off
-static void mcBfTick() { g_mcBfOffTicks += converter.disabled() && mppt.bflow.state(); }
 
 static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     const double t0 = tNow();
@@ -2210,13 +2211,11 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
             if (io[i] >= floor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
         res = mcFit(d, vi, vo, io, nk, fsw, zsig);
     } else printf("  measure: no band or no zero\n");
-    // restore as the task does: ramp down, wait for the disable, back to MPPT
+    // end as the task does: ramp down, wait for the disable, stay in manual PWM at duty 0
     mppt.setManualTarget(0);
     for (double dl = tNow() + 10.0; !converter.disabled() && tNow() < dl;) run(0.01, 0);
     mppt.mcBfZero.store(NAN);
-    const bool off = converter.disabled();
-    if (off && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
-    if (!simPsuWait(off ? mppt.requestPsuOff() : mppt.requestPsuSweep())) printf("  measure: MPPT restore timed out\n");
+    if (converter.disabled() && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
     secs = tNow() - t0;
     return res;
 }
@@ -2418,20 +2417,133 @@ static int runMcBoost(const std::string &name) {
     return f != 0;
 }
 
-// mc-flat: `measure-coil l0` takes over from MPPT at ~150 W in CCM with paranoia on (bf-daily-flat's plant):
-//   no protection trip at the take-over (a duty ramp-down at full power trips highD-bflowOpen, whose backoff then
-//   holds the converter off under the sweep), the sweep finds its DCM points with the BF closed (no highD-bflowOpen
-//   near 2 A, L within 3 %), the BF never closed with the converter off. SIM_MC_IOFS=<A> (-iofs-p/-n: +-0.5) adds an Iout
-//   sensor offset at the take-over. SIM_MC_RAMP=1 enters with the old ramp-down, SIM_MC_BFOPEN=1 sweeps with the BF open,
-//   SIM_MC_OLDBF=1 closes it from the console task.
-// mc-flat-ramp (SIM_MC_RAMP=1): before pwmPerturb() counted the net decrease over the filtered current's lag, that ramp
-//   kept the CCM rect window below D = M, the coil current reversed and highD-bflowOpen tripped (field flat 2026-11-24).
+// The real measure-coil task (src/selftest/measure_coil.cpp) runs inline; its vTaskDelay() waits run the simulation.
+static void simDelay(uint32_t ms) {
+    static bool in;
+    if (in) return; // a wait inside the RT/LF path
+    in = true, run(ms * 1e-3, 0), in = false;
+}
+
+static struct {
+    int inject; // 1 shutdown when the request is published, 2 shutdown mid-ramp, 3 plain disable + duty 0 mid-sweep,
+                // 4 the reverse-current tick (fast samples reversed, EWM still forward), 5 shutdown, then the request
+                // published again and the BF closed (a core-0 close racing the shutdown)
+    bool injected, reqKept, revBad;
+    uint32_t offTicks, backoffTicks, closedTicks, srTicks, bfLowI0;
+    uint16_t lastCtrl;
+    double tPub;
+    float L = NAN;
+    int pts = -1;
+    bool disturbed, peakLs, done, refused;
+    float ipk, ipkPl; // largest DCM row Ipk (L-free), the plant's
+} g_mc;
+
+static void mcLog(const char *msg) {
+    unsigned rH; // a DCM row: H D Vin Vout Iout mode
+    float rD, rVi, rVo, rI;
+    char rM[4];
+    if (sscanf(msg, " %u %f %f %f %f %3s", &rH, &rD, &rVi, &rVo, &rI, rM) == 6 && !strcmp(rM, "DCM"))
+        g_mc.ipk = std::max(g_mc.ipk, coilfit::ipkDcm(rD, rVi, rVo, rI));
+    if (!strncmp(msg, "measure-coil: L = ", 18)) {
+        g_mc.L = (float) atof(msg + 18) * 1e-6f;
+        g_mcSt = !strstr(msg, "on-time corrected");
+        if (const char *u = strstr(msg, "uncorrected ")) g_mcRes0.L = (float) atof(u + 12) * 1e-6f;
+        g_mcResT.L = g_mc.L;
+        if (const char *p = strstr(msg, " DCM pts")) {
+            while (p > msg && p[-1] != ' ') --p;
+            g_mc.pts = atoi(p);
+        }
+    }
+    float dl, se, sy;
+    if (sscanf(msg, "measure-coil: on-time offset %f ns +-%f noise +-%f syst", &dl, &se, &sy) == 3)
+        g_mcResT.dl = dl * 1e-9f, g_mcResT.dlse = se * 1e-9f, g_mcResT.dlsys = sy * 1e-9f;
+    if (strstr(msg, "DISTURBED")) g_mc.disturbed = true;
+    if (!strncmp(msg, "measure-coil: peak LS", 21)) g_mc.peakLs = true;
+    if (!strncmp(msg, "measure-coil: done", 18)) g_mc.done = true;
+    if (strstr(msg, "needs a physical Iout")) g_mc.refused = true;
+}
+
+static void mcTick() {
+    ioMinTick();
+    const bool bf = mppt.bflow.state(), off = converter.disabled();
+    g_mc.offTicks += off && bf, g_mc.backoffTicks += mppt.inBackoff() && bf, g_mc.closedTicks += bf && !off;
+    g_mc.srTicks += bf && !off && converter.syncRectEnabled_();
+    if (!off && converter.inDCM())
+        g_mc.ipkPl = std::max(g_mc.ipkPl, (float) ((g_vconv.getVin() - g_vconv.getVout()) * converter.getCtrlOnPwmCnt() /
+                                              converter.periodCounts() / (converter.realizedFreqHz() * g_vconv.getL())));
+    const uint16_t ctrl = converter.getCtrlOnPwmCnt();
+    const bool ramping = ctrl != g_mc.lastCtrl;
+    g_mc.lastCtrl = ctrl;
+    const float z = mppt.mcBfZero.load();
+    if (z != z || g_mc.injected) return;
+    if (g_mc.tPub < 0) g_mc.tPub = tNow();
+    const bool mid = bf && !off && tNow() - g_mc.tPub > 10;
+    switch (g_mc.inject) {
+        case 1:
+        case 2:
+            if (g_mc.inject == 2 && !(mid && ramping)) return;
+            printf("== inject: shutdown at t=%.3f (D %u, BF %d)\n", tNow(), ctrl, (int) bf);
+            mppt.shutdownDcdc("inject", 5);
+            g_mc.reqKept = mppt.mcBfZero.load() == mppt.mcBfZero.load();
+            break;
+        case 3:
+            if (!mid) return;
+            printf("== inject: disable + duty 0 at t=%.3f (D %u)\n", tNow(), ctrl);
+            converter.disable();
+            mppt.setManualTarget(0);
+            break;
+        case 4: {
+            if (!mid) return;
+            auto &i = *const_cast<Sensor *>(mppt.sensorPhysicalI);
+            i.ewm.avg.y[0] = i.ewm.avg.y[1] = z + .4f;
+            i.last = i.previous = z - .2f;
+            const bool ok = mppt.protect(true), bfP = mppt.bflow.state();
+            if (ok) mppt.updateManual();
+            printf("== inject: reverse tick at t=%.3f: protect %d, BF after protect %d, after updateManual %d\n", tNow(),
+                   (int) ok, (int) bfP, (int) mppt.bflow.state());
+            g_mc.revBad = mppt.bflow.state();
+            break;
+        }
+        case 5:
+            if (!mid) return;
+            printf("== inject: shutdown, late request, stray BF close at t=%.3f (D %u)\n", tNow(), ctrl);
+            mppt.shutdownDcdc("inject", 5);
+            mppt.mcBfZero.store(z);
+            mppt.bflow.enable(true);
+            break;
+        default:
+            return;
+    }
+    g_mc.injected = true;
+}
+
+// mc-flat*: the real `measure-coil` task takes over from MPPT at ~150 W in CCM with paranoia on (bf-daily-flat's
+//   plant). All: the BF never closed with the converter off or in a backoff, the request cleared at the end, which
+//   leaves manual PWM at duty 0 with the converter off; `mppt` resumes tracking.
+//   mc-flat, -iofs-p/-n (+-0.5 A Iout offset at the take-over, or SIM_MC_IOFS=<A>): no protection trip, L within 3 %,
+//     the reverse-current guard does not toggle the BF.
+//   -trip-pub / -trip-ramp: a shutdown when the request is published / mid-ramp cancels it and ends the sweep.
+//   -off: a disable (not a shutdown) mid-sweep with the duty target at 0: the RT opens the BF.
+//   -trip-stray: a shutdown followed by a late request and a BF close from outside: the RT opens it in the backoff.
+//   -revtick: a tick whose fast samples reverse while the EWM still shows forward current: protect() opens the BF and
+//     updateManual() must not close it again.
+//   -ls, -ls-trip-pub: `measure-coil ls`; the RT closes BF and sync rect.
+//   -virt: Iout computed from Iin: refused before any request.
+//   -ramp (SIM_MC_RAMP=1): entered from a `dc 0` ramp-down. Before pwmPerturb() counted the net decrease over the
+//     filtered current's lag, that ramp kept the CCM rect window below D = M, the coil current reversed and
+//     highD-bflowOpen tripped (field flat 2026-11-24).
+//   All: no reverse plant output current under an LS window until the converter first turns off.
 static int runMcFlat(const std::string &sc) {
     int f = 0;
     auto chk = [&](bool c, const char *w) {
         printf("== %s %s: %s\n", sc.c_str(), c ? "ok" : "FAIL", w);
         f += !c;
     };
+    const bool ls = sc.rfind("mc-flat-ls", 0) == 0;
+    g_mc = {};
+    g_mc.tPub = -1;
+    g_mc.inject = sc == "mc-flat-trip-pub" || sc == "mc-flat-ls-trip-pub" ? 1 : sc == "mc-flat-trip-ramp" ? 2
+                  : sc == "mc-flat-off" ? 3 : sc == "mc-flat-revtick" ? 4 : sc == "mc-flat-trip-stray" ? 5 : 0;
     settle(30);
     for (double dl = tNow() + 120; tNow() < dl && !(g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin()) > 140.f);)
         run(0.5, 0);
@@ -2448,34 +2560,64 @@ static int runMcFlat(const std::string &sc) {
         printf("== %s: Iout sensor offset %+.2f A\n", sc.c_str(), g_iOfs);
     }
     const size_t trips0 = g_trips.size();
-    const double tEnter = tNow();
-    double secs = 0;
-    g_ioMin = g_ioMin0 = 0, g_ioTrack = true, g_mcBfOffTicks = 0, g_tickHook = [] { ioMinTick(), mcBfTick(); };
     const uint32_t bfLowI0 = g_bfLowI;
-    const auto r = simMeasureL0(48, 1000, secs);
-    g_tickHook = nullptr;
+    const double tEnter = tNow();
+    g_ioMin = g_ioMin0 = 0, g_ioTrack = true;
+    if (getenv("SIM_MC_RAMP")) { // the console's entry: `dc 0` ramps down, then measure-coil starts from there
+        g_tickHook = ioMinTick;
+        if (!simPsuWait(mppt.requestPsuManual(0, -1))) printf("  `dc 0` timed out\n");
+        for (const double dl = tNow() + 20; tNow() < dl && !converter.disabled();) run(0.01, 0);
+        printf("== %s: `dc 0` ramp-down %s after %.2f s\n", sc.c_str(), converter.disabled() ? "off" : "still on",
+               tNow() - tEnter);
+    }
+    g_tickHook = mcTick, g_simDelayHook = simDelay, g_simRunTasks = true;
+    const bool started = measureCoilStart(ls, false, 0, 0);
+    g_tickHook = nullptr, g_simDelayHook = nullptr, g_simRunTasks = false;
     int entryTrips = 0;
     for (size_t i = trips0; i < g_trips.size(); ++i) entryTrips += g_trips[i].t < tEnter + 2;
     for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
-    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s, fsw %.0f Hz, Ipk up to %.2f A, %u RT ticks with the BF "
-           "closed and the converter off, %u low-current BF openings\n", sc.c_str(), r.L * 1e6f, g_vconv.getL() * 1e6f,
-           r.n, secs, converter.realizedFreqHz(), g_mcIpk, g_mcBfOffTicks, g_bfLowI - bfLowI0);
+    printf("== %s: L %.2f uH vs plant %.2f uH, %d DCM pts, %.0f s; RT ticks with the BF closed: converter on %u (sync "
+           "rect %u), off %u, in backoff %u; %u low-current BF openings; fsw %.0f Hz\n", sc.c_str(), g_mc.L * 1e6f,
+           g_vconv.getL() * 1e6f, g_mc.pts, tNow() - tEnter, g_mc.closedTicks, g_mc.srTicks, g_mc.offTicks,
+           g_mc.backoffTicks, g_bfLowI - bfLowI0, converter.realizedFreqHz());
+    chk(started && g_mc.done, "the task ran to its end");
     printf("== %s: until the first converter off: min plant Iout %.3f A with an LS window (HS %u, LS %u), %.3f A any\n",
            sc.c_str(), g_ioMin, g_ioMinD, g_ioMinLs, g_ioMin0);
     chk(!entryTrips, "no protection trip at the take-over");
     chk(g_ioMin > -0.05f, "no reverse output current under an LS window at the take-over");
-    chk(g_trips.size() == trips0, "no protection trip during the sweep");
-    chk(!g_mcBfOffTicks, "BF never closed with the converter off");
-    chk(g_bfLowI - bfLowI0 <= 4, "BF does not toggle (reverse-current guard against the closure)");
-    chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
-    chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
-    mcTonCheck(sc, g_vconv.getL(), chk);
-    if (sc == "mc-flat-f20") {
-        printf("== %s: plant Ipk up to %.2f A (rows %.2f A), limit %.1f A\n", sc.c_str(), g_mcIpkPl, g_mcIpk, mppt.limits.Iout_max);
-        chk(g_mcIpkPl <= mppt.limits.Iout_max && g_mcIpk <= mppt.limits.Iout_max, "peak coil current within the limit");
+    chk(!g_mc.offTicks, "BF never closed with the converter off");
+    chk(!g_mc.backoffTicks, "BF never closed in a backoff");
+    chk(mppt.mcBfZero.load() != mppt.mcBfZero.load(), "request cleared at the end");
+    chk(g_app.manualPwm() && converter.disabled() && !mppt.bflow.state() && mppt.manualTarget.load() == 0,
+        "left in manual PWM at duty 0, converter off, BF open");
+    if (g_mc.inject) {
+        chk(g_mc.injected, "fault injected");
+        chk(g_trips.size() - trips0 == (g_mc.inject <= 2 || g_mc.inject == 5), "the sweep stopped: no protection trip but the injected one");
     }
+    if (g_mc.inject == 1 || g_mc.inject == 2) chk(!g_mc.reqKept, "the shutdown cancelled the request");
+    if (g_mc.inject == 4) chk(!g_mc.revBad, "BF stays open after the reverse-current tick");
+    if (sc == "mc-flat-virt") chk(g_mc.refused && g_mc.tPub < 0 && !g_mc.closedTicks, "refused without a physical Iout");
+    else if (!g_mc.inject) {
+        chk(g_trips.size() == trips0, "no protection trip during the sweep");
+        chk(g_bfLowI - bfLowI0 <= 4, "BF does not toggle (reverse-current guard against the closure)");
+        chk(g_mc.closedTicks > 0, "the RT closed the BF");
+        if (ls) {
+            chk(g_mc.srTicks > 0, "the RT enabled sync rect with the BF closed");
+            chk(g_mc.peakLs, "LS sweep found its peak");
+        } else {
+            chk(!g_mc.disturbed && fabsf(g_mc.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
+            chk(g_mc.pts >= 3, "the sweep found its DCM points");
+            mcTonCheck(sc, g_vconv.getL(), chk);
+            if (sc == "mc-flat-f20") {
+                printf("== %s: plant Ipk up to %.2f A (rows %.2f A), limit %.1f A\n", sc.c_str(), g_mc.ipkPl, g_mc.ipk,
+                       mppt.limits.Iout_max);
+                chk(g_mc.ipkPl <= mppt.limits.Iout_max && g_mc.ipk <= mppt.limits.Iout_max, "peak coil current within the limit");
+            }
+        }
+    }
+    if (!simPsuWait(mppt.requestPsuOff())) printf("  `mppt` timed out\n");
     run(40, 5.0);
-    chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
+    chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again after `mppt`");
     printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
     return f != 0;
 }
@@ -2650,6 +2792,8 @@ static int runRingCoil(const std::string &name, bool weak) {
     for (int m = 0; m < 2; ++m) {
         double secs = 0;
         const auto r = simMeasureL0(m ? 48 : 10, m ? 1000 : 3000, secs);
+        if (!simPsuWait(converter.disabled() ? mppt.requestPsuOff() : mppt.requestPsuSweep()))
+            printf("  measure: MPPT restore timed out\n");
         const float L = m ? r.L : r.Lmed;
         printf("== RING coil %s: L %.2f uH = %+.1f %% vs plant %.2f uH (%d DCM pts, %.0f s); fit: ring %.0f kHz"
                " (plant %.0f), ripple +-%.0f %%, %.1f periods, median of points %.2f uH (%+.1f %%)\n", tags[m], L * 1e6f,
@@ -4180,6 +4324,7 @@ static int simMain(int argc, char **argv) {
             c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
         // the state `measure-coil l0 f=` runs in, near flat's floor (fsw*L0*0.95 > 1 ohm with L0 50 uH)
         if (sc == "mc-flat-lowf") c += ",board.conf:pwm_freq=22000";
+        if (sc == "mc-flat-virt") c += ",sensor.conf:lv_i_ch=255,sensor.conf:hv_i_ch=3"; // Iout from Iin
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         if (!c.empty()) setenv("SIM_CONF", c.c_str(), 1);
         ov = {{"bflow_model", "1"}};

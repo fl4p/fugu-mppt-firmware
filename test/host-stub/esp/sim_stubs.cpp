@@ -20,6 +20,8 @@
 #undef unlink
 
 int64_t g_simUs = 0;
+void (*g_simDelayHook)(uint32_t ms) = nullptr;
+bool g_simRunTasks = false;
 float g_simChipTemp = 40.f;
 uint32_t g_simTickUs = 333;
 std::string g_simFsRoot;

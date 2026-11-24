@@ -1755,8 +1755,10 @@ public:
         uint8_t floorHold = 0, holdN = 0, iSeen = 0; // fresh current samples before iFloor applies after a turn-on
         uint8_t why = 0; // toggle trip: 1 floor, 2 D Vin below Vout, 3 no-battery current, 4 Vin rose; 5 above iMax
     } bfTest;
-    // measure-coil L0: Iout zero (NAN: off); the RT closes BF on forward current, opens it with the converter off
+    // measure-coil: Iout zero (NAN: off; set only with sensorPhysicalI == Iout); the RT closes BF on forward current
+    // (with sync rect if mcSyncRect), opens it with the converter off
     std::atomic<float> mcBfZero{NAN};
+    std::atomic<bool> mcSyncRect{false};
 
     time_us lastUs = 0;
 

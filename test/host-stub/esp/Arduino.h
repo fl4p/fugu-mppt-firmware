@@ -8,6 +8,7 @@
 #include <cmath>
 #include <algorithm>
 #include <string>
+#include "esp_attr.h"
 #include "esp_timer.h"
 #include "esp_log.h"
 
