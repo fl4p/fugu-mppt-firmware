@@ -9,20 +9,25 @@
 // plateau plus knee, ramped in over kneeV..kneeV + kneeW (kneeW 0: a step at kneeV; the default kneeV 0 applies the
 // knee everywhere). Cell 0 runs high: set() puts it imb above the mean (the others imb / (N - 1) below) and it gains
 // kImb V/Ah more while charging. i > 0 charges [A].
+// kd > 0: two tanks per cell (kinetic battery model). The current goes into a surface tank, a fraction c of the cell,
+// whose OCV is ocv[k]; kd A flow to the bulk (OCV ob[k]) per Ah of level difference (level: the cell's charge if it all
+// sat at that OCV). A hold at a fixed surface OCV takes a current decaying with ~3600 (1 - c) / kd s; without current
+// the cell relaxes to ob[k] (~3600 c / kd s).
 struct LfpPack {
     static constexpr int N = 8;
-    double ocv[N]{};
+    double ocv[N]{}, ob[N]{};
     float dvdah = 0.0032f, knee = 0.f, kneeV = 0.f, kneeW = 0.f;
     float r0 = 0.004f, rp = 0.f, tauP = 30.f, vp = 0.f, kImb = 0.f;
+    float c = 1.f, kd = 0.f;
 
     LfpPack() { set(3.38f, 0.f); }
 
     void set(float mean, float imb) {
-        for (int k = 0; k < N; ++k) ocv[k] = mean + (k ? -imb / (N - 1) : imb);
+        for (int k = 0; k < N; ++k) ob[k] = ocv[k] = mean + (k ? -imb / (N - 1) : imb);
     }
     void setMean(float mean) {
         const double d = mean - this->mean();
-        for (double &v: ocv) v += d;
+        for (int k = 0; k < N; ++k) ocv[k] += d, ob[k] = ocv[k];
     }
     [[nodiscard]] float sum() const {
         double s = 0;
@@ -37,20 +42,38 @@ struct LfpPack {
         const float f = kneeW > 0 ? std::clamp((v - kneeV) / kneeW, 0.f, 1.f) : v >= kneeV ? 1.f : 0.f;
         return dvdah + knee * f;
     }
+    // level [Ah] at OCV v: integral of dv / slope(v) from kneeV
+    [[nodiscard]] double level(double v) const {
+        const double x = v - kneeV, a = dvdah, b = knee, w = kneeW;
+        if (x <= 0 || b <= 0) return x / a;
+        if (x < w) return w / b * std::log1p(b * x / (w * a));
+        return (w > 0 ? w / b * std::log1p(b / a) : 0) + (x - w) / (a + b);
+    }
 
     void step(float i, float dt) {
         const double ah = (double) i * dt / 3600.0;
-        for (int k = 0; k < N; ++k) ocv[k] += ah * (slope((float) ocv[k]) + (k == 0 && i > 0 ? kImb : 0.f));
+        for (int k = 0; k < N; ++k) {
+            const double s = slope((float) ocv[k]) + (k == 0 && i > 0 ? kImb : 0.f);
+            if (kd <= 0) {
+                ocv[k] += ah * s;
+                continue;
+            }
+            const double f = kd * (level(ocv[k]) - level(ob[k])) * dt / 3600.0; // Ah to the bulk
+            ocv[k] += (ah - f) * s / c;
+            ob[k] += f * slope((float) ob[k]) / (1 - c);
+        }
         if (rp > 0) vp -= (i * rp - vp) * expm1f(-dt / tauP);
     }
 };
 
-// Top of the 8s 280 Ah pack fit to fry/flat 2026-11-23 13:44 (both rebooted at float, highest cell 3.358 V at rest,
-// then 40 A: crossed 3.50 V ~75 s later, peaked 3.528 V in the hold): 1 mOhm + 2 mOhm / 30 s, OCV +0.05 V/Ah at the
-// top, 40 mV imbalance.
+// Top of the 8s 280 Ah pack, fit to the highest cell of fry/flat 2026-11-23 09:50-14:08 (BMS ibat replayed, 2 s steps):
+// R0 1.5 mOhm + 1.3 mOhm / 65 s, plateau 0.5 mV/Ah, 6 mV/Ah from 3.363 V (surface), surface tank 5.3 %, 0.68 A/Ah to
+// the bulk. A 3.50 V hold from 29 A decays with ~110 min (field 92-145 min) and takes ~36 Ah in 130 min (field ~30).
+// The high cell rests at 3.352 V, 40 mV above the mean: ~20-25 A into a 3.50 V hold after the approach.
 inline void topOfCharge(LfpPack &p) {
-    p.r0 = 0.001f, p.rp = 0.002f, p.tauP = 30.f, p.knee = 0.05f;
-    p.set(3.318f, 0.04f);
+    p.r0 = 0.0015f, p.rp = 0.0013f, p.tauP = 65.f;
+    p.dvdah = 0.0005f, p.knee = 0.0055f, p.kneeV = 3.363f, p.kneeW = 0.006f, p.c = 0.053f, p.kd = 0.68f;
+    p.set(3.312f, 0.04f);
 }
 
 // BMS publisher: an ibat frame every periodI, a highest-cell frame every periodC [s], the first at phase + period.

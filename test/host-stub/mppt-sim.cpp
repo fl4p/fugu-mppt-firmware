@@ -128,20 +128,25 @@
 //   SIM_PLANT="fry:ring_q=40,fry:rect_offset_ns=0,..." overrides board fields
 //   top of charge on a shared bus ("== CVHOLD" PASS/FAIL line), fry's board, charger.conf as on fry/flat (cv_eoc 3.5,
 //   ceiling 3.55, 280 Ah, ibat_max 40, cv_hold_max_s 5400) and a balance run from the start. Unit 1 is the firmware,
-//   unit 2 a second BatteryCharger driving a current source; one 8s pack (lfp_pack.h, the 11-23 top fit: R0 1 mOhm,
-//   2 mOhm / 30 s, the high cell 40 mV up and in the 0.05 V/Ah knee, the others on the plateau) behind 20 mOhm of
-//   cable, one BMS feeding both chargers (ibat every 4 s, highest cell every 12 s, 1 mV); PV SIM_PV_W per unit (560):
+//   unit 2 a second BatteryCharger driving a current source; one 8s pack (lfp_pack.h topOfCharge(), the 11-23 fit:
+//   R0 1.5 mOhm, 1.3 mOhm / 65 s, a 5 % surface tank feeding the bulk at 0.68 A/Ah, OCV 0.5 mV/Ah, 6 mV/Ah above
+//   3.363 V; the high cell rests at 3.352 V, 40 mV above the others: a 3.50 V hold takes ~20 A after the approach,
+//   decaying with ~110 min, and the cell relaxes to ~3.35 V within minutes without current) behind 20 mOhm of cable,
+//   a house load of SIM_BASE_A (2 A; field median 2-4 A, 5th percentile 0.4 A) on the bus, one BMS feeding both
+//   chargers (ibat every 4 s, highest cell every 12 s, 1 mV); PV SIM_PV_W per unit (560):
 //     cv-hold-pair     both units at ~20 A into cv_eoc: peak <= cv_eoc + 15 mV to hold + 300 s, then +-10 mV, no latch
 //     cv-hold-offset   unit 2's Vout reads 0 / -0.15 / -0.9 V idle / both converting / alone, 90 min
 //     cv-hold-gap      no BMS frames 1800..2000 s: both units pause on the stale data and run again within 60 s
 //     cv-hold-load     900 W on 30 s / off 30 s from 1200 s: cell <= cv_eoc + 15 mV
 //     cv-hold-reboot   unit 2 restarts at 1200 s
-//     cv-hold-mask     a 1080 W load for 900 s takes the PV current (ibat ~1 A): the line crosses low, no hold below the band
-//     cv-hold-day      a day from ~75 % SoC ("== CVDAY" PASS/FAIL line; no balance run, the high cell 3.34 V on a 1.2 mV/Ah
-//                      plateau, knee from 3.385 V): clouds to 10..20 % for 1..5 min and 900 W loads for 1..5 min until the
-//                      cell reaches the approach band, then clear sun to the latch (~5800 s simulated, ~2 min on an idle
-//                      core). Events on the pack: a 200 s BMS gap at OCV 3.352 V; at OCV 3.362 V a 300 s cloud (20 %) with
-//                      a 180 W load (ibat ~1 A) and unit 2 restarting 30 s into it (flat 2026-11-24); unit 2 restarts again
+//     cv-hold-mask     a 1080 W load (with the base) for 900 s takes the PV current (ibat ~1 A): the line crosses low,
+//                      no hold below the band
+//     cv-hold-day      a day from ~75 % SoC ("== CVDAY" PASS/FAIL line; no balance run, the high cell rests at 3.33 V,
+//                      ~65 Ah below the knee): clouds to 10..20 % for 1..5 min and 900 W loads for 1..5 min until the
+//                      cell reaches the approach band, then clear sun to the latch (~10700 s simulated, ~5 min on an idle
+//                      core). Events on the high cell's surface OCV: a 200 s BMS gap at 3.352 V; at 3.362 V a 300 s cloud
+//                      (20 %) with a 180 W load (with the base; ibat ~1.6 A, the BMS cell relaxes 3.38 -> 3.36 V) and unit 2
+//                      restarting 30 s into it (flat 2026-11-24); unit 2 restarts again
 //                      when the BMS cell reaches cv_eoc - 25 mV. Checks: no hold or latch with the BMS cell below cv_eoc -
 //                      cv_hold_band (fails on charger.h before bd9581b7: unit 2 holds at ~3.37 V), a hold, the cell <=
 //                      cv_eoc + 15 mV from the first hold on (the cv-hold-pair/-load tolerance), both units latched or in
@@ -153,7 +158,8 @@
 //     starts as loopRTNewData (not full; BMS data decided or a 12 s wait), then ramps to its PV current over 5 s
 //     (the sweep). Vout error: linear in 0..2 A own and 0..5 A sibling current. Overrides:
 //     SIM_VOUT_ERR=u:idle,both,alone[;u:...]  SIM_LOAD=W,on_s,off_s,from_s (W,1,0,0: constant)  SIM_REBOOT_AT=t
-//     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_T  SIM_TR
+//     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_BASE_A=A  SIM_T
+//     SIM_TR
 //
 #include <algorithm>
 #include <cmath>
@@ -2967,7 +2973,7 @@ static struct TopBus {
     std::optional<BatteryCharger> u2;
     ChargerRtc rtc2{};
     float rBus = 0.02f, pv = 560, tau2 = 0.3f; // cable [Ohm], PV power per unit [W], unit 2 output lag [s]
-    float i2 = 0, iload = 0, err1 = 0, vcell = 0, ibat = 0;
+    float i2 = 0, iload = 0, err1 = 0, vcell = 0, ibat = 0, base = 2; // base: house load [A]
     double ah = 0, wh = 0, tTop = 0; // charge and energy into the pack, time with the cell at the top
     float load[4] = {0, 30, 30, 0}; // W, on s, off s, from t
     float loadW = -1; // >= 0: load [W] set per step instead of load[]
@@ -3006,8 +3012,8 @@ static void topTick() {
     T.vcell = T.pack.vcellHigh(T.ibat);
     if (T.vcell >= mppt.charger.params.cv_eoc - mppt.charger.params.cv_hold_band) T.tTop += dt;
     const float *L = T.load;
-    T.iload = T.loadW >= 0 ? T.loadW / vbus
-              : L[0] > 0 && t >= L[3] && std::fmod(t - L[3], (double) (L[1] + L[2])) < L[1] ? L[0] / vbus : 0.f;
+    T.iload = T.base + (T.loadW >= 0 ? T.loadW / vbus
+              : L[0] > 0 && t >= L[3] && std::fmod(t - L[3], (double) (L[1] + L[2])) < L[1] ? L[0] / vbus : 0.f);
     bool gap = false;
     for (int k = 0; k < 4; k += 2) gap |= T.gap[k] >= 0 && t >= T.gap[k] && t < T.gap[k] + T.gap[k + 1];
     T.bms.cells = T.bms.ibatOn = !gap;
@@ -3065,7 +3071,8 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     g_top = &top;
     auto &T = top;
     topOfCharge(T.pack);
-    T.pack.kneeV = 3.34f, T.pack.kneeW = 0.01f; // the high cell starts in the knee, the others on the plateau
+    if (const char *e = getenv("SIM_BASE_A")) T.base = atof(e);
+    const float wBase = T.base * 27.f; // the base load at a nominal bus [W]: event loads below keep their ibat
     T.bms.phaseI = 1.3f, T.bms.phaseC = 5.1f, T.bms.qV = 0.001f;
     double tEnd = 3600, rebootAt = -1;
     if (sc == "cv-hold-offset") tEnd = 5400, T.err[1] = {0, -0.15f, -0.9f};
@@ -3073,11 +3080,10 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     if (sc == "cv-hold-load") T.load[0] = 900, T.load[3] = 1200;
     if (sc == "cv-hold-reboot") rebootAt = 1200;
     // a load takes the PV current (ibat ~1 A): the line crosses low, far below cv_eoc, but no hold starts; it ends
-    if (sc == "cv-hold-mask") tEnd = 2400, T.load[0] = 1080, T.load[1] = 900, T.load[2] = 1e5f;
+    if (sc == "cv-hold-mask") tEnd = 2400, T.load[0] = std::max(1080 - wBase, 0.f), T.load[1] = 900, T.load[2] = 1e5f;
     const bool day = sc == "cv-hold-day";
-    if (day) { // ~75 % SoC: the high cell at 3.34 V on a 1.2 mV/Ah plateau, the knee from 3.385 V
-        T.pack.dvdah = 0.0012f, T.pack.kneeV = 3.385f, T.pack.kneeW = 0.02f;
-        T.pack.set(3.30f, 0.04f);
+    if (day) { // ~75 % SoC: the high cell rests at 3.33 V, ~65 Ah below the knee
+        T.pack.set(3.29f, 0.04f);
         T.bal = false, T.loadW = 0, tEnd = 16000;
     }
     if (const char *e = getenv("SIM_T")) tEnd = atof(e);
@@ -3111,10 +3117,10 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     const auto &P = mppt.charger.params;
     const float eoc = P.cv_eoc, ceil = P.cv_ceiling;
     printf("# %s: %u cells, unit PV %.0f W, R %.0f mOhm, cv_eoc %.3f, ceiling %.3f, %.0f s; Vout error unit 1 %.2f/%.2f/%.2f,"
-           " unit 2 %.2f/%.2f/%.2f V; load %.0f W %.0f/%.0f s from %.0f s; BMS gaps %.0f+%.0f %.0f+%.0f s; reboot at %.0f s\n",
-           name.c_str(), (unsigned) P.n_cells, T.pv, R * 1e3f, eoc, ceil, tEnd, T.err[0].idle, T.err[0].both,
-           T.err[0].alone, T.err[1].idle, T.err[1].both, T.err[1].alone, T.load[0], T.load[1], T.load[2], T.load[3],
-           T.gap[0], T.gap[1], T.gap[2], T.gap[3], rebootAt);
+           " unit 2 %.2f/%.2f/%.2f V; base load %.1f A, load %.0f W %.0f/%.0f s from %.0f s; BMS gaps %.0f+%.0f %.0f+%.0f s;"
+           " reboot at %.0f s\n", name.c_str(), (unsigned) P.n_cells, T.pv, R * 1e3f, eoc, ceil, tEnd, T.err[0].idle,
+           T.err[0].both, T.err[0].alone, T.err[1].idle, T.err[1].both, T.err[1].alone, T.base, T.load[0], T.load[1],
+           T.load[2], T.load[3], T.gap[0], T.gap[1], T.gap[2], T.gap[3], rebootAt);
     double holdAt = -1, gapEnd = T.gap[0] >= 0 ? T.gap[0] + T.gap[1] : -1, resumeAt = -1;
     float peak = 0, entry = 0, lo = 9, hi = 0;
     bool wasTerm[2] = {}, paused[2] = {};
@@ -3157,7 +3163,7 @@ static int runCvHold(const std::string &name, const std::string &sc) {
                 for (auto &c: clouds) g = std::min(g, 1 - (1 - c.v) * edge(c));
                 for (auto &l: loads) if (tb >= l.t && tb < l.t + l.len) w = l.v;
             }
-            if (tE1 >= 0 && tb < tE1 + 300) g = 1 - 0.8f * edge({tE1, 300, 0}), w = 180;
+            if (tE1 >= 0 && tb < tE1 + 300) g = 1 - 0.8f * edge({tE1, 300, 0}), w = std::max(180 - wBase, 0.f);
             wx.cloud[0].second = g, T.pv = pv0 * g, T.loadW = w;
         }
         if (rebootAt >= 0 && tb >= rebootAt) {
