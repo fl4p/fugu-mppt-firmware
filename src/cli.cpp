@@ -1927,7 +1927,8 @@ bool confCheck(const char *chargerPath, const char *limitsPath) {
 }
 
 static void cmdConfCheck(cmd *) {
-    confCheck("/littlefs/conf/charger.conf", "/littlefs/conf/limits.conf");
+    if (!confCheck("/littlefs/conf/charger.conf", "/littlefs/conf/limits.conf"))
+        CMD_FAIL_RETURN("conf-check failed");
     UART_LOG("conf-check done");
 }
 

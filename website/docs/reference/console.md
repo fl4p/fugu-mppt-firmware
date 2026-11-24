@@ -148,7 +148,7 @@ Hardware and runtime parameters live in `.conf` files on the device's littlefs p
 | `del-config <file> <key>` (alias `delc`) | Remove a key; the whole line, including any inline comment, is deleted. |
 | `get-config <file> [<key>]` (alias `getc`) | Print a single key, or dump every key if `<key>` is omitted. |
 | `conf-hash` (alias `confhash`) | Read-only fingerprint of the configuration: SHA-256 over the `*.conf` files in `/littlefs/conf` (now and as loaded at boot), one hash per file, with secret values redacted. See [Config fingerprint](#config-fingerprint). |
-| `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`), and print why a `limits.conf` does not load (e.g. a leftover role key, with its side replacement). Same check runs at boot for the parameter confs. |
+| `conf-check` (alias `confcheck`) | Re-read `charger.conf`/`limits.conf` and warn about keys no loader reads (typos / obsolete, e.g. `cv_min` where the firmware reads `cv_float`), and print why a `limits.conf` does not load (e.g. a leftover role key, with its side replacement). Same check runs at boot for the parameter confs. Ends with `conf-check failed` (an error reply) when a file does not load; unknown keys alone are warnings. |
 
 The following examples set, delete, read, and check keys:
 
