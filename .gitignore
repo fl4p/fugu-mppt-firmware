@@ -106,6 +106,9 @@ coredump*
 
 _tmp_stm32
 
+# bisect shadow repos (CLAUDE.md: work on a copy in _shadow_XYZ)
+/_shadow_*/
+
 .vibe-drops/
 
 # real secret values for the .claude memory notes (keep the .example committed)
