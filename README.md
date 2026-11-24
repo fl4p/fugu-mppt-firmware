@@ -316,7 +316,8 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 * `IoutCTRL` and `PowerCTRL` work on the wrong side of the MPP in an overload: lowering the duty cycle raises the
   solar voltage and with it the converted power. Power then rises until it hits the hard limits, shuts down
-  and recovers. This is a transient and should not damage the hardware.
+  and recovers. This is a transient and should not damage the hardware
+  ([#70](https://github.com/fl4p/fugu-mppt-firmware/issues/70)).
 
 # BMS Communication
 
