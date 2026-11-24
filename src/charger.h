@@ -563,7 +563,7 @@ public:
         _lastTermFrameUs = frame;
 
         bool wasTerm = bool(termCond);
-        termCond.update(batSt.vcell_high, ibat, batSt.coulombCounter.updateDepth());
+        termCond.update(batSt.vcell_high, ibat, batSt.coulombCounter.updateDepth(wasTerm));
         // the line needs VTERM_STREAK_REQ frames to latch, so the boot sweep must not trust
         // "not terminated" before that many have been seen
         if (_termEvals < UINT8_MAX) ++_termEvals;

@@ -21,7 +21,9 @@
  * Optional BMS remaining-charge source (setBmsCharge): while fresh it replaces the integrator, so
  * parallel chargers on one BMS share the same deficit. The charge is sampled on each cell frame
  * (sampleOnCellFrame) and the full-point reference is taken from that sample, so chargers that
- * latch on the same cell frame hold the same reference. Signed, never clamped.
+ * latch on the same cell frame hold the same reference. Signed, never clamped. While terminated the
+ * BMS reference follows the charge up, so chargers that latched on different frames and see the
+ * same peak converge on it.
  *
  * The BMS may re-seed its charge (e.g. to 0.9 x nominal). A charge step larger than BAT_I_MAX_A
  * can move within BRIDGE_MAX_S of the previous sample (at least DELIVERY_S, + 0.5 Ah) is a re-seed: the step is replaced
@@ -116,10 +118,14 @@ public:
     [[nodiscard]] float bmsRef() const { return _bmsRef - _bmsOffset.load(std::memory_order_relaxed); }
     void restoreRef(float ref) { _bmsRef = ref + _bmsOffset.load(std::memory_order_relaxed); }
 
-    // consumer thread, once per cell frame: deepest deficit since full (the recharge release depth)
-    float updateDepth() {
-        if (!std::isfinite(_bmsRef)) _bmsRef = _bmsAtCell.load(std::memory_order_relaxed); // no full since boot
-        float d = deficit();
+    // consumer thread, once per cell frame: deepest deficit since full (the recharge release depth).
+    // While terminated the full point follows the charge up (a sibling charging, or a latch on it only).
+    float updateDepth(bool terminated = false) {
+        float c = _bmsAtCell.load(std::memory_order_relaxed); // one snapshot for the decision and the ref
+        if (!std::isfinite(_bmsRef)) _bmsRef = c; // no full since boot
+        bool bms = std::isfinite(_bmsRef) && std::isfinite(c);
+        float d = bms ? _bmsRef - c : ahSinceFull();
+        if (terminated && bms && d < 0.f) _bmsRef = c, _depth = d = 0.f;
         if (d > _depth) _depth = d;
         return _depth;
     }

@@ -122,6 +122,17 @@ deepest deficit since the last full charge, so a sibling that starts charging
 cannot undo a release that is already due. If the BMS charge goes stale, the
 integrator takes over.
 
+While a charger is terminated, its full point follows the BMS charge up. On a
+cell frame where the BMS deficit is negative (a sibling charged the pack past
+the reference), the reference moves to that frame's BMS charge and the deepest
+deficit is cleared. Two chargers on one BMS that both see that peak thus end on
+the same reference, even when only one of them latched again after more
+charge, for example on the cell ceiling or a hold timeout. A charger that
+misses the peak frame (stale BMS data) keeps its lower reference. The
+`ibat` integrator fallback does not follow. After the release the reference
+stays where it is, so charge added during a recharge does not delay the next
+release. The raised reference is the one saved for a reboot.
+
 Some BMSs re-seed their remaining charge, for example to 90 % of the nominal
 capacity after a reconnect. The charger treats a step as a re-seed when no
 battery current could cause it: the change since the previous BMS value
@@ -148,7 +159,12 @@ Some re-seeds are taken as real charge or discharge:
   within 12 s, or a 3.8 Ah step after a 69 s gap.
 
 A downward one can release termination early; the next full charge sets a new
-reference.
+reference. An upward one delays the release by its size. While terminated, the
+part of it above the reference moves the reference up instead; that delay is
+then at most the deficit before the step. A single wrong value above the
+reference that is taken as real keeps the reference raised after the value
+returns, so the release comes that much early (up to 1.2 Ah at the 12 s
+spacing).
 
 The charger re-zeroes the integrator on every termination event. The
 integrator counts the "deficit since the last known full" and recalibrates

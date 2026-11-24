@@ -129,6 +129,7 @@ struct Feed {
     time_us t = 1'000'000ULL;
     float q; // [Ah] true remaining charge
     float scale = 0.f; // raw = q + scale: the BMS's re-seed shifts this
+    bool term = false;
     explicit Feed(float q0) : q(q0) {}
     void frame(float ibat, bool charge = true) {
         t += 4'000'000ULL;
@@ -136,7 +137,7 @@ struct Feed {
         cc.updateBatCurrent(ibat, t);
         if (charge) cc.setBmsCharge(q + scale, coarseTicks(t));
         cc.sampleOnCellFrame(coarseTicks(t));
-        cc.updateDepth();
+        cc.updateDepth(term);
     }
     void gap(time_us us, float ibat) { t += us; q += ibat * (float) us / 3600e6f; }
     void reseed(float raw) { scale = raw - q; frame(0.f); }
@@ -179,6 +180,43 @@ static void test_reseed_no_gap() {
     CHECK(std::fabs(f.cc.deficit() - d0) < 0.05f, "step absorbed in full");
     f.reseed(f.q + f.scale + 30.f);
     CHECK(std::fabs(f.cc.deficit() - d0) < 0.05f, "upward step absorbed");
+}
+
+// While terminated the full point follows the charge up (BMS charge and integrator); after the release it stays.
+static void test_terminated_ref_follows() {
+    Feed f{200.f};
+    f.frame(0.f); f.cc.markFull(); f.term = true; f.frame(0.f);
+    while (f.q < 205.f) f.frame(20.f); // a sibling charges
+    CHECK(std::fabs(f.cc.deficit()) < 0.03f && f.cc.depth() == 0.f, "terminated: ref follows the charge up");
+    CHECK(std::fabs(f.cc.bmsRef() - f.q) < 0.03f, "terminated: bmsRef at the peak");
+    while (f.q > 190.f) f.frame(-20.f);
+    CHECK(std::fabs(f.cc.depth() - 15.f) < 0.1f, "terminated: depth from the peak");
+    while (f.q < 198.f) f.frame(20.f);
+    CHECK(std::fabs(f.cc.depth() - 15.f) < 0.1f && std::fabs(f.cc.deficit() - 7.f) < 0.1f, "terminated: below the peak the ref holds");
+    float ref = f.cc.bmsRef(), depth = f.cc.depth();
+    f.term = false; // released: recharge
+    while (f.q < 210.f) f.frame(20.f);
+    CHECK(f.cc.bmsRef() == ref && f.cc.depth() == depth && f.cc.deficit() < -4.9f, "released: ref and depth stay");
+
+    // re-seed while terminated, then charge past the ref: the ref follows in the offset scale, saved raw
+    Feed g{230.f};
+    g.frame(0.f); g.cc.markFull(); g.term = true;
+    for (int i = 0; i < 10; ++i) g.frame(-5.f);
+    g.reseed(220.5f);
+    while (g.q < 232.f) g.frame(20.f);
+    CHECK(std::fabs(g.cc.deficit()) < 0.03f && std::fabs(g.cc.bmsRef() - (g.q + g.scale)) < 0.03f,
+          "re-seed: raised ref in raw scale");
+
+    // BMS charge stale: the integrator does not follow (a reset would drop an ibat interval each frame)
+    CoulombCounter c;
+    time_us t = 1'000'000ULL;
+    c.updateBatCurrent(0.f, t);
+    c.markFull();
+    auto step = [&](float ibat, bool term) { t += FRAME_US; c.updateBatCurrent(ibat, t); c.sampleOnCellFrame(coarseTicks(t)); c.updateDepth(term); };
+    for (int i = 0; i < 300; ++i) step(10.f, true); // +10 Ah
+    CHECK(!c.bmsSource() && std::fabs(c.deficit() + 10.f) < 0.1f, "integrator: not re-anchored");
+    for (int i = 0; i < 1500; ++i) step(-10.f, true); // -50 Ah
+    CHECK(std::fabs(c.depth() - 40.f) < 0.2f, "integrator: depth counts every interval");
 }
 
 // 11-22: seven re-seeds 253.4 -> 252.0 with charging in between
@@ -368,6 +406,7 @@ int main() {
     test_no_charge_topic_is_integrator();
     test_reseed_after_gap();
     test_reseed_no_gap();
+    test_terminated_ref_follows();
     test_repeated_reseeds_no_accumulation();
     test_slow_drift_passes();
     test_real_discharge_in_long_gap();

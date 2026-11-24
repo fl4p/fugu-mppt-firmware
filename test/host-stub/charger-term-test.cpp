@@ -1166,6 +1166,69 @@ static void test_bal_hold_entered_low_cuts_at_band() {
           "hold entered low: no ceiling, peak %.3f <= cv_eoc + 15 mV", vmax);
 }
 
+// 11-23: both units latched (13:29/13:33), the pack charged on and only fry latched again (14:14, cell ceiling); flat
+// kept its 13:33 full point. With reseed, the BMS re-seeded its charge 227.26 -> 220.5 Ah in a 31 s gap in between
+// (14:09). While terminated the full point follows the BMS charge up, so both converge on the same peak.
+static void test_two_units_one_relatch(bool reseed) {
+    ChargerRtc r{};
+    BatteryCharger a, b; a.params = params(); b.params = params(); setWallClockUs(1'000'000ULL);
+    a.params.Cbat = b.params.Cbat = 245.f;
+    b.attachRtc(&r);
+    float q = 225.8f, scale = 0.f;
+    BatteryCharger *u[2] = {&a, &b};
+    auto bframe = [&](float vcell, float ibat, uint32_t dtS = 4) {
+        setWallClockUs(loopWallClockUs_ + dtS * 1'000'000ULL);
+        q += ibat * (float) dtS / 3600.f;
+        for (auto *c: u) {
+            c->batSt.coulombCounter.setBmsCharge(q + scale, wallClockTicks());
+            c->batSt.setVcellHigh(vcell);
+            c->batSt.updateBatCurrent(ibat);
+            c->update(26.7f, 0.f, true);
+        }
+    };
+    const char *tag = reseed ? "relatch+reseed" : "relatch";
+    a.termCond.reset(); b.termCond.reset();
+    for (int i = 0; i < 20; ++i) bframe(a.params.cv_min + 0.10f, 0.1f);
+    CHECK((bool) a.termCond && (bool) b.termCond && b.batSt.coulombCounter.bmsSource(), "%s: both latched", tag);
+    float q0 = q;
+    a.termCond.reset(); // fry charges on, flat stays latched
+    while (q < q0 + 1.3f) bframe(a.params.cv_min - 0.01f, 20.f);
+    if (reseed) {
+        scale = 220.5f - (q + 20.f * 31.f / 3600.f);
+        bframe(a.params.cv_min - 0.01f, 20.f, 31);
+    }
+    while (q < q0 + 2.4f) bframe(a.params.cv_min - 0.01f, 20.f);
+    for (int i = 0; i < 20; ++i) bframe(a.params.cv_eoc + 0.02f, 0.1f);
+    float peak = q + scale, da = a.batSt.coulombCounter.deficit(), db = b.batSt.coulombCounter.deficit();
+    CHECK((bool) a.termCond && (bool) b.termCond, "%s: fry latched again", tag);
+    CHECK(std::fabs(da - db) < 0.05f && std::fabs(db) < 0.05f, "%s: same deficit at the peak (%.2f / %.2f Ah)", tag, da, db);
+    CHECK(std::isfinite(r.bmsRef) && std::fabs(r.bmsRef - peak) < 0.05f,
+          "%s: raised ref saved in BMS scale (%.2f vs %.2f Ah)", tag, r.bmsRef, peak);
+    BatteryCharger g; g.params = b.params;
+    g.attachRtc(&r);
+    CHECK(std::fabs(g.batSt.coulombCounter.bmsRef() - peak) < 0.05f, "%s: reboot keeps the raised ref (%.2f)", tag,
+          g.batSt.coulombCounter.bmsRef());
+
+    int relA = -1, relB = -1;
+    float maxDiff = 0;
+    for (int k = 0; k < 5000 && (relA < 0 || relB < 0); ++k) {
+        bframe(a.params.cv_min - 0.02f, -10.f);
+        maxDiff = fmaxf(maxDiff, std::fabs(a.batSt.coulombCounter.deficit() - b.batSt.coulombCounter.deficit()));
+        if (relA < 0 && !(bool) a.termCond) relA = k;
+        if (relB < 0 && !(bool) b.termCond) relB = k;
+    }
+    printf("  %s: release frames fry %d flat %d, max deficit diff %.2f Ah\n", tag, relA, relB, maxDiff);
+    CHECK(relA >= 0 && relA == relB, "%s: release on the same cell frame (%d / %d)", tag, relA, relB);
+    CHECK(maxDiff < 0.05f, "%s: same deficit while discharging (max diff %.2f Ah)", tag, maxDiff);
+
+    float refA = a.batSt.coulombCounter.bmsRef(), refB = b.batSt.coulombCounter.bmsRef();
+    float dA = a.batSt.coulombCounter.depth(), q1 = q;
+    while (q < q1 + 5.f) bframe(a.params.cv_min - 0.01f, 20.f);
+    CHECK(!(bool) a.termCond && !(bool) b.termCond && a.batSt.coulombCounter.bmsRef() == refA &&
+          b.batSt.coulombCounter.bmsRef() == refB && a.batSt.coulombCounter.depth() >= dA,
+          "%s: charging after the release keeps the ref and the depth", tag);
+}
+
 int main() {
     test_bal_hold_entered_low_cuts_at_band();
     test_hold_blind_decay(1, 120);
@@ -1217,6 +1280,8 @@ int main() {
     test_hold_sibling_boots_unlimited();
     test_boot_idle_without_ibat();
     test_bms_charge_reseed_no_release();
+    test_two_units_one_relatch(false);
+    test_two_units_one_relatch(true);
     printf(g_fail ? "%d FAILED\n" : "all passed\n", g_fail);
     return g_fail ? 1 : 0;
 }
