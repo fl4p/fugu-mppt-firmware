@@ -9,7 +9,7 @@ Everything outside the real-time control path runs on core 0: the consoles, Wi-F
 the display and BLE. Most of these subsystems are wrapped as *services* with a common lifecycle, so they can be
 started, stopped and inspected at runtime without touching the control loop on core 1.
 
-This page covers how the core-0 side is organised. The [Service Architecture](../reference/services.md) reference
+This page covers how the core-0 side is organised. The [Service architecture](../reference/services.md) reference
 documents the `Service` API, the network watchdog and the per-service conf keys in detail.
 
 ## Core-0 loop
@@ -68,18 +68,18 @@ wraps; `src/main.cpp` only registers them.
 | `mqtt` | MQTT client: BMS data, console input, log mirror, Home Assistant | yes | yes | `FUGU_WITH_NETW` | [mqtt.conf](../reference/config/mqtt.md) |
 | `tele` | InfluxDB telemetry over UDP | yes | no | `FUGU_WITH_NETW` | [tele.conf](../reference/config/tele.md) |
 | `ftp` | FTP access to the conf partition | yes | yes | `FUGU_WITH_FTP` | [ftp.conf](../reference/config/ftp.md) |
-| `http` | HTTP file endpoint for the conf partition | yes | yes | `FUGU_WITH_HTTP_CONF` | [http.conf](../reference/config/http.md) |
+| `http` | HTTP file endpoint for the conf partition | yes | yes | `FUGU_WITH_HTTP_CONF` (off by default) | [http.conf](../reference/config/http.md) |
 | `telnet` | Telnet console and log sink, port 23 | yes | no | `FUGU_WITH_TELNET` | [telnet.conf](../reference/config/telnet.md) |
-| `tlscon` | TLS-PSK console, port 992 | yes | no | `FUGU_WITH_TLS_CONSOLE` | [tlscon.conf](../reference/config/tlscon.md) |
+| `tlscon` | TLS-PSK console, port 992 | yes | no | `FUGU_WITH_TLS_CONSOLE` (off by default) | [tlscon.conf](../reference/config/tlscon.md) |
 | `lcd` | I²C character display | no | no | always | [lcd.conf](../reference/config/lcd.md) |
-| `extport` | External comms port: VE.Direct text output | no | no | `FUGU_WITH_EXTPORT` | [extport.conf](../reference/config/extport.md) |
+| `extport` | External comms port: VE.Direct text output | no | no | `FUGU_WITH_EXTPORT` (off by default) | [extport.conf](../reference/config/extport.md) |
 | `scope` | Raw ADC stream over TCP, port 24 | yes | yes | `FUGU_WITH_SCOPE` | [scope.conf](../reference/config/scope.md) |
 | `ble` | BLE console (NUS), BLE OTA, BLE telemetry | no | no | `FUGU_WITH_BLE` | [ble.conf](../reference/config/ble.md) |
-| `bsync` | [Switching-clock sync](../development/sync/beacon-sync.md) to Wi-Fi beacons | no | no | `FUGU_WITH_BSYNC` with MCPWM | [bsync.conf](../reference/config/bsync.md) |
+| `bsync` | [Switching-clock sync](../development/sync/beacon-sync.md) to Wi-Fi beacons | no | no | `FUGU_WITH_BSYNC` (off by default; needs NETW and MCPWM) | [bsync.conf](../reference/config/bsync.md) |
 
 The build options of the network services (`FUGU_WITH_FTP`, `FUGU_WITH_HTTP_CONF`, `FUGU_WITH_TELNET`,
 `FUGU_WITH_TLS_CONSOLE`, `FUGU_WITH_SCOPE`) depend on `FUGU_WITH_NETW`. `bsync` sniffs beacons without associating, so
-it does not wait for Wi-Fi. See [Build Options](../guide/getting-started/build-options.md) for the Kconfig switches.
+it does not wait for Wi-Fi. See [Build options](../guide/getting-started/build-options.md) for the Kconfig switches.
 
 ### Per-service notes
 
@@ -127,8 +127,8 @@ Other Wi-Fi housekeeping in the same function:
 ## BLE
 
 The `ble` service runs the NimBLE NUS console. It is off by default because it exposes the console. It does not need
-Wi-Fi, so it remains reachable when Wi-Fi, MQTT or the heap are gone. The device advertises as
-`fugu-<hostname>`; `ble_security` and `ble_passkey` in `ble.conf` select the pairing mode.
+Wi-Fi, so it remains reachable when Wi-Fi, MQTT or the heap are gone. The device advertises
+under its hostname, with `fugu-` prepended if missing; `ble_security` and `ble_passkey` in `ble.conf` select the pairing mode.
 
 `onStop()` stops advertising and disconnects the client, but leaves the BLE stack initialised, because the Arduino
 BLE wrapper cannot be re-initialised cleanly. The controller and the NimBLE host are pinned to core 0.
@@ -150,7 +150,7 @@ See [GATT layout](../reference/ble/gatt.md).
 ## Console commands
 
 The `svc` command (alias `service`) manages services from any console. See
-[Service Commands](../reference/console.md#service-commands).
+[Service commands](../reference/console.md#service-commands).
 
 | Command | Effect |
 |---|---|

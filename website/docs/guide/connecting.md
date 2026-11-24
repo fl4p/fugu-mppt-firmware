@@ -58,8 +58,9 @@ the authorization button that Improv expects:
 | Wi-Fi down for a shorter time, or turned off with `wifi off` | Authorization required; credentials refused |
 | Wi-Fi connected | Provisioned; credentials refused |
 
-To authorize, power-cycle the device. The window opens at boot for `ble.conf::pair_window_s` (default 300 s). While
-it is open:
+To authorize, restart or power-cycle the device. The window opens when the `ble` service first starts after a boot,
+for `ble.conf::pair_window_s` (default 300 s); on a device that boots with BLE off, `svc on ble` opens it then.
+`svc restart ble` does not reopen it. While it is open:
 
 - the device offers Improv once Wi-Fi has been down for 20 s, so it does not wait out `improv_offline_s`;
 - a device with no network configured is ready for setup right after power-up.
@@ -159,7 +160,7 @@ python3 etc/fugu_console.py --ble --address <ble-address>
 
 A client without a bond pairs when it sends its first command, not on connect. That works only while the
 [pairing window](../reference/config/ble.md#pairing-window) is open: for `pair_window_s` (default 300 s) after
-power-up, or after `ble pair` on another console. Once bonded, the client connects at any time. This applies to every
+BLE first starts following a boot, or after `ble pair` on another console. Once bonded, the client connects at any time. This applies to every
 client: the host running `fugu_console.py`, a browser using Web Bluetooth (the dashboard and the config editor pair
 through the operating system), and a BLE proxy. If the host still holds a bond that the device has deleted (after
 `ble unpair` or an NVS erase), remove the device in the host's Bluetooth settings and pair again inside a window.

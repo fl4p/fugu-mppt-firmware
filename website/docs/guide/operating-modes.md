@@ -46,10 +46,14 @@ The console commands move the converter between modes as follows:
 stateDiagram-v2
   MPPT --> Manual: dc N
   Manual --> MPPT: mppt / sweep
-  MPPT --> PSU: psu V / pv isc voc
-  Manual --> PSU: psu V / pv isc voc
+  MPPT --> PSU: psu V
+  Manual --> PSU: psu V
+  MPPT --> PV: pv isc voc
+  Manual --> PV: pv isc voc
   PSU --> MPPT: psu off / mppt / sweep
-  PSU --> Manual: pv off / dc N
+  PV --> MPPT: psu off / mppt / sweep
+  PSU --> Manual: dc N
+  PV --> Manual: pv off / dc N
 ```
 
 ## MPPT
@@ -91,7 +95,8 @@ The following rules apply in manual mode:
 - While an on-device coil measurement runs (`CONFIG_FUGU_WITH_MEASURE_COIL`), every `dc` command, including `dc 0`,
   is rejected with `dc: busy measuring` until the measurement finishes. The measurement itself starts only after `dc 0`
   has stopped the converter, and leaves it at duty 0.
-- While `selftest bflow` runs, `dc` (including `dc 0`), `+N` and `-N` are refused; `selftest abort` stops it.
+- While `selftest bflow` runs, `dc` (including `dc 0`), `+N`, `-N`, `sweep` and the other commands that change the
+  PWM, rectification, backflow switch or sensors are refused; `selftest abort` stops it.
 - If the control loop does not take `dc 0` within ~1 s, it fails with `RT transition timed out`.
 - If `dc` fails in any of these cases, assume nothing was stopped. Check the reply.
 - `dc 0` stops the converter at once; a non-zero `dc N` ramps to the new duty.
