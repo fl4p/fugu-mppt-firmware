@@ -13,14 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  pv-shade:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          clang++ -std=gnu++20 -fexceptions -I test/host-stub -I src -o /tmp/pv-shade-test \
-            test/host-stub/pv-shade-test.cpp src/sim/vconv.cpp
-          /tmp/pv-shade-test
+      - run: OUT=out test/host-stub/host-tests.sh -j 4
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-unit-logs
+          path: out/*.log
 
   mppt-sim:
     runs-on: ubuntu-latest

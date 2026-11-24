@@ -20,8 +20,9 @@ For power-stage tests with a programmable supply and load, see [Automated Bench 
 
 ## Host unit tests
 
-Each `test/host-stub/*-test.cpp` builds into its own executable; there is no common build file. The header comment
-of each test gives its exact compile command. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`
+Each `test/host-stub/*-test.cpp` builds into its own executable. `test/host-stub/host-tests.sh` builds and runs all
+of them in parallel (`-j N`, default 4) or the ones named, and exits non-zero if any fails; `--list` prints the names.
+Known failures are reported as `XFAIL` with their reason. The header comment of each test gives its compile command. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`
 (`esp/`, `freertos/`, `mqtt-stub/`, and the `arduino-shim` submodule). Some tests also compile firmware sources, for
 example `src/sim/vconv.cpp` or `src/usb/vfat.cpp`. The following command builds and runs one test:
 
@@ -33,10 +34,13 @@ clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
 Tests that link more of the firmware have a wrapper script in `test/host-stub/` that builds and runs them:
 `calib-noise-test.sh`, `izero-test.sh`, `settle-test.sh` and `vconv-spice-check.sh`.
 
+The `Host tests` GitHub workflow runs `host-tests.sh` and the closed-loop scenarios on Linux for every push to `main`
+and every pull request that changes `src/`, `test/host-stub/` or `config/`.
+
 ### Closed-loop simulation
 
 `test/host-stub/mppt-sim.sh [scenario ...]` builds `mppt-sim.cpp` with the real `src/mppt.cpp`, sensor setup and the
-virtual converter plant (`src/sim/vconv.cpp`), then runs the named scenarios (default: all except `cv-hold-*`). The
+virtual converter plant (`src/sim/vconv.cpp`), then runs the named scenarios (default: all, `--list` prints them). The
 exit status reports whether any scenario failed. `minpulse-sim.sh` runs closed-loop checks on top of it.
 
 ## Host Python tests
