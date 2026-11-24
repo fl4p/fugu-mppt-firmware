@@ -8,6 +8,7 @@ metadata:
   origin: explicit
   type: project
   originSessionId: 01a207b9-17c4-72ed-9de3-1f02898edde0
+  modified: 2026-11-24T16:06:58.851Z
 ---
 
 **What it is.** `BleConsoleService` (`src/console_ble.{h,cpp}`, NimBLE NUS) gives a wireless console
@@ -72,6 +73,9 @@ should be `printf_old("%s", entry.str)`.
 
 **Bench/test caveats.** macOS keeps a stale bond after a reflash (CBError 14); `blueutil --unpair`
 does not work for LE on recent macOS (classic only) — forget the device in System Settings, or set the
-`ble.conf` security key to none and reboot to bypass bonding. The proxy→fry path won't subscribe to
-notifications (fry's NUS needs an encrypted/bonded link, the proxy connects plaintext) and direct
+`ble.conf` security key to none and reboot to bypass bonding (2026-11-24: on fry it reported success
+but the pairing stayed listed). Proxy path: the link is bonded+encrypted; the old "no replies" was the
+client never writing the TX CCCD (aioesphomeapi start_notify doesn't, the proxy leaves it to the client);
+fixed in fugu-py dc3b5ec. A peer without a CCCD subscription holds replies silently (NO_SUBSCRIBER treated
+as backpressure in console_ble.cpp). Direct
 bleak to fry is mbuf-fragile — a couple of reconnects can trip a GATT bring-up reset.

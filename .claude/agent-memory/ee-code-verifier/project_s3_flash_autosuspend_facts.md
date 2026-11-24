@@ -20,4 +20,4 @@ Verified in IDF 6.0.3 source (2026-11-12, review of flash-autosuspend commit 7fa
 - Self-test trap in 7faabfe: reader checksums only on full 256 KB window wrap (8192 reads x 50 us = 410 ms), so
   reads during a ~60-200 ms erase are never data-checked -> "fail(data)" unreachable; junk reads would PASS.
 **How to apply:** any S3 auto-suspend validation must check per-read data during the erase, and treat tRS<spec as
-unverified until measured. See [[project_flash_write_rt_stall_measured]].
+unverified until measured. See [[project_rt_loop_latency]].

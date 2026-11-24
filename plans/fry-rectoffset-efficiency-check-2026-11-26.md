@@ -35,4 +35,4 @@ Start on or after 2026-11-26. InfluxDB only, no device commands.
 - Short note in `doc/research/` with the before/after ratio, the spread and the sample counts.
 - Expect a difference of no more than ~1 % of DCM power. If it is within the spread, record it as
   "not resolvable" and close the item. Keep −325 ns either way, because it is a measured value.
-- Update memory `project_rectcal_field_results_1124` when done.
+- Update memory `project_rectification` when done.

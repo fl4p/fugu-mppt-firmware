@@ -36,7 +36,7 @@ this. Workarounds:
 - The destructive/fuzz scripts are serial-only (hardcoded `SerialTransport`). To fuzz over telnet:
   `fe.SerialTransport = lambda *a,**k: SocketTransport(ip,port=23,is_telnet=True)` plus
   `Console(eol="\n")`, and `FUZZ_SWEEP_SPEED=0` for `fuzz_extreme` (a reboot drops telnet). That
-  combination is what found [[project_telnet_wifi_off_pbuf_uaf]]. Coredump streaming over telnet
+  combination is what found [[project_crash_rootcauses]]. Coredump streaming over telnet
   stalls ~13 KB — pull the partition with `parttool.py read_partition --partition-name coredump`.
 - Remaining e2e console-cluster failures are harness portability, not firmware: `console-plan`
   hardcodes an S3 DRAM peek address, `stdin-batch` shells `fugu_console.py --telnet` (valid flag is

@@ -16,7 +16,7 @@ Review of /tmp/dawn 72c449f (branch flash-autosus), 2026-11-14.
   implementer's own crossing estimate (-35..-70). Harmless magnitude (~0.1-0.3 A peak reverse) but not "earlier".
 - No `rect-cal discard`: a Done result is applied at once and saved at the first >=10 s converter-off with |P|<1 W
   (dusk, backoff, dc 0, ota download, measure-coil end). Discard = `restart` before that, or revert coil.conf after.
-- flat history: +140 ct offset caused midday sweep loops ([[project_flat_mcpwm_sweep_loop_rect_offset]]) -> accept only
+- flat history: +140 ct offset caused midday sweep loops ([[project_rectification]]) -> accept only
   applied <= 0 on flat. Backstop drops a positive offset to 0 on first collapse.
 - measure-coil l0: band from the MPP Vin read right after the mode switch (M too high near Voc; Iout 2 A stop catches
   it); never disables first, so LS = whatever sync-rect/diode emulation state MPPT left (offset applies); manual mode

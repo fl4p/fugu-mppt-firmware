@@ -26,4 +26,4 @@ eject (START STOP UNIT).
   - the idle-converter auto-restart after commit.
 - Never enable the flag for fry/flat.
 
-Related: [[project-idf6-dual-build]]
+Related: [[project_build_toolchain]]

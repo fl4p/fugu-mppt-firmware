@@ -4,7 +4,7 @@
 
 Handoff from the idle-power session (2026-11-15 to 11-18). Raw data and logs:
 `doc/research/idle-power-sweeps/` (untracked). Background notes: `doc/dev-notes/rf-power.md`,
-memory `project_idle_power_levers_1115`, kb `esp32/realtime-and-power.md` and
+memory `project_heap_power_budget`, kb `esp32/realtime-and-power.md` and
 `esp32/usb-console-and-recovery.md`.
 
 ## 1. BUG, fix first: a converter at the idle clock does not start at dawn

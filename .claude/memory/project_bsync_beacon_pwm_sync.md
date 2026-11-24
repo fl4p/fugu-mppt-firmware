@@ -29,7 +29,7 @@ G=2P+1 half-tick math; sigma-delta dithers period {P,P+1} (never below P — LS-
   WIFI_PS_NONE every second.
 - Beacon accept rate only 0.2–3/s on a congested channel next to a switching converter (vs
   10/s TBTT) — alpha-beta prediction bridges it fine.
-- `add_ap()` (telemetry.cpp:79) hit the [[project_conffile_inmem_multipair_miscompile]] live:
+- `add_ap()` (telemetry.cpp:79) hit the [[project_crash_rootcauses]] live:
   wifi-add silently didn't persist; workaround = set-config wifi.conf ssid_X / ssid_X_psk.
 - Root `sdkconfig` had CONFIG_FUGU_WITH_MCPWM unset (regenerated at some point) — bsync
   compiles itself out silently without it; re-enabled locally 8-04. Check before fry/flat OTA.
@@ -94,5 +94,5 @@ panics in ledc_stop; defensive fix still owed).
 
 **Open:** node-side injector removal (keep 100 TU); optional bw sweep at hw_only; coast/AP-loss
 test; RX-only noise-floor comparison.
-Requires pwm_driver=mcpwm ([[project_runtime_selectable_pwm_driver]]). XIAO node on
+Requires pwm_driver=mcpwm ([[project_mcpwm]]). XIAO node on
 /dev/cu.usbmodem101 — never reset it (ROM download mode trap; replug w/o BOOT).

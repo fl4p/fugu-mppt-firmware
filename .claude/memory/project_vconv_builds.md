@@ -14,7 +14,7 @@ metadata:
 choice (LEDC / MCPWM / VCONV, commit 1e5c0225). It no longer `depends on !FUGU_WITH_MCPWM`, so the
 old "VCONV is invisible while MCPWM is on" gotcha is gone; VCONV swaps in the software plant
 (`src/sim/vconv.*`, `sensor.conf adc=vconv`) and drives no gates. See
-[[project_runtime_selectable_pwm_driver]].
+[[project_mcpwm]].
 
 **S3** — separate build dir + its own sdkconfig, or the root `sdkconfig` (MCPWM=y) wins:
 
@@ -49,4 +49,4 @@ overrun**, not a wall-clock dt: `dt = 1/adcFreq` is fixed (`src/adc/vconv.h`), b
 plant-time fell behind controller-time and bistable P&O on the steep PV knee landed in either basin.
 Fix: `hasData()` steps the plant by the coalesced tick count (`stepSeconds(dt*ticks)`, capped at
 kMaxCatchupTicks=8). Lesson kept: rtcount means are inflated by ADC-ISR preemption — the `min`
-column is the truer compute figure. Related: [[project_fry_flat_may29_crash_rootcause]].
+column is the truer compute figure. Related: [[project_crash_rootcauses]].

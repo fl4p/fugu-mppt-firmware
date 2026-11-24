@@ -19,7 +19,7 @@ production sustaining ~450 SPS only because `hasData()` reads it every cycle. Di
 *not* a reason: alert sources are mutually exclusive, only CNVR is enabled, and OVF (bit 2) does not
 assert the pin. The floor is 3 I2C reads/sample (MASK_EN re-arm + BUS + CURRENT); the only real
 latency lever is conversion time (`CONV_TIME` 1100→588 µs). No auto-re-arming conv-ready mode
-exists on INA226 (INA228/237 differ = hardware swap). See [[project_fry_ina226_undereads_157]].
+exists on INA226 (INA228/237 differ = hardware swap). See [[project_coil_and_ringing]].
 
 **"Loop latency high, shutdown!" (2026-05-22, 21 trips at 230-380 W).** The INA226 chronically
 misses conversion-ready alerts: `hasData()` waits 3 ms per miss (logging only every 20000th) and fry
@@ -44,7 +44,7 @@ under 200 — a discovery poller thus shuts the converter down every poll. Fixes
 Real-Time Latency.md ("Console commands trip the loop-latency watchdog": log-alloc off the RT path,
 require N consecutive low windows, stop polling the console) but **not implemented**.
 
-**Bus-OV alert knob (`board.conf ina22x_ov`, main bd1f472, 2026-11-14).** Value is volts after the
+**Bus-OV alert knob (`sensor.conf ina22x_ov`, was board.conf until 68a57911, main bd1f472, 2026-11-14).** Value is volts after the
 divider; 0 = the old conv-ready alert. When set, ALERT = BOL|LEN, the ISR (`g_hwOvIsrHook`) forces
 the MCPWM gates low and sets `g_hwOvTrip` → `protect()` → `shutdownDcdc("hw-OV")`; samples are found
 by polling CVRF (esp_timer wakes 300 µs early, busy-wait ≤400 µs). Fry-tested: trips mid-sweep under
@@ -58,3 +58,5 @@ carries review fixes: lost arm trips and retries once per period (ISR/hasData ke
 clears `g_hwOvTrip`, `forceShutdown` always_inline. Before enabling `FUGU_GPIO_ISR_IRAM`: review plus
 a forced caches-off test (patch `fugu_flash_sus_set(false)` in flash_probe.cpp, constant OV alert, 20
 set-config writes, no panic). Open issue: the enable path can clear the ISR force for one sample.
+
+**Keys moved 2026-11-23 (68a57911):** `ina22x_resistor`, `ina22x_conv_time_us`, `ina22x_ov` are read from sensor.conf only; a board.conf copy equal to the sensor.conf value only warns, any other copy fails setup. `ina22x_addr`/`ina22x_alert` stay in board.conf; `ina22x_range` is dead (13023313). `etc/migrate_side_keys.py` migrates dirs and prints live commands.

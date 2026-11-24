@@ -17,4 +17,4 @@ Headline (primaries inspected: Keil 2016 JES, Preger 2020 JES, Naumann 2018/2020
 - 3.55 vs 3.65 V cutoff: untested; 3.65 V is EVE's standard CV target.
 - Never charge below 0 °C; derate above ~45 °C. Charge rate ≤0.5 C is a weak lever (only S7 varied charge rate).
 
-**Why:** a first draft claimed hysteresis alone keeps idle SoC ≤70 %; the Codex review caught the arithmetic. See [[project-recharge-after-full-periodic-sweep]].
+**Why:** a first draft claimed hysteresis alone keeps idle SoC ≤70 %; the Codex review caught the arithmetic. See [[project_charger_termination]].

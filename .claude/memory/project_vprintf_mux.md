@@ -40,4 +40,4 @@ doing `r = vsnprintf(p, cap, ...); p += r;` or `buf[r] = '\n';` and clamp `r = m
 TLSF assert; leave it on while shaking these out.
 
 Related: [[project_logging_stack_budget]] (the same mux path on a foreign task's stack),
-[[project_newlib_nano_format]].
+[[project_build_toolchain]].
