@@ -18,7 +18,7 @@ The hardware must measure the following signals.
 | Signal | Required | Notes |
 |---|---|---|
 | `Vout` | Yes | Battery voltage; should be precise and sampled fast to limit transients on load changes |
-| `Vin` | Yes | May be coarse (an 8-bit ADC is enough if `Iout` is measured); needed for diode emulation in DCM and for the under- and over-voltage shutdowns |
+| `Vin` | Yes | May be coarse (an 8-bit ADC is enough if `Iout` is measured); needed for diode emulation in DCM, the Vin over-voltage trip and the `vin_min` floor; the board-supply under-voltage stop uses the higher of Vin and Vout |
 | `Iin` or `Iout` | At least one | The missing side is computed by a `VirtualSensor` from the voltage ratio and a fixed 97 % efficiency |
 | `ntc` | Optional | Heatsink temperature for derating |
 
@@ -33,7 +33,7 @@ The following backends implement this interface.
 
 | Backend | Hardware |
 |---|---|
-| `ADC_ESP32_Cont` | ESP32/ESP32-S3 internal ADC in continuous (DMA) mode (`esp32adc1`), see [Internal ADC](../guide/hardware/internal-adc.md) |
+| `ADC_ESP32_Cont` | ESP32 and ESP32-S3 internal ADC in continuous (DMA) mode (`esp32adc1`), see [Internal ADC](../guide/hardware/internal-adc.md) |
 | `ADC_ADS` | ADS1015 / ADS1115 over I²C (`ads1015`, `ads1115`; `CONFIG_FUGU_WITH_ADS`) |
 | `ADC_INA226` | INA226 current and voltage monitor over I²C (`ina226`; `CONFIG_FUGU_WITH_INA226`) |
 | `ADC_Fake` | Sinusoidal mock, for tests and dev boards (`fake`) |
@@ -42,8 +42,8 @@ The following backends implement this interface.
 
 `sensor.conf` selects the backend per channel with `<chn>_adc`, using the names in parentheses, and the channel
 with `<chn>_ch` (`255` = absent). A backend left out of the build fails setup.
-`<chn>` names the board side, `hv_v`, `lv_v`, `hv_i` or `lv_i`, or `ntc`; `converter.conf::topo` maps the sides to
-Vin, Vout, Iin and Iout.
+`<chn>` is a board side (`hv_v`, `lv_v`, `hv_i`, `lv_i`) or `ntc`; `converter.conf::topo` maps the sides to Vin,
+Vout, Iin and Iout. A channel without `<chn>_adc` uses the backend named by `adc`.
 See the [configuration reference](../reference/config/sensor.md).
 
 ## Types
@@ -63,5 +63,5 @@ The sensor layer consists of the following types.
 over-voltage protection relies on.
 :::
 
-[Signal filters](signal-filters.md) describes the filter chain: median with despike, EWMA, and the
-inverter-ripple notch or comb.
+[Signal filters](signal-filters.md) describes the filter chain: the inverter-ripple notch, comb or both, a moving
+median (optionally with despike), and an EWMA.

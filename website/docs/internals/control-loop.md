@@ -42,7 +42,7 @@ flowchart TD
   ret -- yes --> retStep[Steer Vin to<br/>the recorded<br/>maximum, probe]
   ret -- no --> target{MPP duty<br/>target set?}
   target -- yes --> fade[Ramp toward<br/>the sweep's<br/>MPP duty, then<br/>hold to assess<br/>the landing]
-  target -- no --> scan{Partial peak<br/>scan running?}
+  target -- no --> scan{Partial peak scan<br/>running or due?}
   scan -- yes --> scanStep[Scan step,<br/>tracker paused]
   scan -- no --> tracker[Tracker<br/>perturb-and-<br/>observe step]
   limit --> step
@@ -56,11 +56,15 @@ flowchart TD
   sync --> x3([next sample])
 ```
 
+A CV limiter that lowers the duty does not end a sweep return pass or a fade toward the MPP duty; both keep steering.
+
 The protection checks also run on every new sample of the other channels; only the control step waits for a new
 `Vout` sample. [Protection](protection.md) describes the protection step and its trip conditions.
 
-Sweeps are held off while the battery is full or in CV, in PSU mode, during a back-off, or while a flash write is pending.
-At the maximum duty the loop steps down in CV mode; at the minimum duty outside a sweep it steps up.
+A due sweep (periodic, retry or power-doubled) waits while the charger holds the charge (full, partial, cold, CV or
+stale-BMS hold), while the loop is in CV mode, in PSU or PV emulator mode, during a back-off, or while a flash operation
+runs. The start sweep has its own gates. At the maximum duty the loop steps down in CV mode; at the minimum duty outside
+a sweep it steps up.
 [MPP Tracker](mppt-tracker.md) describes the return pass, the landing check and the partial peak scan.
 
 ## Limiters
@@ -79,12 +83,11 @@ Besides the MPP tracker, the loop contains five PD controllers, which are PID co
 the output in range under load changes prevents damage from transient over-voltage. A solar panel behaves like a
 current source, so `IinCTRL` and `IoutCTRL` can be slower.
 
-Each iteration updates all controllers and takes the lowest response. If it is positive, MPPT proceeds. Otherwise,
+Each iteration updates all controllers and takes the lowest response. If it is not negative, MPPT proceeds. Otherwise,
 MPPT halts and the duty cycle decreases in proportion to the control value.
 
-A limiter that only touches for less than
-250 ms, without passing its set-point, does not restart the tracker: the following iterations give back the duty it
-took, and tracking carries on.
+A limiter that only touches for less than 250 ms, without passing its set-point, does not restart the tracker: the
+following iterations give back the duty it took, and tracking carries on. In PSU mode every limit counts as passed.
 
 The controller gains are set in [`converter.conf`](../reference/config/converter.md#control-loop-gains).
 
