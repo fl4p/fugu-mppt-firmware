@@ -1766,6 +1766,12 @@ static void cmdSensor(cmd *c) {
                  sqrt(s->anf.ewmN.nvar()) * 100.0f, sqrt(s->anf.ewmS.nvar()) * 100.0f,
                  sqrt(s->anf.ewmN.nvar() / s->anf.ewmS.nvar()),
                  Sensor::anfEnabled ? "" : "  (stale — run `anf on`)");
+        if (!s->isVirtual) { // racy reads of RT-core filter state, display only
+            const float L = s->comb ? s->comb->length() : 0.f;
+            UART_LOG("  ripple: notch %s f0=%.1fHz %.1fdB  comb %s L=%.2f fs=%.1fHz", s->notchFilter ? "on" : "off",
+                     adcSampler.getNotchFreq(), 8.685890f * logf(adcSampler.notchAmp), L > 0 ? "on" : "off", L,
+                     ((const PhysicalSensor *) s)->notchFs);
+        }
     }
     ina226PrintInfo();
 }
