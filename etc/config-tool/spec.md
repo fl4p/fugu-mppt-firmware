@@ -762,7 +762,9 @@ amber.
   Other tests: indeterminate (a sliding segment; a faded full bar under
   `prefers-reduced-motion`), no `aria-valuenow`; the run or its result (dot + summary,
   green pass, amber fail/warn, muted detail lines in the normal font, a
-  note, a Check button where needed); the sweep chart on the MPP sweep card;
+  note, a Check button where needed); the sweep chart on the MPP sweep card,
+  the coil chart on both coil cards (below); "Device output" stays folded
+  while a coil card runs, the chart is the live view;
   a collapsible "Device output (N lines)" (open while running, folded once a
   result is in). A folded card shows none of these. Starting a
   run or a read unfolds its card; a result, a refusal or an unknown-state
@@ -797,6 +799,24 @@ amber.
 | Low-side timing (rect-cal) | Calibration | `rect-cal [force]`, abort `rect-cal abort` | confirm; typed with force | `rectcal: done:` / `failed:` (120 s) | `rect-cal status` |
 | Low-side timing from a coil sweep | Calibration | `measure-coil ls [apply]` | typed | `measure-coil: done` (300 s) | – |
 
+* **Coil charts** (`parseCoilPlot` → `tstCoilChart`, same axes helper
+  `tstAxes` and styles as the sweep chart, redrawn from the card's lines on
+  each new line). L0: a point per DCM row with a finite L, x = Ipk =
+  (Vin − Vout)·D / (fsw·L_row) (coil_fit.h's Ipk·L over L; `fsw` from the
+  `measure-coil L0: fsw=` header), y = L in µH, grey below the `Iout>=`
+  floor of the result line; the bins of `measure-coil: L(Ipk),
+  +-noise/offsets: lo-hiA <L>uH+-<se>/<sys>% | …` as a point at the bin
+  centre, a horizontal line over lo..hi and two error bars (thin ±se, wide
+  ±(se+sys)); the slope of `measure-coil: L(Ipk) slope <k> … over lo-hi A …`
+  as a dashed line L = Lc·(1 + k·(I − Ic)) through the bins' mean (Ic, Lc);
+  horizontal lines for the result `L = …` (green), coil.conf L0 (muted, the
+  card's current L0) and 0.95·L0 (dashed, "model (0.95·L0)",
+  `InductivityDcBias`); under the chart "L drops ≤ <x> %/A up to <hi> A" or
+  "No drop resolved up to <hi> A". LS: Iout over the LS count, grey in CCM,
+  vertical lines at `ideal_LS` (solid) and `auto_LS` (dashed), the `peak LS`
+  point green with its label. Line labels sit on top with a background
+  halo; the SVG has an `aria-label` summary (also the visually hidden
+  figcaption).
 * **Run** (`tstStart`): refused while another test, a services command or
   a push runs. It first sends `selftest` (read-only) for the live status line
   (`V=… I=…A <P>W … st=<mode>,…`) and the latches; then asks. **confirm**:

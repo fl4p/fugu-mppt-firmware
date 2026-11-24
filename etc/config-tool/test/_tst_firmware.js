@@ -26,6 +26,27 @@ function sweepReply({ n = 87, t = Math.floor(Date.now() / 1000) - 120, sweeping 
 const SWEEP = sweepReply();
 
 // A scripted fake firmware. Async test output is emitted with setTimeout after the start marker.
+// L0 sweep rows as src/selftest/measure_coil.cpp prints them: L falls 1.1 %/A with Ipk, a little noise, CCM at the end
+function l0Rows() {
+  const rows = [], vi = 36.1, vo = 26.8, fsw = 39000;
+  for (let i = 0; i < 24; i++) {
+    const H = 1200 + 30 * i, D = H / 4103, L = 50.6e-6 * (1 - 0.011 * ((vi - vo) * D / (fsw * 50.6e-6) - 1.4)) * (1 + 0.003 * Math.sin(i * 2.1));
+    const io = (vi - vo) * vi * D * D / (2 * vo * fsw * L);
+    rows.push(`  ${String(H).padStart(5)} ${D.toFixed(3).padStart(6)} ${vi.toFixed(2).padStart(6)} ${vo.toFixed(2).padStart(6)} ${io.toFixed(3).padStart(6)}  ${i < 23 ? 'DCM' : 'CCM'} ${(L * 1e6).toFixed(2).padStart(7)}`);
+  }
+  return [...rows, '  entered CCM; stopping'];
+}
+
+// LS sweep rows: Iout peaks near 151 ct, the sweep stops past the peak
+function lsRows() {
+  const rows = [];
+  for (let ls = 70; ls <= 175; ls += 5) {
+    const io = 0.412 - 0.00012 * (ls - 151) ** 2;
+    rows.push(`  ${String(ls).padStart(5)} ${io.toFixed(3).padStart(7)}  36.10  26.80  ${ls < 80 ? 'CCM' : 'DCM'}`);
+  }
+  return [...rows, '  passed peak; stopping'];
+}
+
 function firmware(host, opts = {}) {
   opts = { ...opts, conf: structuredClone(opts.conf || {}) };      // set-config writes to its own copy
   const sent = [];
@@ -158,11 +179,13 @@ function firmware(host, opts = {}) {
       const apply = a[a.length - 1] === 'apply';
       const lines = opts.coilFail ? ['measure-coil: need Vin>Vout+1 (Vin=12.00 Vout=26.80)']
         : a[0] === 'l0' ? ['measure-coil L0: fsw=39000 pwmMax=4103 band 1200..2600 step 30  Vin=36.10 Vout=26.80 M=0.742',
-          '      H      D    Vin   Vout   Iout mode    L_uH', '   1200  0.292  36.10  26.80  0.210  DCM   50.10',
+          '      H      D    Vin   Vout   Iout mode    L_uH', ...l0Rows(),
+          'measure-coil: L(Ipk), +-noise/offsets: 1.4-1.6A 50.62uH+-0.3/0.9% | 1.6-1.9A 50.40uH+-0.3/0.9% | 1.9-2.2A 50.15uH+-0.4/1.0%',
+          'measure-coil: L(Ipk) slope -1.10 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.50: coil -2.20..+0.00 %/A, drop <= 2.2 %/A',
           'measure-coil: L = 50.34 uH  (ring fit, 31 DCM pts, Iout>=0.15A, +-0.4% noise +-1.1% syst; ring 310 kHz = 5.2 nF node C, ripple +-3%, 2.1 periods; median of points 50.40 uH)',
           'measure-coil: Iout zero +0.003/+0.004 A (off, before/after), subtracted', '  -> coil.conf L0=5.034000e-05   note: scales with Iout cal & pwmMax; dead-time/DCR ~few % low',
           ...(apply ? ['  applied coil.conf L0=5.034000e-05 (effective next boot)'] : [])]
-        : ['measure-coil LS: HS=400 D=0.097 Vin=36.10 Vout=26.80 ideal_LS=139 auto_LS=130 sweep 70..195', '     LS    Iout    Vin   Vout mode',
+        : ['measure-coil LS: HS=400 D=0.097 Vin=36.10 Vout=26.80 ideal_LS=139 auto_LS=130 sweep 70..195', '     LS    Iout    Vin   Vout mode', ...lsRows(),
           'measure-coil: peak LS 151 (Iout_peak 0.412 A at raw argmax 150, two-sided fit)',
           '  ideal LS 139  auto LS 130  offset peak-ideal +12 ct (+3.0% HS)  peak-auto +21 ct', '  L (peak curvature) = 49.8 uH (cross-check)',
           ...(apply ? ['  applied rect_offset 300 ns (0 ct, mcpwm); saved to coil.conf once the converter is off'] : [])];
@@ -201,4 +224,4 @@ function mqttFirmware(window, devs) {
   window.document.getElementById('mqtt-url').value = 'ws://broker:9001';
 }
 
-if (typeof module !== 'undefined') module.exports = { W, I, vline, BLOCK, HELP, sweepReply, SWEEP, firmware, mqttFirmware };
+if (typeof module !== 'undefined') module.exports = { l0Rows, lsRows, W, I, vline, BLOCK, HELP, sweepReply, SWEEP, firmware, mqttFirmware };

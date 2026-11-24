@@ -449,6 +449,18 @@
   .tst-chart .pt { fill:var(--fg-2); }
   .tst-chart .mdrop { stroke:var(--icon); stroke-dasharray:2 3; opacity:.55; }
   .tst-chart .mpp { fill:var(--icon); stroke:var(--bg); stroke-width:2; }
+  .tst-chart .pt.gr { fill:var(--faint); }
+  .tst-chart .ref { stroke:var(--muted); stroke-width:1; }
+  .tst-chart .ref.dash { stroke-dasharray:4 3; }
+  .tst-chart .res { stroke:var(--icon); stroke-width:1.2; }
+  .tst-chart .bin { stroke:var(--fg-2); stroke-width:1.4; }
+  .tst-chart .esys { stroke:var(--line-2); stroke-width:4; opacity:.8; }
+  .tst-chart .ese { stroke:var(--fg-2); stroke-width:1.2; }
+  .tst-chart .bpt { fill:var(--fg); stroke:var(--bg); stroke-width:1.5; }
+  .tst-chart .fit { stroke:var(--icon); stroke-width:1.6; stroke-dasharray:6 3; }
+  .tst-chart text.res-lab { fill:var(--icon); }
+  .tst-chart text.res-lab, .tst-chart text.ref-lab { paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
+  .tst-verdict { margin:6px 0 0; color:var(--fg-2); }
   .tst-chart text.mlab { fill:var(--icon); font-size:11.5px; font-weight:500; paint-order:stroke; stroke:var(--bg); stroke-width:3px; stroke-linejoin:round; }
   details.tst-log { margin-top:14px; }
   details.tst-log > summary { font-size:12.5px; }
@@ -3789,7 +3801,7 @@ const TESTS = [
     does:()=>"The tracker sweeps the duty from zero to maximum to find the maximum power point, after a short sensor zero calibration. Output power drops for a few seconds; PSU mode is left.",
     end:/\bsweep landed\b|\bStop sweep\b/, timeout:90000, finish:"sweep-curve", recheck:"sweep-curve" },
   { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
-    cmd:()=>"measure-coil l0", confirm:"typed", tag:"drives the half-bridge", save:true,
+    cmd:()=>"measure-coil l0", confirm:"typed", tag:"drives the half-bridge", save:true, chart:true,
     what:"Measures the inductance of the power coil.",
     needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
     risk:"Drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
@@ -3822,7 +3834,7 @@ const TESTS = [
       + "\n\nA result is applied at once and saved to coil.conf once the converter has been off for about 10 s.",
     end:/\brectcal: (?:done|failed|refused):/, timeout:120000, finish:"rect-cal status", recheck:"rect-cal status" },
   { id:"coills", group:"Calibration", title:"Low-side timing from a coil sweep", root:"measure-coil", optional:true,
-    cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge",
+    cmd:o=>"measure-coil ls"+(o.apply ? " apply" : ""), confirm:"typed", tag:"drives the half-bridge", chart:true,
     what:"Finds the best low-side switch timing from a coil sweep.",
     needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; DCM with Vin > Vout at a low duty; a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1.5 min, no abort",
     risk:"Forces sync rect and the backflow switch on and sweeps the low-side window in manual PWM. The firmware has no abort for it.",
@@ -3992,6 +4004,112 @@ function niceTicks(lo, hi, n){
 const svgEl = (tag, a, cls) => { const e=document.createElementNS("http://www.w3.org/2000/svg", tag);
   if (cls) e.setAttribute("class", cls); for (const k in a) e.setAttribute(k, a[k]); return e; };
 
+// Plot area, grid lines and tick labels (unit on the last tick) for both chart kinds; the elements in tstAxes.els.
+function tstAxes(xd, yd, W, H, xu, yu){
+  const L=44, R=16, T=16, B=24, els=[];
+  const X = v => L+(v-xd.lo)/(xd.hi-xd.lo)*(W-L-R), Y = p => H-B-(p-yd.lo)/(yd.hi-yd.lo)*(H-T-B);
+  const lab = (v, hi, u) => { const s=+v.toFixed(6); return v===hi ? s+" "+u : String(s); };
+  for (const v of yd.ticks){
+    els.push(svgEl("line", { x1:L, x2:W-R, y1:Y(v), y2:Y(v) }, v===0 ? "z" : "g"));
+    const t=svgEl("text", { x:L-6, y:Y(v)+3.5, "text-anchor":"end" }); t.textContent=lab(v, yd.hi, yu); els.push(t);
+  }
+  for (const v of xd.ticks){
+    const t=svgEl("text", { x:X(v), y:H-B+15, "text-anchor":"middle" }); t.textContent=lab(v, xd.hi, xu); els.push(t);
+  }
+  tstAxes.els=els;
+  return { X, Y, L, R };
+}
+
+// measure-coil output for the chart. L0: one point per DCM row, L (µH) over the peak coil current
+// Ipk = (Vin-Vout)·D/(fsw·L) (coil_fit.h with the row's L), grey below the fit's Iout floor; the fit's bins and
+// slope; the result. LS: Iout over the low-side count, grey in CCM; ideal, auto and peak.
+function parseCoilPlot(lines){
+  const p={ ls:false, fsw:0, pts:[], bins:[], slope:null, L:null, floor:0, ideal:null, auto:null, peak:null };
+  for (const raw of lines){
+    const l=tstMsgOf(tstLine(raw)); let m;
+    if ((m=l.match(/\bmeasure-coil L0: fsw=([\d.]+)/))){ Object.assign(p, { ls:false, fsw:+m[1], pts:[] }); }
+    else if ((m=l.match(/\bmeasure-coil LS: .*?ideal_LS=([\d.]+) auto_LS=(\d+)/))) Object.assign(p, { ls:true, ideal:+m[1], auto:+m[2], pts:[] });
+    else if (!p.ls && p.fsw && (m=l.match(/^\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s+(DCM|CCM)\s+(\S+)$/))){
+      const [D, vi, vo, io, L]=[+m[2], +m[3], +m[4], +m[5], +m[7]];
+      if (m[6]==="DCM" && L>0) p.pts.push({ x:(vi-vo)*D/(p.fsw*L*1e-6), y:L, io });
+    }
+    else if (p.ls && (m=l.match(/^\s+(\d+)\s+(-?[\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(DCM|CCM)$/))) p.pts.push({ x:+m[1], y:+m[2], g:m[5]==="CCM" });
+    else if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH .*?Iout>=([\d.]+)A/))){ p.L=+m[1]; p.floor=+m[2]; }
+    else if ((m=l.match(/\bL\(Ipk\), \+-noise\/offsets:(.*)$/)))
+      p.bins=m[1].split("|").map(b=>b.match(/([\d.]+)-([\d.]+)A ([\d.]+)uH\+-([\d.]+)\/([\d.]+)%/)).filter(Boolean)
+        .map(b=>({ lo:+b[1], hi:+b[2], L:+b[3], se:b[4]/100, sys:b[5]/100 }));
+    else if ((m=l.match(/\bL\(Ipk\) slope ([+-]?[\d.]+) \+-[\d.]+ %\/A over ([\d.]+)-([\d.]+) A.*(?:drop <= ([\d.]+) %\/A|no drop resolved)/)))
+      p.slope={ k:m[1]/100, lo:+m[2], hi:+m[3], drop: m[4]!=null ? +m[4] : null };
+    else if ((m=l.match(/\bmeasure-coil: peak LS ([\d.]+) \(Iout_peak ([\d.]+) A/))) p.peak={ x:+m[1], y:+m[2] };
+  }
+  if (!p.ls) for (const q of p.pts) q.g = q.io < p.floor;
+  return p;
+}
+
+// The coil sweep (parseCoilPlot of `lines`) into `fig`, live while rows arrive; l0: coil.conf L0 (H) or 0.
+function tstCoilChart(fig, lines, cw, l0){
+  const W=Math.max(280, Math.min(760, Math.round((cw||520)/10)*10)), key=[lines.length, lines[0], W, l0].join();
+  if (fig._k===key) return;
+  fig._k=key;
+  const p=parseCoilPlot(lines), use=p.pts.filter(q=>!q.g);
+  if (!p.pts.length){ fig.hidden=true; fig.replaceChildren(); return; }
+  fig.hidden=false;
+  const narrow=W<440, H=narrow ? 190 : 210, uL=l0*1e6, ext=(a, v)=>{ if (Number.isFinite(v)){ a[0]=Math.min(a[0], v); a[1]=Math.max(a[1], v); } };
+  const xr=[Infinity, -Infinity], yr=[Infinity, -Infinity];
+  for (const q of p.pts) ext(xr, q.x);
+  for (const q of use.length ? use : p.pts) ext(yr, q.y);
+  if (p.ls){ ext(xr, p.ideal); ext(xr, p.auto); yr[0]=Math.min(0, yr[0]); }
+  else {
+    for (const b of p.bins){ ext(xr, b.lo); ext(xr, b.hi); ext(yr, b.L*(1-b.se-b.sys)); ext(yr, b.L*(1+b.se+b.sys)); }
+    ext(yr, p.L); if (uL){ ext(yr, uL); ext(yr, uL*0.95); }
+  }
+  if (!(yr[1]-yr[0]>1e-3)){ yr[0]-=0.5; yr[1]+=0.5; }
+  const xd=niceTicks(xr[0], xr[1], narrow ? 4 : 6), yd=niceTicks(yr[0]-(yr[1]-yr[0])*0.05, yr[1]+(yr[1]-yr[0])*0.05, 4);
+  const { X, Y, L, R } = tstAxes(xd, yd, W, H, p.ls ? "ct" : "A", p.ls ? "A" : "µH");
+  const f=v=>v.toFixed(1), inY=v=>v>=yd.lo && v<=yd.hi;
+  const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":p.pts.length });
+  svg.append(...tstAxes.els);
+  const labs=[];                                                   // line labels go on top of the points
+  const hline=(v, cls, label)=>{ if (!inY(v)) return;
+    svg.append(svgEl("line", { x1:L, x2:W-R, y1:f(Y(v)), y2:f(Y(v)) }, cls));
+    const t=svgEl("text", { x:W-R, y:f(Y(v)-4), "text-anchor":"end" }, cls.split(" ")[0]+"-lab"); t.textContent=label; labs.push(t); };
+  const vline=(v, cls, label, i)=>{ svg.append(svgEl("line", { x1:f(X(v)), x2:f(X(v)), y1:Y(yd.hi), y2:Y(yd.lo) }, cls));
+    const t=svgEl("text", { x:f(X(v)+3), y:Y(yd.hi)+10+11*i }, cls.split(" ")[0]+"-lab"); t.textContent=label; labs.push(t); };
+  const u=v=>+v.toFixed(2)+" µH";
+  if (p.ls){
+    if (p.ideal!=null) vline(p.ideal, "ref", "ideal "+p.ideal, 0);
+    if (p.auto!=null) vline(p.auto, "ref dash", "auto "+p.auto, 1);
+  } else {
+    if (uL){ hline(uL, "ref", "coil.conf L0 "+u(uL)); hline(uL*0.95, "ref dash", "model (0.95·L0)"); }
+    if (p.L!=null) hline(p.L, "res", "L = "+u(p.L));
+  }
+  for (const q of p.pts) if (inY(q.y)) svg.append(svgEl("circle", { cx:f(X(q.x)), cy:f(Y(q.y)), r:2.2 }, q.g ? "pt gr" : "pt"));
+  if (!p.ls && p.bins.length){
+    for (const b of p.bins){
+      const x=X((b.lo+b.hi)/2);
+      svg.append(svgEl("line", { x1:f(X(b.lo)), x2:f(X(b.hi)), y1:f(Y(b.L)), y2:f(Y(b.L)) }, "bin"),
+        svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se-b.sys))), y2:f(Y(b.L*(1+b.se+b.sys))) }, "esys"),
+        svgEl("line", { x1:f(x), x2:f(x), y1:f(Y(b.L*(1-b.se))), y2:f(Y(b.L*(1+b.se))) }, "ese"),
+        svgEl("circle", { cx:f(x), cy:f(Y(b.L)), r:3.4 }, "bpt"));
+    }
+    if (p.slope){
+      const n=p.bins.length, ic=p.bins.reduce((a, b)=>a+(b.lo+b.hi)/2, 0)/n, lc=p.bins.reduce((a, b)=>a+b.L, 0)/n, at=i=>lc*(1+p.slope.k*(i-ic));
+      svg.append(svgEl("line", { x1:f(X(p.slope.lo)), x2:f(X(p.slope.hi)), y1:f(Y(at(p.slope.lo))), y2:f(Y(at(p.slope.hi))) }, "fit"));
+    }
+  }
+  if (p.ls && p.peak){
+    svg.append(svgEl("circle", { cx:f(X(p.peak.x)), cy:f(Y(p.peak.y)), r:4.5 }, "mpp"));
+    const t=svgEl("text", { x:f(X(p.peak.x)+7), y:f(Y(p.peak.y)-8) }, "mlab"); t.textContent="peak "+p.peak.x; labs.push(t);
+  }
+  svg.append(...labs);
+  const verdict = !p.slope ? "" : (p.slope.drop!=null ? `L drops ≤ ${p.slope.drop} %/A` : "No drop resolved")+` up to ${p.slope.hi} A`;
+  svg.setAttribute("aria-label", p.ls ? `Output current over the low-side count, ${plural(p.pts.length, "point")}`+(p.peak ? `, peak at ${p.peak.x}` : "")+"."
+    : `Inductance over peak coil current, ${plural(p.pts.length, "point")}`+(p.L!=null ? `, L = ${u(p.L)}` : "")+(uL ? `, coil.conf L0 ${u(uL)}` : "")+(verdict ? `; ${verdict}` : "")+".");
+  const cap=document.createElement("figcaption"); cap.textContent=svg.getAttribute("aria-label");
+  fig.replaceChildren(cap, svg);
+  if (verdict) fig.append(tstEl("p", "tst-verdict", verdict));
+}
+
 // P over Vin of a parsed `sweep-curve` (parseCurve with points) into `fig`, sized for a card `cw` px wide.
 function tstChart(fig, c, cw){
   if (!c){ fig.hidden=true; fig._c=null; fig.replaceChildren(); return; }
@@ -4006,19 +4124,13 @@ function tstChart(fig, c, cw){
   if (vhi-vlo<2){ const m=(2-(vhi-vlo))/2; vlo-=m; vhi+=m; }
   if (!(phi-plo>=1)) phi=plo+1;
   const xd=niceTicks(vlo, vhi, narrow ? 4 : 6), yd=niceTicks(plo, phi, 4);
-  const X = v => L+(v-xd.lo)/(xd.hi-xd.lo)*(W-L-R), Y = p => H-B-(p-yd.lo)/(yd.hi-yd.lo)*(H-T-B);
+  const { X, Y } = tstAxes(xd, yd, W, H, "V", "W");
   const f1 = v => v.toFixed(1);
   const state = c.sweeping ? `sweep in progress, ${pts.length} point${pts.length===1 ? "" : "s"} so far`
     : (c.t>1e9 ? "sweep at "+fmtSweepTime(c.t) : "sweep time unknown (device clock not set)") + (c.flag==="light" ? ", sky changed during sweep" : "");
   const svg=svgEl("svg", { viewBox:`0 0 ${W} ${H}`, role:"img", "data-points":pts.length,
     "aria-label":`Power over input voltage, ${state}: ${mpp ? `${c.sweeping ? "best so far" : c.stop ? "stop point" : "MPP"} ${c.p} W at ${c.v} V` : "no maximum power point"}, ${plural(pts.length, "point")} from ${f1(vlo)} to ${f1(vhi)} V.` });
-  for (const v of yd.ticks){
-    svg.append(svgEl("line", { x1:L, x2:W-R, y1:Y(v), y2:Y(v) }, v===0 ? "z" : "g"));
-    const t=svgEl("text", { x:L-6, y:Y(v)+3.5, "text-anchor":"end" }); t.textContent = v===yd.hi ? v+" W" : String(v); svg.append(t);
-  }
-  for (const v of xd.ticks){
-    const t=svgEl("text", { x:X(v), y:H-B+15, "text-anchor":"middle" }); t.textContent = v===xd.hi ? v+" V" : String(v); svg.append(t);
-  }
+  svg.append(...tstAxes.els);
   svg.append(svgEl("path", { d:pts.map((q, i)=>(i ? "L" : "M")+X(q.V).toFixed(1)+" "+Y(q.P).toFixed(1)).join("") }, "ln"+(c.flag==="light" ? " flag" : "")));
   if (pts.length<=24) for (const q of pts) svg.append(svgEl("circle", { cx:X(q.V).toFixed(1), cy:Y(q.P).toFixed(1), r:2.2 }, "pt"));
   if (mpp){
@@ -4653,12 +4765,13 @@ function tstPaint(id){
   if (r.recheck && d.recheck && !mine){ const b=tstEl("button", "recheck", `Check (${d.recheck})`); b.type="button";
     b.disabled=!t || !!devBusy; b.onclick=()=>tstRecheck(id); parts.push(b); }
   res.replaceChildren(...parts);
-  const fig=c.querySelector(".tst-chart");
-  if (fig){ tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth); }
+  const fig=c.querySelector(".tst-chart"), coil=d.root==="measure-coil";
+  if (coil) tstCoilChart(fig, r.lines, c.clientWidth, d.save ? tstL0Cur(r) : 0);
+  else if (fig) tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth);
   const out=c.querySelector(".tst-out"), lg=c.querySelector(".tst-log");
   lg.hidden=!r.lines.length;
   lg.firstChild.textContent=`Device output (${plural(r.lines.length, "line")})`;
-  if (mine && r.st==="run") lg.open=true;
+  if (mine && r.st==="run" && !coil) lg.open=true;
   else if (r.fold){ lg.open=false; r.fold=false; }
   tstPaintOut(out, r.lines);
 }

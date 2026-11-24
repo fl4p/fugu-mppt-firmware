@@ -759,7 +759,7 @@ test('measure-coil progress: L0 and LS rows against the sweep band, early stops 
 
 test('progress bar: shown while a test runs, a value for measure-coil, indeterminate otherwise, hidden afterwards', async () => {
   const { window } = await connected({ coil: true, coilNeverEnds: true, bfNeverEnds: true, rowMs: 40 });
-  window.tstDefs().find(d => d.id === 'coil').timeout = 600;
+  window.tstDefs().find(d => d.id === 'coil').timeout = 4000;
   await openSheet(window); await idle(window);
   window.prompt = () => 'fry';
   const c = card(window, 'coil'), pg = c.querySelector('.tst-prog');
@@ -786,6 +786,81 @@ test('progress bar: shown while a test runs, a value for measure-coil, indetermi
   assert.ok(bp.classList.contains('ind'));
   assert.equal(bp.getAttribute('aria-valuenow'), null);
   await r2;
+});
+
+test('coil chart parsing: L0 rows to L over Ipk, the fit bins and slope, the result; LS rows, ideal, auto and peak', async () => {
+  const { window } = await loadEditor();
+  const { l0Rows, lsRows } = require('./_tst_firmware');
+  const L0 = ['measure-coil L0: fsw=39000 pwmMax=4103 band 1200..2600 step 30  Vin=36.10 Vout=26.80 M=0.742',
+    '      H      D    Vin   Vout   Iout mode    L_uH', ...l0Rows(),
+    'measure-coil: L = 50.34 uH  (ring fit, 31 DCM pts, Iout>=0.30A, +-0.4% noise +-1.1% syst; ring 310 kHz = 5.2 nF node C)',
+    'measure-coil: L(Ipk), +-noise/offsets: 1.4-1.6A 50.62uH+-0.3/0.9% | 1.6-1.9A 50.40uH+-0.3/0.9% | 1.9-2.2A 50.15uH+-0.4/1.0%',
+    'measure-coil: L(Ipk) slope -1.10 +-0.30 %/A over 1.4-2.2 A, Iout/on-time offsets add up to +-0.50: coil -2.20..+0.00 %/A, drop <= 2.2 %/A'];
+  const p = window.parseCoilPlot(L0);
+  assert.equal(p.ls, false); assert.equal(p.fsw, 39000);
+  assert.equal(p.pts.length, 23, 'DCM rows only');
+  const r0 = l0Rows()[0].trim().split(/\s+/).map(Number);   // H D Vin Vout Iout mode L
+  assert.ok(Math.abs(p.pts[0].x - (r0[2] - r0[3]) * r0[1] / (39000 * r0[6] * 1e-6)) < 1e-9, 'Ipk = (Vin-Vout)·D/(fsw·L)');
+  assert.ok(Math.abs(p.pts[0].x - 1.376) < 0.005);
+  assert.equal(p.pts[0].y, r0[6]);
+  assert.deepEqual([...p.pts].map(q => q.g), [...p.pts].map(q => q.io < 0.30), 'grey below the fit floor');
+  assert.ok(p.pts.some(q => q.g) && p.pts.some(q => !q.g));
+  assert.equal(p.L, 50.34); assert.equal(p.floor, 0.30);
+  assert.deepEqual([...p.bins].map(b => [b.lo, b.hi, b.L, +b.se.toFixed(4), +b.sys.toFixed(4)]), [[1.4, 1.6, 50.62, 0.003, 0.009], [1.6, 1.9, 50.4, 0.003, 0.009], [1.9, 2.2, 50.15, 0.004, 0.01]]);
+  assert.deepEqual({ ...p.slope, k: +p.slope.k.toFixed(4) }, { k: -0.011, lo: 1.4, hi: 2.2, drop: 2.2 });
+  const s2 = window.parseCoilPlot(['measure-coil: L(Ipk) slope +0.40 +-0.30 %/A over 0.5-1.8 A, Iout/on-time offsets add up to +-0.20: coil -0.40..+1.20 %/A, no drop resolved']).slope;
+  assert.deepEqual({ ...s2, k: +s2.k.toFixed(4) }, { k: 0.004, lo: 0.5, hi: 1.8, drop: null });
+  assert.equal(window.parseCoilPlot(L0.slice(0, 5)).L, null, 'no result while rows arrive');
+  const LS = ['measure-coil LS: HS=400 D=0.097 Vin=36.10 Vout=26.80 ideal_LS=139 auto_LS=130 sweep 70..195',
+    '     LS    Iout    Vin   Vout mode', ...lsRows(), 'measure-coil: peak LS 151 (Iout_peak 0.412 A at raw argmax 150, two-sided fit)'];
+  const q = window.parseCoilPlot(LS);
+  assert.equal(q.ls, true); assert.equal(q.ideal, 139); assert.equal(q.auto, 130);
+  assert.equal(q.pts.length, 22);
+  assert.deepEqual({ ...q.pts[0] }, { x: 70, y: +(0.412 - 0.00012 * 81 ** 2).toFixed(3), g: true }, 'CCM grey');
+  assert.deepEqual({ ...q.peak }, { x: 151, y: 0.412 });
+});
+
+test('coil chart: drawn live in the card, the result, coil.conf L0 and the 0.95·L0 model, bins, slope and its verdict', async () => {
+  const { window } = await connected({ coil: true, rowMs: 30, conf: { ...CONF, 'coil.conf': { L0: '5.090000e-05' } } });
+  window.tstDefs().find(d => d.id === 'coil').timeout = 5000;
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  const c = card(window, 'coil'), fig = c.querySelector('.tst-chart');
+  assert.equal(fig.hidden, true, 'no chart before a run');
+  const run = window.tstStart('coil');
+  await until(() => +((fig.querySelector('svg') || { getAttribute: () => 0 }).getAttribute('data-points')) >= 3);
+  assert.equal(seen(fig), true, 'drawn while rows arrive');
+  assert.equal(c.querySelector('.tst-log').open, false, 'the device output stays folded under the chart');
+  assert.equal(fig.querySelector('.res'), null, 'no result line yet');
+  await run;
+  const svg = fig.querySelector('svg');
+  assert.equal(svg.getAttribute('data-points'), '23');
+  assert.equal(fig.querySelectorAll('circle.pt').length + fig.querySelectorAll('circle.pt.gr').length >= 23, true);
+  const labs = [...svg.querySelectorAll('text')].map(t => t.textContent);
+  assert.ok(labs.includes('L = 50.34 µH'));
+  assert.ok(labs.includes('coil.conf L0 50.9 µH'));
+  assert.ok(labs.includes('model (0.95·L0)'));
+  assert.ok(labs.includes('A') || labs.some(t => / A$/.test(t)), 'Ipk axis in A');
+  assert.ok(labs.some(t => / µH$/.test(t)), 'L axis in µH');
+  assert.equal(svg.querySelectorAll('.ref.dash').length, 1);
+  assert.equal(svg.querySelectorAll('.bpt').length, 3);
+  assert.equal(svg.querySelectorAll('.ese').length, 3); assert.equal(svg.querySelectorAll('.esys').length, 3);
+  assert.equal(svg.querySelectorAll('.fit').length, 1);
+  assert.equal(fig.querySelector('.tst-verdict').textContent, 'L drops ≤ 2.2 %/A up to 2.2 A');
+  assert.match(svg.getAttribute('aria-label'), /^Inductance over peak coil current, 23 points, L = 50\.34 µH, coil\.conf L0 50\.9 µH; L drops/);
+  assert.ok(!svg.outerHTML.includes('NaN'));
+  fold(window, 'coil');
+  assert.equal(seen(fig), false, 'folds with the card');
+
+  window.prompt = () => 'fry';
+  await window.tstStart('coills');
+  const ls = card(window, 'coills').querySelector('.tst-chart svg');
+  const ll = [...ls.querySelectorAll('text')].map(t => t.textContent);
+  assert.ok(ll.includes('ideal 139') && ll.includes('auto 130') && ll.includes('peak 151'));
+  assert.equal(ls.getAttribute('data-points'), '22');
+  assert.ok(ll.some(t => / ct$/.test(t)));
+  assert.equal(card(window, 'coills').querySelector('.tst-verdict'), null);
+  assert.ok(!ls.outerHTML.includes('NaN'));
 });
 
 test('measure-coil link check after a timeout uses the status line', async () => {

@@ -486,6 +486,17 @@ the measurement and sends `mppt` afterwards in every outcome: a result, a failur
 ends with "Resumed MPPT." or, in amber, why MPPT was not resumed. A device already at `dc 0` is measured as it is and
 left there. In PSU/PV mode or at a manual duty the editor stops nothing: the entry shows the firmware's refusal.
 
+Both coil entries draw their sweep as the rows arrive, with the device output folded below the chart:
+
+- **Coil inductance (L0)** plots the inductance of each DCM row over the coil's peak current,
+  Ipk = (Vin − Vout)·D / (fsw·L) with the row's own L, the formula the firmware's fit uses. Rows below the fit's
+  current floor are grey. Once the run ends the chart adds the fit: its current bins as points with error bars (thin:
+  noise, wide: offset bounds), the fitted slope as a dashed line over its range, the result "L = …", the device's
+  `coil.conf` L0 and, dashed, the converter model's 0.95·L0 (the fixed DC-bias allowance). Under the chart the slope
+  verdict reads, for example, "L drops ≤ 2.2 %/A up to 2.2 A" or "No drop resolved up to 1.8 A".
+- **Low-side timing from a coil sweep** plots the output current over the low-side count (CCM rows grey), with the
+  ideal and automatic low-side counts and the peak marked.
+
 The coil inductance run writes nothing. Next to **Run** the entry shows the device's current `L0` (read with
 `get-config coil.conf` when the entry unfolds) and, after a run with a value, the measured one with the difference,
 for example "Current L0: 50.9 µH · Measured 50.34 µH (−1.1 %)". **Save L0 to coil.conf** is enabled only then: it
