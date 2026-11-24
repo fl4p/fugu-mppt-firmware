@@ -21,7 +21,7 @@ Highlights:
 * Robust [signal processing](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/signal-filters/) using notch
   filters (reject inverter noise), rolling median (reject burst noise) and fast IIR filters (low pass)
 * [PID control](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/control-loop/) for precise voltage and current regulation
-* Periodic MPPT global search (aka scan, sweep)
+* Periodic [MPPT global search](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/mppt-tracker/#global-sweep) (aka scan, sweep)
 * Sophisticated [Diode Emulation](#synchronous-buck-and-diode-emulation) for low-side switch synchronous rectification
 * Supports buck and boost converter operation, and can be used for power supply too
 * Fast [protection](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/) shutdown in over-voltage and over-current conditions
