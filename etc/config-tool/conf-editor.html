@@ -991,6 +991,12 @@ const FILE_META = {
   "charger.conf":  { vout_max:{unit:"V",desc:"Max pack/output charge-target voltage",type:"float"} },
   "tlscon.conf":   { port:{unit:"",desc:"TCP port of the TLS-PSK console (default 992)",type:"int"} },
   "telnet.conf":   { trusted:{unit:"",desc:"Allow all commands over telnet (0 = read-only commands only)",type:"bool"} },
+  "extport.conf":  {
+    mode:{unit:"",desc:"Port mode: off, or vedirect (VE.Direct text block once a second, 19200 8N1). CONFIG_FUGU_WITH_EXTPORT builds only",type:"enum",opts:["off","vedirect"]},
+    tx_pin:{unit:"",desc:"GPIO of the port's TX line; required, nothing is driven while unset",type:"int"},
+    rx_pin:{unit:"",desc:"GPIO of the port's RX line; any byte other than a VE.Direct HEX frame latches TX off. Unset = no guard",type:"int"},
+    pid:{unit:"",desc:"VE.Direct product ID sent in the PID field (default 0xA056, SmartSolar MPPT 100/30)",type:"int"},
+  },
   "converter.conf":{ vout_max:{unit:"V",desc:"Not read (old output voltage limit; now limits.conf lv_max in buck, hv_max in boost)",type:"float"} },
   "vconv.conf":    {
     isc:{unit:"A",desc:"PV short-circuit current (vconv pv)",type:"float"},
@@ -1044,13 +1050,13 @@ const APPLY = {
   "mqtt.conf":"mqtt", "http.conf":"http", "tlscon.conf":"tlscon", "bsync.conf":"bsync",
   "tele.conf":{"":"tele", ble:"live", adv_ms:"ble", idle_interval_ms:"reboot"},
   "ftp.conf":{"":"ftp", ftp_user:"ftp http", ftp_pass:"ftp http"},
-  "telnet.conf":"telnet", "lcd.conf":"lcd",
+  "telnet.conf":"telnet", "lcd.conf":"lcd", "extport.conf":"extport",
 };
 // <name>.conf of these services: enabled/log_level are pushed as `svc on|off|log`, which writes and applies
-const SERVICES = ["mqtt","tele","ftp","http","telnet","tlscon","lcd","scope","ble","bsync"];
+const SERVICES = ["mqtt","tele","ftp","http","telnet","tlscon","lcd","scope","ble","bsync","extport"];
 const LINK_SVC = {mqtt:"mqtt", ble:"ble"};   // service an editor transport runs through
 // enabledDefault of each service's constructor (service.h:51), for a conf without `enabled`
-const SVC_ON_DEFAULT = {mqtt:1, tele:0, ftp:1, http:1, telnet:0, tlscon:0, lcd:0, scope:1, ble:0, bsync:0};
+const SVC_ON_DEFAULT = {mqtt:1, tele:0, ftp:1, http:1, telnet:0, tlscon:0, lcd:0, scope:1, ble:0, bsync:0, extport:0};
 // what switching a service off cuts, for the review sheet
 const SVC_OFF_WARN = {
   mqtt:"Its console closes, and a charger that gets its BMS data over MQTT loses it and falls back to its stale-cell voltage cap.",
@@ -1192,6 +1198,7 @@ const FILE_KEYS = {
   "scope.conf":["enabled","log_level"],
   "bsync.conf":["bssid","bw","channel","enabled","hw_only","ki","kp","log_level","phase_us"],
   "lcd.conf":["addr","enabled","log_level"],
+  "extport.conf":["enabled","log_level","mode","pid","rx_pin","tx_pin"],
   "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level","pair_window_s"],
   "pprof.conf":["sprofiler_hz"],
   "wifi.conf":["improv_offline_s","switch_delay"],
@@ -1216,7 +1223,7 @@ const TYPE_KEYS = {
     "trusted","wire_protect","bflow_model","bflow_stuck","hs_short","i_unidir","vbat_ac_shape"]),
   long: new Set(["adc_fake_freq","adv_ms","balance_hold_s","binary","ble","ble_passkey",
     "cv_hold_max_s","esp32adc1_avg","esp32adc1_sr","fpwm_gate_hold","holiday_days","i2c_freq",
-    "i2c_hs_freq","i2c_scl","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
+    "i2c_hs_freq","i2c_scl","pid","rx_pin","tx_pin","idle_adv_ms","idle_cpu_mhz","idle_interval_ms","improv_offline_s",
     "ina226_conv_time_us","pair_window_s","pasv_port","port","pwm_freq","scan_interval",
     "sprofiler_hz","switch_delay","tail_hold_s","adc_freq","pwm_clk","sun_seed"]),
   float: new Set(["L0","balance_delta","balance_interval","bat_c","bat_temp_derate",
@@ -1302,6 +1309,8 @@ const DEFAULTS = {
   "phase_us":"0.0",
   // lcd.conf
   "addr":"0",
+  // extport.conf
+  "pid":"0xA056","rx_pin":"-1","tx_pin":"-1",
   // ble.conf
   "ble_passkey":"0","ble_security":"\"justworks\"","idle_adv_ms":"1000","pair_window_s":"300",
   // pprof.conf
@@ -1630,6 +1639,7 @@ const FILE_DESC = {
   telnet:"Telnet console.",
   scope:"Raw ADC stream for the soft oscilloscope.",
   lcd:"Character LCD.",
+  extport:"External comms port (VE.Direct output).",
   bsync:"PWM clock sync from Wi-Fi beacons.",
   pprof:"Sampling profiler.",
 };

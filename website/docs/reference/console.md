@@ -330,7 +330,7 @@ The following commands require manual PWM mode.
 ## Service Commands
 
 The firmware manages the optional non-RT subsystems as services: `mqtt`, `tele` (telemetry), `ftp`, `http`, `telnet`,
-`tlscon`, `lcd`, `scope`, `ble` and `bsync`, as far as the build includes them (`svc list` shows them). Each has its own state, log level, and `enabled` flag persisted in its conf file. The following
+`tlscon`, `lcd`, `scope`, `ble`, `bsync` and `extport`, as far as the build includes them (`svc list` shows them). Each has its own state, log level, and `enabled` flag persisted in its conf file. The following
 commands control them.
 
 | Command | Description |

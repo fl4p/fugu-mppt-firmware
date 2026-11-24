@@ -23,7 +23,7 @@ from the main checkout's `.git/modules` over the `file` transport, which is refu
 git -c protocol.file.allow=always submodule update --init --recursive --force   # once per fresh clone/worktree
 . ./idf-export.sh          # sources ESP-IDF, sets IDF_TARGET (arg `esp32`, else an exported IDF_TARGET, else esp32s3), sets $ESPPORT to the first USB port unless already set
 idf.py set-target esp32s3  # only needed once per build dir
-idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC off (MEASURE_COIL on in sdkconfig.d/fleet; NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
+idf.py build               # feature flags live in Kconfig now (CONFIG_FUGU_WITH_*, idf.py menuconfig -> "Fugu MPPT firmware"): BLE/NETW default on, NETTOOLS/MCPWM/VCONV/SPROFILER/MEASURE_COIL/USB_MSC/EXTPORT off (EXTPORT = VE.Direct text output, extport.conf; MEASURE_COIL on in sdkconfig.d/fleet; NETTOOLS depends on NETW; USB_MSC = S3 USB config drive, website/docs/guide/usb-drive.md). The old WITH_* env vars are rejected. Binary telemetry is a tele.conf setting, not a build flag
 idf.py -p $ESPPORT app-flash
 ./etc/fugu_console.py -p ESPPORT # see cli docs, it supports --stdin and -c
 ```

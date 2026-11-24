@@ -199,6 +199,14 @@ product would draw far more than that port's 10 mA allowance. Label the adapters
 
 ## 4. Firmware
 
+> **Status (2026-11-24).** `vedirect` text-mode TX is implemented: service `extport` (`src/tele/extport_service.h`),
+> `CONFIG_FUGU_WITH_EXTPORT` (default n, ~10 KB flash), `extport.conf` keys `mode`, `tx_pin`, `rx_pin`, `pid`
+> (default 0xA056, SmartSolar MPPT 100/30). UART1, no HEX mode, no DVCC. The guard here is the RX-content rule only
+> (any byte outside HEX-frame characters latches TX off); the V+ current signature and `/OE` need the new board.
+> Block format and checksum are covered by `test/host-stub/vedirect-test.cpp`; its output also parses with emonhub's
+> `EmonHubVEDirectInterfacer` state machine. Not yet run on hardware. Bench path: v2.3 J5 (TX GPIO36, RX GPIO37).
+> Test readers: emonhub (`com_baud = 19200`; its default is 9600), a USB-serial adapter, then a GX (Phase 0.4).
+
 - The feature sits behind `CONFIG_FUGU_WITH_EXTPORT`, default n until it is validated.
 - Build prerequisite: `CONFIG_TWAI_ERRATA_FIX_LISTEN_ONLY_DOM=y`. Set it in `sdkconfig.defaults` and
   assert it at compile time.

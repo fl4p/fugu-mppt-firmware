@@ -19,6 +19,9 @@
 #include "util.h"
 #include "viz/lcd.h"
 #include "viz/lcd_service.h"
+#if CONFIG_FUGU_WITH_EXTPORT
+#include "tele/extport_service.h"
+#endif
 #include "viz/led.h"
 #include "tele/console_ble_service.h"
 #include "etc/network_shim.h"
@@ -426,6 +429,9 @@ static void registerServices() {
 #endif
 #endif
     g_services.registerService(&lcdService);
+#if CONFIG_FUGU_WITH_EXTPORT
+    g_services.registerService(&extPortService);
+#endif
 #if WITH_SCOPE
     g_services.registerService(&scopeService);
 #endif

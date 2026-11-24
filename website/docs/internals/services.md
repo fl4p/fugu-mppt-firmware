@@ -73,6 +73,7 @@ wraps; `src/main.cpp` only registers them.
 | `scope` | Raw ADC stream over TCP, port 24 | yes | yes | `FUGU_WITH_SCOPE` | [scope.conf](../reference/config/scope.md) |
 | `ble` | BLE console (NUS), BLE OTA, BLE telemetry | no | no | `FUGU_WITH_BLE` | [ble.conf](../reference/config/ble.md) |
 | `bsync` | Switching-clock sync to Wi-Fi beacons | no | no | `FUGU_WITH_BSYNC` with MCPWM | [bsync.conf](../reference/config/bsync.md) |
+| `extport` | External comms port: VE.Direct text output | no | no | `FUGU_WITH_EXTPORT` | [extport.conf](../reference/config/extport.md) |
 
 `FUGU_WITH_FTP` and `FUGU_WITH_SCOPE` depend on `FUGU_WITH_NETW`. `bsync` sniffs beacons without associating, so it
 does not wait for Wi-Fi. See [Build Options](../guide/getting-started/build-options.md) for the Kconfig switches.
@@ -87,6 +88,8 @@ does not wait for Wi-Fi. See [Build Options](../guide/getting-started/build-opti
   flush task compresses and sends them. `onStop()` deletes the task.
 - **telnet**: the connected client is also a log sink; `onStop()` drops the sink before the server stops.
 - **lcd**: `onStart()` probes the display; `onTick()` refreshes Vin, Vout, Iin, Iout and temperature.
+- **extport**: `onStart()` installs the UART1 driver on the configured pins; `onTick()` checks RX and sends one
+  VE.Direct block per second.
 - **scope**: the data channel is registered during sensor setup; the service only owns the TCP server and its
   pump. The sampling path reaches the scope through a plain pointer and does not depend on the service layer.
 

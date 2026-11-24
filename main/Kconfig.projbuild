@@ -307,4 +307,11 @@ config FUGU_WITH_PWR_KNOBS
         temperature. Changes are not persisted; a reboot restores the defaults. sdkconfig.d/pwr
         enables it, sdkconfig.d/pm adds power management with auto light sleep.
 
+config FUGU_WITH_EXTPORT
+    bool "External comms port (VE.Direct text output)"
+    default n
+    help
+        Service `extport` (extport.conf): mode=vedirect sends a VE.Direct text block once a second
+        on UART1 (tx_pin, 19200 8N1). Off by default until validated against Victron gear.
+
 endmenu

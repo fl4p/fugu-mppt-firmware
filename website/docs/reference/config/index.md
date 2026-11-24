@@ -87,6 +87,7 @@ Each file has its own reference page:
 | [`scope.conf`](scope.md) | raw ADC streaming service |
 | [`lcd.conf`](lcd.md) | status display service |
 | [`ble.conf`](ble.md) | BLE/NUS console service |
+| [`extport.conf`](extport.md) | external comms port service (VE.Direct output) |
 | [`bsync.conf`](bsync.md) | beacon PWM-clock sync service |
 | [`pprof.conf`](pprof.md) | sampling profiler |
 | [`vconv.conf`](vconv.md) | virtual converter plant (simulation builds) |

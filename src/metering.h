@@ -72,6 +72,12 @@ public:
 
     int getNumTotalDays() const { return state.totalDays; }
 
+    // most recently stored day, nullptr if none
+    const DailyEnergyMeterState<float16> *last() const {
+        constexpr auto n = decltype(state)::NumDays;
+        return state.totalDays ? &state.ringBuf[(state.ringPtr + n - 1) % n] : nullptr;
+    }
+
     std::vector<DailyEnergyMeterState<float>> getAllDays() {
         constexpr auto n = decltype(state)::NumDays;
         std::vector<DailyEnergyMeterState<float>> vec{};
@@ -116,6 +122,8 @@ class DailyEnergyMeter {
 
 public:
     DailyEnergyMeterState<float> today;
+
+    [[nodiscard]] const DailyRingStorage &days() const { return store; }
 
     DailyEnergyMeter() {
         today.reset();

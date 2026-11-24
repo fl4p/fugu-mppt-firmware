@@ -329,7 +329,7 @@ The firmware writes a pushed key to its file but does not apply it. When it take
 
 | Change | Takes effect |
 |--------|--------------|
-| `enabled`, `log_level` of a service (mqtt, tele, ftp, http, telnet, tlscon, lcd, scope, ble, bsync) | Now: sent as `svc on`/`svc off`/`svc log`, which also save the file |
+| `enabled`, `log_level` of a service (mqtt, tele, ftp, http, telnet, tlscon, lcd, scope, ble, bsync, extport) | Now: sent as `svc on`/`svc off`/`svc log`, which also save the file |
 | mqtt.conf | After `svc restart mqtt` |
 | tele.conf | After `svc restart tele`; `adv_ms` after `svc restart ble`; `ble` the next time the stream is started; `idle_interval_ms` after a reboot |
 | ftp.conf | After `svc restart ftp`; `ftp_user` and `ftp_pass` also after `svc restart http`, which uses the same login |

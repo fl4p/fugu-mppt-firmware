@@ -58,6 +58,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_BSYNC` | off | Beacon-sniffing MCPWM clock sync (`bsync` service). Needs `NETW` and `MCPWM`. |
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting sampling profiler; only useful with OpenOCD attached. Off excludes its component. |
 | `CONFIG_FUGU_WITH_RTPROF` | off | Core-1 call-stack sampler (`rtprof` command), a 2 kHz timer ISR counting return addresses. `CONFIG_FUGU_RTPROF_SLOTS` (default 4096) sizes its table. |
+| `CONFIG_FUGU_WITH_EXTPORT` | off | `extport` service: [VE.Direct text output](../../reference/config/extport.md) on a UART pin pair (about 10 KB of flash, mostly the UART driver). |
 | `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md) (`measure-coil`). It starts only from a converter stopped with `dc 0`; on in the `sdkconfig.d/fleet` build. |
 | `CONFIG_FUGU_WITH_SCRIPTS` | off | On-device [console scripts](../../reference/console.md#scripts) (`run`, `sleep`, `scripts`, `script-set`). |
 | `CONFIG_FUGU_WITH_PSU` | on | PSU (constant-voltage) and PV-simulator output modes: `psu`/`pv` commands, `converter.conf` `mode=psu`/`pv`. A board config using either mode fails setup when off; off saves ~10 KB flash. |
