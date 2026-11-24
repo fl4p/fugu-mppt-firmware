@@ -9,7 +9,7 @@
 // there through the /littlefs fopen redirect (esp/sim_prelude.h); converter.conf mode psu -> mppt,
 // per-scenario keys appended to vconv.conf / limits.conf. Stubs: test/host-stub/esp/.
 //
-//   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim.<checkout cksum> (or $OUT), runs the scenarios (default all but cv-hold-*)
+//   test/host-stub/mppt-sim.sh [scenario ...]   # builds /tmp/mppt-sim.<checkout cksum> (or $OUT), runs the scenarios (default all)
 //   /tmp/mppt-sim <scenario>   # sanity | a | b | c | d-cloud | d-cloud-ramp | d-bus04 | d-bus08 | d-bus12 |
 //                              # d-noise | e | e-bleed; suffix -p0 = limits.conf reverse_current_paranoia=0
 //                              # e*: battery open at 60 s, back at 180 s: on within 5 s ("== RECONNECT")
@@ -136,6 +136,16 @@
 //     cv-hold-gap      no BMS frames 1800..2000 s: both units pause on the stale data and run again within 60 s
 //     cv-hold-load     900 W on 30 s / off 30 s from 1200 s: cell <= cv_eoc + 15 mV
 //     cv-hold-reboot   unit 2 restarts at 1200 s
+//     cv-hold-mask     a 1080 W load for 900 s takes the PV current (ibat ~1 A): the line crosses low, no hold below the band
+//     cv-hold-day      a day from ~75 % SoC ("== CVDAY" PASS/FAIL line; no balance run, the high cell 3.34 V on a 1.2 mV/Ah
+//                      plateau, knee from 3.385 V): clouds to 10..20 % for 1..5 min and 900 W loads for 1..5 min until the
+//                      cell reaches the approach band, then clear sun to the latch (~5800 s simulated, ~2 min on an idle
+//                      core). Events on the pack: a 200 s BMS gap at OCV 3.352 V; at OCV 3.362 V a 300 s cloud (20 %) with
+//                      a 180 W load (ibat ~1 A) and unit 2 restarting 30 s into it (flat 2026-11-24); unit 2 restarts again
+//                      when the BMS cell reaches cv_eoc - 25 mV. Checks: no hold or latch with the BMS cell below cv_eoc -
+//                      cv_hold_band (fails on charger.h before bd9581b7: unit 2 holds at ~3.37 V), a hold, the cell <=
+//                      cv_eoc + 15 mV from the first hold on (the cv-hold-pair/-load tolerance), both units latched or in
+//                      a hold shorter than cv_hold_max_s at the end; reports Ah/Wh into the pack and the time at the top
 //     all: no ceiling latch, the plant's highest cell stays below cv_ceiling. Unit 2's output current follows
 //     min(its PV current, Iout_max(), the current that puts its sensed Vout at Vout_max()) with a 0.3 s lag: no
 //     tracking loss, PD loop or diode emulation. Its charger updates every 3 s with main.cpp's authority (running and
@@ -2958,7 +2968,10 @@ static struct TopBus {
     ChargerRtc rtc2{};
     float rBus = 0.02f, pv = 560, tau2 = 0.3f; // cable [Ohm], PV power per unit [W], unit 2 output lag [s]
     float i2 = 0, iload = 0, err1 = 0, vcell = 0, ibat = 0;
+    double ah = 0, wh = 0, tTop = 0; // charge and energy into the pack, time with the cell at the top
     float load[4] = {0, 30, 30, 0}; // W, on s, off s, from t
+    float loadW = -1; // >= 0: load [W] set per step instead of load[]
+    bool bal = true; // balance run from the start
     double gap[4] = {-1, 0, -1, 0}; // t, len (x2)
     double boot2 = 0, sweep2 = 0, lf2 = 0, last = 0;
     unsigned boots2 = 0;
@@ -2988,10 +3001,13 @@ static void topTick() {
     T.last = t;
     const float R = T.rBus + LfpPack::N * T.pack.r0, vbus = g_vconv.getVout(), i1 = g_vconv.getIoutAvg();
     T.ibat = (vbus - T.pack.emf()) / R;
+    T.ah += T.ibat * dt / 3600.f, T.wh += T.ibat * (T.pack.emf() + T.ibat * LfpPack::N * T.pack.r0) * dt / 3600.f;
     T.pack.step(T.ibat, dt);
     T.vcell = T.pack.vcellHigh(T.ibat);
+    if (T.vcell >= mppt.charger.params.cv_eoc - mppt.charger.params.cv_hold_band) T.tTop += dt;
     const float *L = T.load;
-    T.iload = L[0] > 0 && t >= L[3] && std::fmod(t - L[3], (double) (L[1] + L[2])) < L[1] ? L[0] / vbus : 0.f;
+    T.iload = T.loadW >= 0 ? T.loadW / vbus
+              : L[0] > 0 && t >= L[3] && std::fmod(t - L[3], (double) (L[1] + L[2])) < L[1] ? L[0] / vbus : 0.f;
     bool gap = false;
     for (int k = 0; k < 4; k += 2) gap |= T.gap[k] >= 0 && t >= T.gap[k] && t < T.gap[k] + T.gap[k + 1];
     T.bms.cells = T.bms.ibatOn = !gap;
@@ -3006,7 +3022,7 @@ static void topTick() {
         c2->begin(ConfFile{"/littlefs/conf/charger.conf"});
         c2->attachRtc(&T.rtc2);
         c2->beginMqtt(ConfFile{{"cell_voltages_max_topic", "bms"}});
-        if (!T.boots2++) c2->balanceNow();
+        if (!T.boots2++ && T.bal) c2->balanceNow();
         T.st2 = TopBus::WAIT, T.lf2 = t;
     }
     if (c2 && t >= T.boot2 + MQTT_S) T.bms.deliver(*c2);
@@ -3041,7 +3057,7 @@ static const char *topState(const BatteryCharger *c) {
 
 static int runCvHold(const std::string &name, const std::string &sc) {
     if (sc != "cv-hold-pair" && sc != "cv-hold-offset" && sc != "cv-hold-gap" && sc != "cv-hold-load" &&
-        sc != "cv-hold-reboot" && sc != "cv-hold-mask") {
+        sc != "cv-hold-reboot" && sc != "cv-hold-mask" && sc != "cv-hold-day") {
         printf("unknown scenario %s\n", sc.c_str());
         return 1;
     }
@@ -3058,6 +3074,12 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     if (sc == "cv-hold-reboot") rebootAt = 1200;
     // a load takes the PV current (ibat ~1 A): the line crosses low, far below cv_eoc, but no hold starts; it ends
     if (sc == "cv-hold-mask") tEnd = 2400, T.load[0] = 1080, T.load[1] = 900, T.load[2] = 1e5f;
+    const bool day = sc == "cv-hold-day";
+    if (day) { // ~75 % SoC: the high cell at 3.34 V on a 1.2 mV/Ah plateau, the knee from 3.385 V
+        T.pack.dvdah = 0.0012f, T.pack.kneeV = 3.385f, T.pack.kneeW = 0.02f;
+        T.pack.set(3.30f, 0.04f);
+        T.bal = false, T.loadW = 0, tEnd = 16000;
+    }
     if (const char *e = getenv("SIM_T")) tEnd = atof(e);
     if (const char *e = getenv("SIM_PV_W")) T.pv = atof(e);
     if (const char *e = getenv("SIM_LOAD")) sscanf(e, "%f,%f,%f,%f", T.load, T.load + 1, T.load + 2, T.load + 3);
@@ -3081,7 +3103,7 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     wx.init();
     wx.apply(0);
     mppt.charger.beginMqtt(ConfFile{{"cell_voltages_max_topic", "bms"}});
-    mppt.charger.balanceNow();
+    if (T.bal) mppt.charger.balanceNow();
     g_topPrevSense = g_simSenseHook, g_simSenseHook = topSense;
     T.last = tNow(), g_tickHook = topTick;
     g_verbose = getenv("SIM_V") != nullptr;
@@ -3098,18 +3120,69 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     bool wasTerm[2] = {}, paused[2] = {};
     std::vector<std::string> latches;
     unsigned nCeil = 0;
-    for (double nextTr = 0; tNow() < tEnd;) {
+    // cv-hold-day: the day's clouds (start, s, light) and loads (start, s, W) until the cell reaches the band
+    struct Ev { double t, len; float v; };
+    static constexpr Ev clouds[] = {{500, 120, .15f}, {1300, 300, .10f}, {2100, 60, .20f}, {2900, 180, .12f},
+                                    {3700, 240, .18f}, {4600, 90, .10f}, {5400, 150, .15f}, {6300, 270, .12f}};
+    static constexpr Ev loads[] = {{800, 120, 900}, {1800, 60, 900}, {2400, 300, 900}, {3300, 90, 900},
+                                   {4200, 180, 900}, {5000, 60, 900}, {5900, 240, 900}};
+    const float pv0 = T.pv, band = eoc - P.cv_hold_band;
+    double tGap = -1, tE1 = -1, tE2 = -1, endAt = -1, firstHold = -1;
+    bool wasHold[2] = {}, early = false;
+    float peakHold = 0;
+    std::vector<std::string> holds;
+    if (day) wx.cloud = {{0.f, 1.f}};
+    for (double nextTr = 0; tNow() < tEnd && (endAt < 0 || tNow() < endAt);) {
         const double tb = tNow();
+        if (day) {
+            const float ocvHi = (float) *std::max_element(T.pack.ocv, T.pack.ocv + LfpPack::N);
+            if (tGap < 0 && ocvHi >= 3.352f) {
+                tGap = tb, T.gap[2] = tb, T.gap[3] = 200;
+                printf("%9.2f >>> BMS gap 200 s (cell OCV %.3f)\n", tb, ocvHi);
+            }
+            if (tE1 < 0 && ocvHi >= 3.362f) { // the field case: cloud + load (ibat ~1 A), unit 2 restarts in it
+                tE1 = tb, rebootAt = tb + 30;
+                printf("%9.2f >>> cloud 20 %% + 180 W for 300 s, unit 2 restarts at +30 s (cell OCV %.3f)\n", tb, ocvHi);
+            }
+            if (tE1 >= 0 && tE2 < 0 && tb >= tE1 + 300 && T.bms.vcell >= eoc - 0.025f) { // in the approach band
+                tE2 = tb, rebootAt = tb;
+                printf("%9.2f >>> BMS cell %.3f in the approach band: unit 2 restarts, clear sun from here\n", tb,
+                       T.bms.vcell);
+            }
+            float g = 1, w = 0;
+            auto edge = [&](const Ev &e) { // 15 s ramps
+                return (float) std::clamp(std::min(tb - e.t, e.t + e.len - tb) / 15.0, 0.0, 1.0);
+            };
+            if (tE2 < 0) {
+                for (auto &c: clouds) g = std::min(g, 1 - (1 - c.v) * edge(c));
+                for (auto &l: loads) if (tb >= l.t && tb < l.t + l.len) w = l.v;
+            }
+            if (tE1 >= 0 && tb < tE1 + 300) g = 1 - 0.8f * edge({tE1, 300, 0}), w = 180;
+            wx.cloud[0].second = g, T.pv = pv0 * g, T.loadW = w;
+        }
         if (rebootAt >= 0 && tb >= rebootAt) {
             printf("%9.2f >>> unit 2 reboots (cell %.3f)\n", tb, T.vcell);
-            T.u2.reset(), T.st2 = TopBus::DOWN, T.boot2 = tb, T.i2 = 0, wasTerm[1] = false, rebootAt = -1;
+            T.u2.reset(), T.st2 = TopBus::DOWN, T.boot2 = tb, T.i2 = 0, wasTerm[1] = wasHold[1] = false, rebootAt = -1;
         }
         wx.apply(tb);
         run(0.02, 0);
         const BatteryCharger *u[2] = {&mppt.charger, T.u2 ? &*T.u2 : nullptr};
         for (int k = 0; k < 2; ++k) {
             if (!u[k]) continue;
-            const bool term = (bool) u[k]->termCond;
+            const bool hold = u[k]->termCond.cvHold(), term = (bool) u[k]->termCond;
+            const float vh = u[k]->batSt.vcell_high;
+            if (hold && !wasHold[k]) {
+                const bool low = vh < band;
+                early |= low;
+                if (firstHold < 0) firstHold = tb;
+                char b[96];
+                snprintf(b, sizeof b, "unit %d at %.0f s, BMS cell %.3f, ibat %.1f%s", k + 1, tb, vh, T.ibat,
+                         low ? " (below the band)" : "");
+                holds.emplace_back(b);
+                printf("%9.2f >>> hold %s\n", tb, b);
+            }
+            wasHold[k] = hold;
+            if (term && !wasTerm[k] && vh < band && vh < ceil) early = true;
             if (term && !wasTerm[k]) {
                 const bool c = u[k]->batSt.vcell_high >= ceil;
                 nCeil += c;
@@ -3123,6 +3196,8 @@ static int runCvHold(const std::string &name, const std::string &sc) {
             if (gapEnd >= 0 && tb >= T.gap[0] && tb < gapEnd + 30) paused[k] |= stalePaused(*u[k]);
         }
         if (holdAt < 0 && u[1] && u[0]->termCond.cvHold() && u[1]->termCond.cvHold()) holdAt = tb;
+        if (firstHold >= 0) peakHold = std::max(peakHold, T.vcell);
+        if (day && endAt < 0 && u[1] && (bool) u[0]->termCond && (bool) u[1]->termCond) endAt = tb + 300;
         if (gapEnd >= 0 && resumeAt < 0 && tb >= gapEnd && u[1] && u[0]->balanceRunning() && u[1]->balanceRunning())
             resumeAt = tb;
         peak = std::max(peak, T.vcell);
@@ -3155,6 +3230,23 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     }
     if (sc == "cv-hold-load" || sc == "cv-hold-mask") need(holdAt >= 0 && peak <= eoc + 0.015f, "peak > cv_eoc + 15 mV");
     if (sc == "cv-hold-mask") need(holdAt >= T.load[1], "hold entered below the band");
+    if (day) {
+        std::string hs;
+        for (auto &h: holds) hs += (hs.empty() ? "" : "; ") + h;
+        const BatteryCharger *u[2] = {&mppt.charger, T.u2 ? &*T.u2 : nullptr};
+        bool fin = u[1] != nullptr;
+        for (auto *c: u) fin = fin && ((bool) c->termCond || (c->termCond.cvHold() && c->termCond.cvHoldS() <= P.cv_hold_max_s));
+        printf("== CVDAY %s: events gap %.0f s, cloud+load %.0f s, band restart %.0f s; first hold %.0f s, cell peak %.4f"
+               " after it (run %.4f); %.1f Ah / %.0f Wh into the pack, %.0f s with the cell >= %.3f, end %s/%s at %.0f s;"
+               " holds [%s]\n", name.c_str(), tGap, tE1, tE2, firstHold, peakHold, peak, T.ah, T.wh, T.tTop, band,
+               topState(u[0]), topState(u[1]), tNow(), hs.c_str());
+        need(!early, "hold or latch below cv_eoc - cv_hold_band");
+        need(firstHold >= 0, "no hold");
+        need(peakHold <= eoc + 0.015f, "peak > cv_eoc + 15 mV after the hold");
+        need(fin, "no latch or hold within cv_hold_max_s at the end");
+        printf("== CVDAY %s: %s%s%s\n", name.c_str(), ok ? "PASS" : "FAIL", ok ? "" : ": ", why.c_str());
+        return ok ? 0 : 1;
+    }
     if (gapEnd >= 0) {
         printf("== CVHOLD %s gap %.0f..%.0f s: paused unit 1 %d, unit 2 %d; both running again at %.0f s\n", name.c_str(),
                T.gap[0], gapEnd, (int) paused[0], (int) paused[1], resumeAt);
