@@ -268,6 +268,7 @@ def main():
     add_transport_args(ap)
     ap.add_argument("--plain", action="store_true", help="borderless table (no box)")
     ap.add_argument("--timeout", type=float, default=6.0, help="per-command timeout (s)")
+    ap.set_defaults(tls=None, adapter=None)  # read by fugu_console.make_transport
     args = ap.parse_args()
 
     last_status = {"line": ""}
