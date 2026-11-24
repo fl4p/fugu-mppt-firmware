@@ -19,7 +19,7 @@ littlefs,       data, littlefs,           ,    128k
 
 # coredump appended AFTER littlefs on purpose: keeps every offset above unchanged so an existing
 # device's littlefs config + OTA slots survive the table change. Adding it before littlefs would
-# shift littlefs and wipe the on-device config. (4MB flash: ends ~0x3E2400, ~120k still free.)
+# shift littlefs and wipe the on-device config. (4MB flash: ends at 0x3E9000, 92 KiB free.)
 coredump,       data, coredump,           ,    64k
 
 # TODO: partitions for wifi (nvs store?), calibration and statistics
