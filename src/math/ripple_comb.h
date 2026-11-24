@@ -5,10 +5,10 @@
 /**
  * Moving average over exactly one ripple period of L = fs/f samples (L fractional): the integral of the
  * linearly interpolated input over the last L samples, divided by L. Taps (x[n] first)
- * 1/2, 1, .., 1, 1/2 + a - a^2/2, a^2/2 with N = floor(L), a = L - N. Zero at f, deep zeros at its harmonics
- * while they stay below fs/2, DC gain 1, group delay L/2 samples.
- * O(1) per sample (running sum, re-summed once per buffer turn); every sample enters the ring, so a retune
- * only moves the window end over samples already there (no step).
+ * 1/2, 1, .., 1, 1/2 + a - a^2/2, a^2/2 with N = floor(L), a = L - N. Deep but finite rejection at f and at its
+ * harmonics below fs/2 (exact zeros only for integer L), DC gain 1, DC delay L/2 samples, a step completes after
+ * ceil(L) samples. O(1) per sample (running sum, re-summed once per buffer turn). The ring keeps its history over a
+ * retune, so there is no reset transient, but the output can still step.
  */
 template<uint8_t CAP>
 class RippleComb {
@@ -29,8 +29,11 @@ class RippleComb {
     }
 
 public:
-    // window length the ring holds: N + 2 taps
+    // window length the ring holds: N + 2 taps, 2 <= L < CAP - 1
     static bool fits(float L) { return L >= 2.f && L < CAP - 1; }
+
+    // L [samples], 0 = pass through
+    [[nodiscard]] float length() const { return n_ ? 1.f / invL_ : 0.f; }
 
     // L = fs / f [samples]; outside fits() the filter passes the input through
     void tune(float L) {

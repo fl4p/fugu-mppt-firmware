@@ -382,21 +382,25 @@ public:
 
     [[nodiscard]] MpptControlMode getState() const { return ctrlState.mode; }
 
-    // [s] the larger mean delay of the Vin and power filters: median-5 (2 samples) and a 2-pass EWM (span - 1)
+    // [s] the larger mean delay of the Vin and power filters: median-5 (2 samples), a 2-pass EWM (span - 1)
+    // and the ripple comb (L/2)
     [[nodiscard]] float sweepFiltDelay() const {
         auto d = [](const Sensor *s) {
             float fs = s->isVirtual ? 0 : static_cast<const PhysicalSensor *>(s)->notchFs;
-            return fs > 0 ? (float) (s->ewm.span() + 1) / fs : 1.f;
+            float k = (float) (s->ewm.span() + 1);
+            if (s->comb) k += .5f * s->comb->length();
+            return fs > 0 ? k / fs : 1.f;
         };
         return std::max(d(sensors.Vin), std::max(d(sensorPhysicalI), d(sensorPhysicalU)));
     }
 
-    // 99 % step settling of the slower power sensor: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay
-    // a sensor's filters settled after a step
+    // 99 % step settling: 2-pass EWMA 6.64 tau (tau ~ span/2 samples) + median-of-5 delay + the comb's full window
     [[nodiscard]] static float settleMs(const Sensor *s) {
         if (s->isVirtual) return 0;
         float fs = static_cast<const PhysicalSensor *>(s)->notchFs;
-        return fs > 0 ? (3320.f * (float) s->ewm.span() + 2000.f) / fs : 1000.f;
+        float k = 3320.f * (float) s->ewm.span() + 2000.f;
+        if (s->comb) k += 1000.f * (s->comb->length() + 1.f);
+        return fs > 0 ? k / fs : 1000.f;
     }
 
     [[nodiscard]] float powerSettleMs() const { return std::max(settleMs(sensorPhysicalI), settleMs(sensorPhysicalU)); }
