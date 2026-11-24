@@ -395,8 +395,8 @@ The ring starts with the node at the low-side body-diode drop, `x ≈ −(Vout +
 $x = A\,e^{-\alpha t}\cos(2\pi f_r t + \varphi)$, $i \approx (A/Z_0)\,e^{-\alpha t}\sin(2\pi f_r t + \varphi)$.
 When `Vin < 2·Vout`, the first upswing reaches `Vin + Vf` and the high-side body diode clamps it,
 returning a little charge to the input. The same ring, started by a reverse current at low-side
-turn-off, shapes the late side of the rect-cal sweep, see *Switch-node ringing* in [Diode emulation,
-self-calibration](../internals/diode-emulation.md#self-calibration-rect-cal). The converter model implements it
+turn-off, shapes the late side of the rect-cal sweep, see [switch-node ringing in the rectifier timing
+calibration](../internals/rect-cal.md#switch-node-ringing). The converter model implements it
 with `vconv.conf::ring_c` and `ring_q`, see [vconv.conf](../reference/config/vconv.md#switch-node-ring).
 
 The high side turns on after the dead time

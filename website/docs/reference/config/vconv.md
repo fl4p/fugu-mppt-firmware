@@ -130,8 +130,8 @@ late-side tails of rect-cal sweeps. The ring shapes two measurements:
 - the `Iout` ripple versus duty in DCM, which `measure-coil` fits out, see [Switch-node ringing in
   DCM](../../lab/coil-inductance.md#switch-node-ringing-in-dcm);
 - the non-monotonic late side of a rect-cal sweep, where a reverse current at low-side turn-off
-  lifts the node to `Vin`, see *Switch-node ringing* in [Diode emulation,
-  self-calibration](../../internals/diode-emulation.md#self-calibration-rect-cal).
+  lifts the node to `Vin`, see [switch-node ringing in the rectifier timing
+  calibration](../../internals/rect-cal.md#switch-node-ringing).
 
 The console command `vconv set ring_c <F>` / `vconv set ring_q <Q>` changes them at runtime.
 
