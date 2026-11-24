@@ -392,7 +392,7 @@ detail, with three controls:
 | Control   | Command                        | Effect                                                         |
 |-----------|--------------------------------|----------------------------------------------------------------|
 | Log level | `svc log <name> <level>`       | Saved in the service's `.conf` file and applied at once        |
-| Restart   | `svc restart <name>`           | Stops and starts the service; off while the service is switched off, because a restart would start it |
+| Restart   | `svc restart <name>`           | Stops and starts the service; off while the service is switched off, which the firmware refuses too |
 | On/off    | `svc on <name>` / `svc off <name>` | Saved in the service's `.conf` file and started or stopped at once |
 
 The list is read again after each action and with the refresh button. A rejected command shows the firmware's

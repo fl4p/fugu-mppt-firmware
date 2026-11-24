@@ -267,5 +267,6 @@ firmware's littlefs partition.
   also shows `connected` while it is `Running` with a live connection).
 - `svc on <name>`: persist `enabled = 1` and start.
 - `svc off <name>`: persist `enabled = 0` and stop.
-- `svc restart <name>` (alias `svc rs <name>`): stop then start.
+- `svc restart <name>` (alias `svc rs <name>`): stop then start. Refused while the service is disabled; `svc on`
+  enables and starts it.
 - `svc log <name> <error|warn|info>`: set and persist the log level.

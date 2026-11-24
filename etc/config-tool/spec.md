@@ -630,11 +630,11 @@ running command with a spinner), **Refresh** (↻), **Close**.
   are saved on the device and apply at once. All controls are disabled while
   any device command sequence runs (device lock, §6), with the running command
   and a spinner in the head.
-* **Restart only enabled services**: the firmware's `restart()` is `stop();
-  start()` and `start()` ignores `enabled` (`src/service.h:100-103`), so a
-  restart would start a switched-off service. **Restart** is disabled, and
-  `svcAction(<name>, "restart")` sends nothing ("<name> is off; a restart would
-  start it. Turn it on instead."), while `svcOff(name)` holds: the loaded
+* **Restart only enabled services**: the firmware refuses `svc restart` for a
+  disabled service ("svc: <name> is disabled, use 'svc on <name>'"; older
+  firmware started it). **Restart** is disabled, and
+  `svcAction(<name>, "restart")` sends nothing ("<name> is off; turn it on
+  instead of restarting it."), while `svcOff(name)` holds: the loaded
   `<name>.conf` has `enabled=0` (the device's saved value), or the last `svc
   list` on this link shows it disabled, or neither is known and the service is
   off by default (`SVC_ON_DEFAULT`, from the constructors: mqtt, ftp, http,

@@ -151,7 +151,7 @@ The `svc` command (alias `service`) manages services from any console. See
 | `svc` / `svc list` | Name, state, log level, enabled flag and a live detail (client address, `connected`) |
 | `svc on <name>` | Persist `enabled = 1` and start |
 | `svc off <name>` | Persist `enabled = 0` and stop |
-| `svc restart <name>` / `svc rs <name>` | Stop, then start; re-reads the service's own conf keys |
+| `svc restart <name>` / `svc rs <name>` | Stop, then start; re-reads the service's own conf keys. Refused while disabled |
 | `svc log <name> <error\|warn\|info>` | Set and persist the log level |
 
 `svc on` and `svc off` refuse and leave the service unchanged when the conf file cannot be written.

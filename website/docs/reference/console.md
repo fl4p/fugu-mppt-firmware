@@ -309,7 +309,7 @@ commands control them.
 | `svc` / `svc list` (alias `service`) | List all services with state, log level and enabled flag. |
 | `svc on <name>` | Enable (persist) and start a service. |
 | `svc off <name>` | Disable (persist) and stop a service. |
-| `svc restart <name>` / `svc rs <name>` | Restart a service (stop then start); re-reads its service-specific keys (not `enabled`/`log_level`; BLE security needs a reboot). See [When changes take effect](config/index.md#when-changes-take-effect). |
+| `svc restart <name>` / `svc rs <name>` | Restart a service (stop then start); re-reads its service-specific keys (not `enabled`/`log_level`; BLE security needs a reboot). Refused for a disabled service (`svc: <name> is disabled, use 'svc on <name>'`). See [When changes take effect](config/index.md#when-changes-take-effect). |
 | `svc log <name> <error\|warn\|info>` | Set and persist a service's log level. |
 
 ## BLE Commands

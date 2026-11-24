@@ -38,7 +38,10 @@ function firmware(host, services, conf, opts = {}) {
       if (sub === 'off') s.state = 'Stopped';
       else if (s.failsToStart) { s.state = 'Failed'; say('start failed (state=Failed)'); }
       else s.state = 'Running';
-    } else if (sub === 'restart' || sub === 'rs') s.state = 'Running';
+    } else if (sub === 'restart' || sub === 'rs') {
+      if (!s.enabled) { say(`\x1b[0;33mW (5000) main: svc: ${s.name} is disabled, use 'svc on ${s.name}'\x1b[0m`); return say('ERR: ' + cmd); }
+      s.state = 'Running';
+    }
     else if (sub === 'log') s.log = a[3];
     say('OK: ' + cmd);
   };
@@ -206,6 +209,12 @@ test('a rejected command shows the firmware reason; a failed start is reported',
 
   await window.svcAction('nope', 'restart');
   assert.match($(window, '#svc-msg').textContent, /The device rejected “svc restart nope”: unknown 'nope'/);
+
+  // switched off behind the editor's back (console): the firmware refuses the restart
+  services.find(s => s.name === 'tele').enabled = false;
+  await window.svcAction('tele', 'restart');
+  assert.match($(window, '#svc-msg').textContent, /The device rejected “svc restart tele”: tele is disabled, use 'svc on tele'/);
+  assert.equal(services.find(s => s.name === 'tele').state, 'Running', 'state untouched');
 });
 
 test('gating: no services without a read, or after a failed switch to another device', async () => {

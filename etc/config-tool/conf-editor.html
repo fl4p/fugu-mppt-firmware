@@ -3600,7 +3600,7 @@ function svcRender(){
     const rs=document.createElement("button"); rs.type="button"; rs.className="rs"; rs.textContent="Restart";
     rs.disabled = !!devBusy || off;
     rs.title = !off ? `Stop and start ${r.name} now (svc restart)`
-      : r.enabled ? `${r.name} is saved as off; a restart would start it` : `${r.name} is off; turn it on to start it`;
+      : r.enabled ? `${r.name} is saved as off; turn it on to restart it` : `${r.name} is off; turn it on to start it`;
     rs.onclick=()=>svcAction(r.name, "restart");
     const sw=document.createElement("label"); sw.className="switch";
     sw.title="Enabled: saved on the device and applied now (svc on/off)";
@@ -3652,7 +3652,7 @@ function svcSyncConf(name, key, val){
 async function svcAction(name, sub, arg){
   const t=svcTarget();
   if (!t || devBusy){ svcRender(); return; }
-  if (sub==="restart" && svcOff(name)){ svcSetMsg(`${name} is off; a restart would start it. Turn it on instead.`, true); svcRender(); return; }
+  if (sub==="restart" && svcOff(name)){ svcSetMsg(`${name} is off; turn it on instead of restarting it.`, true); svcRender(); return; }
   const cmd = `svc ${sub} ${name}`+(arg ? " "+arg : "");
   const own = (sub==="off" || sub==="restart") && svcOwnLink(name, t);
   const dev=state.deviceName, via=TRANSPORT_NAME[t.transport];

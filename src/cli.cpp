@@ -2267,6 +2267,8 @@ static void cmdService(cmd *c) {
         if (!on) s->stop();
         else if (!s->start()) UART_LOG("start failed (state=%s)", stateStr(s->state()));
     } else if (sub == "restart" || sub == "rs") {
+        if (!s->enabled())
+            CMD_FAIL_RETURN("svc: %s is disabled, use 'svc on %s'", s->name(), s->name());
         s->restart();
     } else if (sub == "log") {
         if (n < 3)
