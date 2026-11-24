@@ -821,8 +821,8 @@ static void run(double sec, double traceEvery, Probe *probe = nullptr, double fi
             }
         }
         if (g_fineT1 > 0 && tNow() >= g_fineT0 && tNow() <= g_fineT1) {
-            printf("%9.4f fine: Vout last=%.3f med=%.3f ewm=%.3f n=%lu | Iout last=%.2f med=%.2f ewm=%.2f | D=%u %s cal=%d\n",
-                   tNow(), sensors.Vout->last, sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get(),
+            printf("%9.4f fine: Vin last=%.2f med=%.2f ewm=%.2f | Vout last=%.3f med=%.3f ewm=%.3f n=%lu | Iout last=%.2f med=%.2f ewm=%.2f | D=%u %s cal=%d\n",
+                   tNow(), sensors.Vin->last, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), sensors.Vout->last, sensors.Vout->med3.get(), sensors.Vout->ewm.avg.get(),
                    (unsigned long) sensors.Vout->numSamples, sensors.Iout->last, sensors.Iout->med3.get(),
                    sensors.Iout->ewm.avg.get(), converter.getCtrlOnPwmCnt(), modeStr(), (int) adcSampler.isCalibrating());
         }
@@ -2164,6 +2164,8 @@ static int selftestCheck(const std::string &sc, bool c, const char *what) {
 // hs-night: hs_clamp=1, latched by day, then night: after 60 s below 9 V the LS ramps for 20 ms and is held; the
 //   250 ms tick re-applies the hold; a BF stuck closed under it releases it (clamp unsafe, persisted).
 // hs-night-abort: as hs-night, a disable() 5 ms into the ramp stops it with all gates off.
+// hs-night-dsp: as hs-night with despike=8: the quiet night Vin steps to Voc in one sample, which the despike passes
+//   to the EWM ahead of the median; the start must wait for the median (the Vin limiter's view), no no-MPP backoff.
 // hs-cal: short present at boot, a 1 A panel (inside the 5 % zero bound): the boot zero must not hide it.
 // hs-dawn: 0.5 A Iout offset, night then Voc rising through Vbat: no latch. hs-dawn-nozero: no night first, so it
 //   latches (known limit), but never clamps.
@@ -3229,6 +3231,7 @@ static int simMain(int argc, char **argv) {
         if (sc == "hs-short-clamp" || sc == "hs-short-bfclosed" || sc == "hs-dawn-nozero" || sc == "bf-daily-then-closed" || sc == "hs-short-unidir" ||
             sc == "hs-volt-clamp" || sc.rfind("hs-night", 0) == 0)
             c += ",board.conf:hs_clamp=1";
+        if (sc == "hs-night-dsp") c += ",sensor.conf:despike=8";
         if (flatTake || dcd) // flat's (and fry's) sensor filters
             c += ",sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20";
         // the state `measure-coil l0 f=` runs in, near flat's floor (fsw*L0*0.95 > 1 ohm with L0 50 uH)

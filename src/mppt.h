@@ -562,9 +562,13 @@ public:
         return boardPowerSupplyVoltage() < (start ? 9.5f : 9.f);
     }
 
+    // Buck start gates: the lower of the EWM and the median, as update() holds Vin with the median and the despike lets
+    // the EWM lead it on a step
+    [[nodiscard]] float vinStart() const { return std::fmin(sensors.Vin->ewm.avg.get(), sensors.Vin->med3.get()); }
+
     // buck: a start at output vOut would run the LS min pulse above the start ratio
     [[nodiscard]] bool minPulseStartBlocked(float vOut) const {
-        return !converter.boost() && !(vOut < sensors.Vin->ewm.avg.get() * converter.minPulseRatioMax(true));
+        return !converter.boost() && !(vOut < vinStart() * converter.minPulseRatioMax(true));
     }
 
     // A fitted sensor without a valid reading; an unfitted one never counts as stale.
@@ -617,7 +621,7 @@ public:
         if (!g_app.psuMode() &&
             !(converter.boost()
                   ? sensors.Vin->ewm.avg.get() < sensors.Vout->ewm.avg.get() + 1
-                  : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1))
+                  : vinStart() > sensors.Vout->ewm.avg.get() + 1))
             return "Vin-Vout";
         if (minPulseStartBlocked(std::max(sensors.Vout->ewm.avg.get(), g_app.psuMode() ? psuVsetpoint : 0.f)))
             return "minpulse-M";
