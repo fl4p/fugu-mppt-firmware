@@ -47,8 +47,8 @@ concrete class implements `onStart()`, `onStop()` and optionally `onTick()`.
 | `Running` | `onStart()` returned true. `tick()` calls `onTick()` on every loop iteration. |
 | `Failed` | `onStart()` returned false or threw, or `onTick()` threw. `stop()` clears it to `Stopped`. |
 
-Exceptions never leave a service: `start()` and `tick()` catch them and move the service to `Failed`, so a
-misbehaving subsystem cannot take down the network loop.
+`start()` and `tick()` catch every exception and move the service to `Failed`, so a misbehaving subsystem cannot take
+down the network loop.
 
 Each service has its own conf file under `/littlefs/conf/`. Two keys there belong to the service layer:
 
@@ -123,8 +123,8 @@ Other Wi-Fi housekeeping in the same function:
 
 ## BLE
 
-The `ble` service runs the NimBLE NUS console. It is off by default because it exposes the console, and it does not
-need Wi-Fi, so it remains reachable when Wi-Fi, MQTT or the heap are gone. The device advertises as
+The `ble` service runs the NimBLE NUS console. It is off by default because it exposes the console. It does not need
+Wi-Fi, so it remains reachable when Wi-Fi, MQTT or the heap are gone. The device advertises as
 `fugu-<hostname>`; `ble_security` and `ble_passkey` in `ble.conf` select the pairing mode.
 
 `onStop()` stops advertising and disconnects the client, but leaves the BLE stack initialised, because the Arduino

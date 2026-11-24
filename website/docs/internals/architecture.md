@@ -33,9 +33,8 @@ The table lists what runs on each core and the rules that apply there.
 | 1 | `loopRT`: [sampling](sensors.md), [protection](protection.md), [PD controllers](control-loop.md), [MPPT](mppt-tracker.md), [PWM](pwm-drivers.md) | Nothing else is pinned here. The loop blocks on the next ADC sample; never add `vTaskDelay`. |
 | 0 | Arduino `loop()` → `loopNetwork_task`: [console](../reference/console.md), Wi-Fi, lwIP, [MQTT](../reference/mqtt.md), [telemetry](../reference/telemetry-fields.md), [BLE](../reference/ble/gatt.md) controller and NimBLE host, `esp_timer` task | All [services](services.md) tick here. |
 
-`sdkconfig.defaults` pins Arduino, Wi-Fi/lwIP, mDNS, MQTT, and the `esp_timer` task to core 0; `sdkconfig.d/ble`
-pins the Bluetooth controller and the NimBLE host there too. `loopRT` checks its
-core at startup.
+`sdkconfig.defaults` pins Arduino, Wi-Fi, lwIP, mDNS, MQTT, and the `esp_timer` task to core 0; `sdkconfig.d/ble`
+pins the Bluetooth controller and the NimBLE host there too. `loopRT` checks its core at startup.
 
 ## Control pipeline
 
@@ -50,15 +49,15 @@ flowchart LR
   b --> g[PWM]
 ```
 
-1. **Sampling** (`src/adc/sampling.h`): async reads, round-robin over channels, with notch, median, and EWM filters.
+1. **Sampling** (`src/adc/sampling.h`): async reads, round-robin over channels, with notch, median, and EWMA filters.
    `Vout` is sampled last so the controller reacts to it with minimum latency. See [Sensors](sensors.md) and
-   [Signal Filters](signal-filters.md).
-2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs. A violation calls `stopAndBackoff(seconds)`.
+   [Signal filters](signal-filters.md).
+2. **Protection** (`mppt.protect`, `mppt.protectLf`): hard cut-outs. A violation turns the converter off and arms a backoff.
    See [Protection](protection.md).
 3. **PD controllers** (`src/pd_control.h`): the smallest response wins. See [Control Loop](control-loop.md).
 4. **MPP tracker** (`src/tracker.h`): global sweep, then fast and slow perturb & observe. See [MPP Tracker](mppt-tracker.md).
 5. **Converter** (`src/buck.h`): computes the low-side on-time. See [Diode Emulation](diode-emulation.md) and
-   [PWM Drivers](pwm-drivers.md).
+   [MCPWM driver](pwm-drivers.md).
 
 ## Configuration and state
 
@@ -81,7 +80,7 @@ The table maps source paths to their contents.
 
 | Path | Contents |
 |---|---|
-| `src/main.cpp` | `setup()`, task creation, service wrappers |
+| `src/main.cpp` | `setup()`, task creation, service registration |
 | `src/cli.cpp` | Console command dispatcher |
 | `src/mppt.*`, `src/tracker.h`, `src/pd_control.h` | Control loop |
 | `src/buck.h`, `src/pwm/` | Converter model and gate drivers |
@@ -103,9 +102,9 @@ The table maps source paths to their contents.
 | [Protection](protection.md) | Trip conditions, backoff, ADC and latency watchdogs, start conditions |
 | [MPP Tracker](mppt-tracker.md) | Global sweep, perturb & observe, when the tracker sweeps |
 | [Sensors](sensors.md) | ADC backends, scaling, virtual sensors |
-| [Signal Filters](signal-filters.md) | Notch, median, and EWM filter chain |
+| [Signal filters](signal-filters.md) | Notch, median, and EWMA filter chain |
 | [Diode Emulation](diode-emulation.md) | Low-side on-time, CCM/DCM transition |
-| [PWM Drivers](pwm-drivers.md) | MCPWM synchronous-buck driver |
+| [MCPWM driver](pwm-drivers.md) | MCPWM synchronous-buck driver |
 | [Services](services.md) | Core-0 loop, service lifecycle, Wi-Fi and BLE |
 | [DCM Coil Ringing](dcm-ringing.mdx) | Switch-node ringing in discontinuous mode |
 | [LFP Longevity](lfp-longevity.md) | What the aging literature says about charge control |

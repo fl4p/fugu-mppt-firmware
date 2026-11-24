@@ -24,7 +24,7 @@ switching nodes beat against each other. Locking the clocks gives two results:
 ## Requirements
 
 Both methods need the MCPWM gate driver (`CONFIG_FUGU_WITH_MCPWM=y`, the default gate driver on the ESP32-S3) and
-identical `pwm_freq` on all converters. See [PWM Drivers](../../internals/pwm-drivers.md).
+identical `pwm_freq` on all converters. See [MCPWM driver](../../internals/pwm-drivers.md).
 
 The console command `sync on|off|forced` is unrelated: it switches synchronous rectification. The clock-sync
 diagnostics are `svc list` (bsync status) and `wsync` (wired sync).
