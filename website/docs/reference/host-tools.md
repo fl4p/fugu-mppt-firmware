@@ -312,7 +312,7 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 
 | Flag                              | Default | Meaning                                                       |
 |-----------------------------------|---------|---------------------------------------------------------------|
-| `-p` / `--ip` / `--ble [NAME]`    |         | Transport (one of); `--ble` without a name looks for `fugu`   |
+| `-p` / `--ip` / `--ble [NAME]` / `--mqtt HOSTNAME` |         | Transport (one of); `--ble` without a name looks for `fugu`; `--mqtt` uses the broker from `etc/mqtt.env`. A read-only telnet console (`telnet.conf::trusted=0`) refuses `dc`, so the run stops |
 | `--fsw`                           | from `pwm-dump` | Switching frequency as realized, Hz                   |
 | `--pwm-max`                       | from `pwm-dump` | PWM period in timer ticks                             |
 | `--steps`                         | 48      | Duty steps across the DCM band (the ring fit needs ≥ 16 DCM points) |

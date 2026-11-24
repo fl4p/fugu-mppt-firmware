@@ -343,7 +343,17 @@ def ascii_plot(rows, width=58, height=15):
 
 
 def connect(args):
-    if args.ip:
+    if args.mqtt:
+        from fugu_console import load_env_file, broker_endpoint
+        from fugu.transport import MqttTransport
+        load_env_file()
+        if not os.environ.get("MQTT_HOST"):
+            sys.exit("--mqtt needs $MQTT_HOST (etc/mqtt.env)")
+        host, port, args._tunnel = broker_endpoint(os.environ["MQTT_HOST"], int(os.environ.get("MQTT_PORT", "1883")))
+        t = MqttTransport(host, port=port, username=os.environ.get("MQTT_USER", "pv"),
+                          password=os.environ.get("MQTT_PASS"), device=args.mqtt)
+        eol = "\r\n"
+    elif args.ip:
         host, _, port = args.ip.partition(":")
         t = SocketTransport(host, int(port) if port else SocketTransport.DEFAULT_PORT)
         eol = "\n"  # telnet wants \n (CLAUDE.md)
@@ -407,6 +417,9 @@ def query_pwm_ctrl_max(con):
         m = _RANGE_RE.search(ln)
         if m:
             return int(m.group(1))
+    for ln in r:
+        if "refused" in ln:
+            sys.exit(f"device refused `dc`: {ln.strip()}")
     return None
 
 
@@ -492,6 +505,9 @@ def run_sweep(con, tap, hvals, period, fsw, i_max, dwell, label="", plot_every=0
             ascii_plot(rows)
         if io > i_max:
             print(f"  Iout {io:.2f} > i-max {i_max}; stopping {label} sweep")
+            break
+        if s["H"] == 0 and H > 0:
+            print(f"  converter not switching after `dc {H}` (start blocked?); stopping {label} sweep")
             break
         if s["mode"] == "CCM":
             print(f"  entered CCM; stopping {label} sweep")
@@ -715,6 +731,7 @@ def main():
     g.add_argument("-p", "--port", help="serial port")
     g.add_argument("--ip", help="TCP/telnet host[:port]")
     g.add_argument("--ble", nargs="?", const="fugu", help="BLE NUS device name (default fugu)")
+    g.add_argument("--mqtt", metavar="HOSTNAME", help="MQTT console of this device (broker from etc/mqtt.env)")
     ap.add_argument("--fsw", type=float, help="switching freq Hz (default: realized, from pwm-dump)")
     ap.add_argument("--pwm-max", type=int, help="PWM period in timer ticks (default: from pwm-dump)")
     ap.add_argument("--steps", type=int, default=48,
@@ -755,7 +772,7 @@ def main():
         pwm_ctrl_max = query_pwm_ctrl_max(con)
         if not pwm_ctrl_max:
             sys.exit("could not read pwmCtrlMax (dc range)")
-        print('args=', ', '.join(f'{k}={v}' for k, v in args.__dict__.items() if v))
+        print('args=', ', '.join(f'{k}={v}' for k, v in args.__dict__.items() if v and not k.startswith('_')))
         timing = query_pwm_timing(con)
         if timing:
             fsw_rt, period_rt, pwm_max = timing
