@@ -33,7 +33,7 @@ Most trips call `shutdownDcdc(who, seconds)`, which:
 3. With a backoff above 0: ends a running sweep, arms the backoff timer and logs `backoff <n>s [<who>]`.
 
 The log line appears only when the backoff is newly armed or made longer, and carries ` mid-sweep` when a sweep was
-running. A repeated trip does not extend a running backoff unless it asks for a longer one.
+running. A repeated trip extends a running backoff only if it asks for a longer one.
 
 A failed check also makes the loop call `stopAndBackoff(4)`:
 
@@ -47,14 +47,19 @@ the battery is full, and up to 12 s for the first BMS report when a BMS source i
 
 A sweep that finds no usable power ends with `backoff 30s [sweep-no-mpp]`, logged at info level. It uses the same
 mechanism but is not a fault. Each further sweep without usable power doubles the backoff (30, 60, 120, 240 s, then
-300 s); a sweep that finds an MPP resets it to 30 s. A battery that comes back during the backoff ends it and resets it
-to 30 s: the output voltage was outside the battery range (below 2.5 V per cell or above 1.03 × `vout_max`) and has been
-back inside it for 1 to 2 s. A battery connected all along, as at dawn, never leaves that range. After a sweep the Vout cap
-ended, the cap rising above Vout ends the backoff too and starts a sweep at once; see [MPPT tracker](mppt-tracker.md).
+300 s); a sweep that finds an MPP resets it to 30 s.
+
+Two events end this backoff early:
+
+- A battery that comes back ends it and resets it to 30 s: the output voltage was outside the battery range (below
+  2.5 V per cell or above 1.03 × `vout_max`) and has been back inside it for 1 to 2 s. A battery connected all along, as
+  at dawn, never leaves that range.
+- After a sweep the Vout cap ended, the cap rising above Vout ends the backoff and starts a sweep at once; see
+  [MPPT tracker](mppt-tracker.md).
 
 ### PSU mode
 
-In PSU mode, including the PV simulator, output over-voltage (`Vout-OV`) and supply under-voltage (`supply-UV`) trips retry
+In PSU mode, including the PV emulator, output over-voltage (`Vout-OV`) and supply under-voltage (`supply-UV`) trips retry
 fast, because a load step can cause them:
 
 | Trips within 60 s of the first trip in a window | Backoff |
@@ -129,11 +134,10 @@ Some reverse-current conditions reduce rectification instead of tripping:
 
 The converter keeps switching in both cases.
 
-While `selftest bflow` runs, both reductions and the `highD-bflowOpen` check are suspended, because the test drives
-reverse current on purpose. The test stops the converter itself when a sample falls below its trip threshold, −0.3 A
-with the backflow switch off or −0.5 A with it on. `revI-highAvg` is suspended as well. All other trips stay active,
-including `revI-ewm` and `highI-bflowOpen`. See
-[Backflow switch test](#backflow-switch-test).
+While `selftest bflow` runs, both reductions and the `highD-bflowOpen` and `revI-highAvg` checks are suspended,
+because the test drives reverse current on purpose. The test stops the converter itself when a sample falls below its
+trip threshold, −0.3 A with the backflow switch off or −0.5 A with it on. All other trips stay active, including
+`revI-ewm` and `highI-bflowOpen`. See [Backflow switch test](#backflow-switch-test).
 
 ### High-side short check
 
@@ -248,7 +252,9 @@ runs, at an input voltage just below 9 V.
 
 :::
 
-Limits of the checks:
+#### Limits
+
+The high-side short check and the clamp have these limits:
 
 - Without a learnt zero, a sensor offset above the 0.3 A threshold reads as a short when Vin is near Vout (dawn, dusk).
   A board that boots at such a time can latch falsely, without the clamp. The zero is learnt during the first night.
@@ -261,7 +267,9 @@ Limits of the checks:
 `selftest bflow` checks a battery-side backflow switch in two phases. Both take the converter over in manual mode, ramp
 the duty up in diode emulation until the coil current is continuous, then engage forced PWM (complementary low side)
 and step the duty down until D × Vin is 1 V below Vout. Each step waits a quarter of the power sensors' settling time
-(20-500 ms), so a run takes 10-30 s on fast filters and up to about 3 minutes on slow ones:
+(20-500 ms), so a run takes 10-30 s on fast filters and up to about 3 minutes on slow ones.
+
+The phases differ in the switch state and the verdict:
 
 | Phase | Backflow switch | Pass | Fail |
 |---|---|---|---|
@@ -336,19 +344,30 @@ reverse current through the closed switch is invisible to a one-direction sensor
   from the output side can cause, and with the switch on in forced PWM at y below −1 V. Vin and y use the raw
   samples, two in a row, not the filtered values.
 
-Each stop aborts the run, as does a Vin drop of 1 % before a turn-on. Without a battery, the test runs only on
-request, never as the daily run. It refuses when BMS cell data is fresh, when a battery has been seen since boot
-(BMS data, or Vout above 9 V with the converter off for 2 minutes, so a pack may sit behind an open BMS), when Vbat max is unknown, or when
-min(Vin/2, 0.8 × Vbat max) is below Vout + 5 V. It aborts when BMS data arrives or Vout does not rise within 3 s
-(a pack behind an open divider). Without the low side, a switch stuck closed cannot pull reverse
-current from such a pack. A raised output after a no-battery run does not count as a battery. A FAIL latches `bf-fail` like a blocks FAIL. A PASS counts as a blocks pass for the
-verified state, but does not arm the [low-side clamp](#low-side-clamp).
+Each stop aborts the run, as does a Vin drop of 1 % before a turn-on.
+
+Without a battery, the test runs only on request, never as the daily run. It refuses to start when:
+
+- BMS cell data is fresh,
+- a battery has been seen since boot: BMS data, or Vout above 9 V with the converter off for 2 minutes, so a pack may
+  sit behind an open BMS,
+- Vbat max is unknown, or
+- min(Vin/2, 0.8 × Vbat max) is below Vout + 5 V.
+
+It aborts when BMS data arrives or Vout does not rise within 3 s (a pack behind an open divider). Without the low side,
+a switch stuck closed cannot pull reverse current from such a pack. A raised output after a no-battery run does not
+count as a battery.
+
+A FAIL latches `bf-fail` like a blocks FAIL. A PASS counts as a blocks pass for the verified state, but does not arm
+the [low-side clamp](#low-side-clamp).
 
 A pack that reconnects without BMS data while the switch is on, at a voltage above D × Vin, back-feeds until Vin rises
 (a few samples). With a battery, a sudden rise of the battery voltage right after a turn-on is unobservable for up to
 the current check's hold.
 
-**Daily run.** Boards with `board.conf::bflow_bat=1` run the test on their own once a day, at the first opportunity
+#### Daily run
+
+Boards with `board.conf::bflow_bat=1` run the test on their own once a day, at the first opportunity
 when all of these hold for 60 s:
 
 - MPPT mode, no limiter active, no sweep, no backoff, a battery present,
@@ -368,7 +387,7 @@ without sun, the switch counts as unverified: the low-side clamp is off, but con
 The `Vout-OV` threshold depends on the mode, in this order:
 
 1. An explicit limit from the console command `ovset`: min(`ovset`, Vout max).
-2. PSU mode: setpoint × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at Vout max. The PV simulator uses its
+2. PSU mode: setpoint × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at Vout max. The PV emulator uses its
    open-circuit voltage instead of the setpoint. After the setpoint is lowered, the old setpoint stays the base until
    Vout falls inside the new band.
 3. A known battery voltage: `Vbat_max` × 1.03 (× 1.5 without `reverse_current_paranoia`), capped at
@@ -403,7 +422,7 @@ $$
 with $V_0$ the battery voltage and $I$ the output current at the moment the battery opens. Over-voltage trips, in
 software or hardware, cannot keep the output below this value.
 
-Simulated peaks for an 8S LFP pack (`Vbat_max` 29 V) charged at 28 A from 64 V, with nothing else on the output:
+Peaks from the host simulator for an 8S LFP pack (`Vbat_max` 29 V) charged at 28 A from 64 V, with nothing else on the output:
 
 | L | C<sub>out</sub> | Vout sampled at 200 Hz | Vout sampled at 5 kHz |
 |---|---|---|---|
@@ -415,7 +434,7 @@ The coil energy sets the peak: a faster trip lowers it by at most a few volts, a
 energy ($\tfrac{1}{2} L I^2$, about 12 mJ at 30 µH and 28 A) or adding output capacitance lowers it further. A fast trip
 still limits the damage, because a high side that keeps switching with the low side off drives Vout on towards Vin.
 
-The table comes from the host simulator. A measurement with the battery at 28.5 V showed 36 V at the output for
+A measurement with the battery at 28.5 V showed 36 V at the output for
 400 ms. Loads on the charger side of the BMS reduce the peak, but they are also exposed to it.
 
 ## ADC and loop watchdogs
@@ -442,9 +461,12 @@ low-frequency status line logs the blocking reason as `START blocked: <reason>`,
 otherwise. `temp-stale` is not logged before the first input-voltage sample, when every sensor is still empty.
 
 The temperature and supply checks use a margin above their trip level, so the converter does not restart right at the
-threshold. Manual PWM skips this table, but `restart`, `hs-short`, `hs-check`, `bf-fail`, `conf-save`, `backoff`,
-`wire-trip`, `temp-stale`, `temp`, `minpulse-M` and `idle profile` also hold it off; `backoff` and `wire-trip` also stop
-a running manual PWM. The table lists the reasons in the order they are checked:
+threshold.
+
+Manual PWM is held off only by `restart`, `hs-short`, `hs-check`, `bf-fail`, `conf-save`, `backoff`, `wire-trip`,
+`temp-stale`, `temp`, `minpulse-M` and `idle profile`; `backoff` and `wire-trip` also stop a running manual PWM.
+
+The table lists the reasons in the order they are checked:
 
 | Reason | Blocks the start while |
 |---|---|
