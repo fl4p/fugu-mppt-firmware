@@ -110,12 +110,12 @@ Build-time features are Kconfig options (`CONFIG_FUGU_WITH_*`, under **"Fugu MPP
 | Kconfig option            | Default | What it does                                                                                                                                                                                                                |
 |---------------------------|--------:|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `CONFIG_FUGU_WITH_NETW`     |     on  | WiFi, mDNS, MQTT, telemetry (UDP/InfluxDB), HTTPS OTA, certificates, web server, FTP, telnet. Turn off to strip all of them — saves ~700 KB; BLE console and BLE OTA remain. |
-| `CONFIG_FUGU_WITH_NETTOOLS` |    off  | Network debug console commands: `curl` (HTTPS via the cert bundle), `ping`, `nslookup`/`resolve`, `tcpconnect`/`probe`, `netstat`/`ifconfig`. Depends on `CONFIG_FUGU_WITH_NETW`. |
 | `CONFIG_FUGU_WITH_BLE`      |     on  | NimBLE NUS console (`BleConsoleService`) and BLE OTA push (`ota-ble` command). `select`s `BT_ENABLED`; the NimBLE host + radio/thermal tunings live in `sdkconfig.d/ble` (layered when on). Costs ~250 KB.                 |
 | `FUGU_GATE_DRIVER` (choice) | MCPWM | Gate driver, one per build: `CONFIG_FUGU_WITH_MCPWM` (hardware dead-time, GPIO OST brake, glitch-free comparator updates; default), `CONFIG_FUGU_GATE_LEDC` (default on classic ESP32) or `CONFIG_FUGU_WITH_VCONV`. See [PWM drivers](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/pwm-drivers/). |
-| `CONFIG_FUGU_WITH_SPROFILER`|    off  | Compiles in the semihosting sampling profiler (`sprofiler_initialize`, only useful with OpenOCD attached). When off, the `esp32-semihosting-profiler` component is excluded entirely (~8 KB BSS).                            |
-| `CONFIG_FUGU_WITH_VCONV`    |    off  | Gate-driver choice: replaces the physical gate driver + ADC with an in-firmware synchronous-buck plant (`src/sim/vconv.*`, configured via `vconv.conf`). For closed-loop control-algorithm work without hardware. |
-| `CONFIG_FUGU_WITH_MEASURE_COIL` | off | Compiles in the on-device coil-inductance measurement commands (`l0`/`ls` sweeps, ported from `measure_coil.py`); skips the status line during a sweep. |
+| `CONFIG_FUGU_WITH_USB_MSC` |    off  | ESP32-S3 only: [USB config drive](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/usb-drive/) plus a CDC console on the USB port, instead of USB-Serial-JTAG. |
+
+All options (debug tools, profiler, simulated converter, coil measurement, ...):
+[Build Options](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/getting-started/build-options/#feature-flags).
 
 To build a non-default variant non-interactively (e.g. CI), point `SDKCONFIG_DEFAULTS` at a fragment:
 `SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py build` where `my.frag` has `CONFIG_FUGU_WITH_BLE=n`
