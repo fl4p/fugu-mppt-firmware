@@ -19,7 +19,7 @@ sources it checks:
 | Source | Behaviour |
 |---|---|
 | `ESP_BOOTGUARD_DIR` (environment or `idf.py -DESP_BOOTGUARD_DIR=…`) | Used; the build stops if the path has no `bootloader_components/` |
-| `../../esp/esp-bootguard` relative to the firmware repo | Used if it exists |
+| `../../esp/esp-bootguard` relative to the firmware repo | Used if it contains `bootloader_components/` |
 | neither | Stock bootloader, logged as `esp-bootguard: not found, using the stock bootloader` |
 
 To clone the guard, point the build at it, and flash the bootloader and app, run the following commands:
@@ -45,7 +45,8 @@ The guard and the firmware work together as follows:
 - The firmware marks the boot healthy together with the OTA rollback confirm. This happens after the uptime threshold
   and once the ADC sampler is producing samples.
 - `bootinfo` on the console prints the guard state: `on`/`off`, crash count against the limit, trips, and the last
-  ROM reset reason. `no record (stock bootloader?)` means the board runs a bootloader without the guard.
+  ROM reset reason. `no record (stock bootloader?)` means the board runs a bootloader without the guard. A firmware
+  built without the guard component (`CONFIG_BOOTGUARD_ENABLE` unset) prints no bootguard line.
 
 ## Caveats
 

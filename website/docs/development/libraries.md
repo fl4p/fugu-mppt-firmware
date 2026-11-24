@@ -6,7 +6,7 @@ sidebar_position: 2
 # Libraries
 
 This page lists the third-party code the firmware builds on and where the firmware uses it. Managed components are
-declared in `main/idf_component.yml`. Vendored components are git submodules under `components/`.
+declared in `main/idf_component.yml`. Vendored components live under `components/`, most of them as git submodules.
 
 ## Framework and managed components
 
@@ -14,20 +14,20 @@ The firmware builds on ESP-IDF and the following managed components:
 
 | Library | Version | Used for |
 |---|---|---|
-| [ESP-IDF](https://github.com/espressif/esp-idf) | ≥ 5.5 | FreeRTOS, drivers (MCPWM, LEDC, PCNT, UART, continuous ADC), lwIP, NimBLE, HTTP client, OTA, NVS, MQTT client (IDF 5.5) |
-| [espressif/arduino-esp32](https://components.espressif.com/components/espressif/arduino-esp32) | ≥ 3.3.2, < 3.3.8 on IDF 5.5; ≥ 3.3.12 on IDF 6 | `Arduino.h`, `WiFi`, `Wire` (I²C), `ESPmDNS`, BLE, `USB` |
+| [ESP-IDF](https://github.com/espressif/esp-idf) | 6.0 (6.0.3; manifest `>=6.0`) | FreeRTOS, drivers (MCPWM, LEDC, PCNT, UART, continuous ADC), lwIP, NimBLE, HTTP client, OTA, NVS |
+| [espressif/arduino-esp32](https://components.espressif.com/components/espressif/arduino-esp32) | ≥ 3.3.12, < 4.0.0 | `Arduino.h`, `WiFi`, `Wire` (I²C), `ESPmDNS`, BLE, `USB` |
 | [espressif/esp-dsp](https://components.espressif.com/components/espressif/esp-dsp) | * | Notch filter (`src/math/notch.h`) |
 | [espressif/led_strip](https://components.espressif.com/components/espressif/led_strip) | ^3.0 | WS2812 status LED (`src/viz/led.h`) |
 | [espressif/mdns](https://components.espressif.com/components/espressif/mdns) | * | mDNS hostname |
 | [joltwallet/littlefs](https://components.espressif.com/components/joltwallet/littlefs) | ^1.20.2 | Configuration file system |
-| [brianpugh/tamp](https://components.espressif.com/components/brianpugh/tamp) | ^1.6.0 | Compression for logs and telemetry |
+| [brianpugh/tamp](https://github.com/BrianPugh/tamp) | vendored (`override_path: ../components/tamp`) | Compression for the binary telemetry wire (`CONFIG_FUGU_WITH_TELE_BINARY`); esp-ota-ble requests it from the registry, the override builds the vendored copy |
 | [fl4p/esp-ota-ble](https://github.com/fl4p/esp-ota-ble) (git) | pinned commit | OTA-over-BLE receiver (`ota-ble` command) |
 | [espressif/mqtt](https://components.espressif.com/components/espressif/mqtt) | ^1.0.0 | MQTT client on IDF 6, which no longer bundles it |
 | [espressif/tinyusb](https://components.espressif.com/components/espressif/tinyusb) | ≥ 0.19.0~3, < 0.22 | USB configuration drive, only with `CONFIG_FUGU_WITH_USB_MSC` |
 
 :::note arduino-esp32 version cap
-arduino-esp32 3.3.8 calls `ble_gap_read_local_irk()`, which the NimBLE bundled with ESP-IDF 5.5.1 does not have.
-On IDF 5.5 the cap stays until IDF's NimBLE catches up. The IDF 6 build has no cap and requires 3.3.12 or later.
+The build requires 3.3.12 or later. Versions from 4.0.0 on fail at configure, so the manifest caps the range below
+4.0.0. ESP-IDF 5.5 is no longer supported.
 :::
 
 arduino-esp32 declares further dependencies that the firmware doesn't use, such as RainMaker, Insights, Zigbee, Modbus,
@@ -36,7 +36,7 @@ the stub list in sync with `CONFIG_ARDUINO_SELECTIVE_*` in `sdkconfig.defaults`.
 
 ## Vendored components
 
-The following libraries are vendored as git submodules under `components/`:
+The following libraries are vendored under `components/`. All except tamp are git submodules:
 
 | Library | Upstream | Used for |
 |---|---|---|
@@ -46,12 +46,20 @@ The following libraries are vendored as git submodules under `components/`:
 | ESPTelnet | [LennartHennigs](https://github.com/LennartHennigs/ESPTelnet) | Telnet console |
 | SimpleCLI | [SpacehuhnTech](https://github.com/SpacehuhnTech/SimpleCLI) | Console command parser (`src/cli.cpp`) |
 | esp32-semihosting-profiler | [fl4p](https://github.com/fl4p/esp32-semihosting-profiler) | Sampling profiler (`CONFIG_FUGU_WITH_SPROFILER`) |
+| tamp | [BrianPugh](https://github.com/BrianPugh/tamp) | C sources copied into `components/tamp/`, see above |
 
-If you cloned the repository without `--recursive`, fetch the submodules:
+`components/fugu_flash_chip/` is the project's own component: the flash chip driver list for
+`CONFIG_SPI_FLASH_AUTO_SUSPEND` builds (ESP32-S3).
+
+If you cloned the repository without `--recursive`, fetch the submodules. Without them, configure stops with
+"Submodules are not checked out":
 
 ```bash
 git submodule update --init --recursive
 ```
+
+In a git worktree, add `-c protocol.file.allow=always` (some submodules are cloned from the main checkout) and
+`--force` (repairs a half checked-out submodule).
 
 ## Host-side tools
 

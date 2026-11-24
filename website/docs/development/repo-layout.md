@@ -18,6 +18,9 @@ cd fugu-mppt-firmware
 git submodule update --init --recursive   # after a pull, or if cloned without --recursive
 ```
 
+In a git worktree, use `git -c protocol.file.allow=always submodule update --init --recursive --force`. Without the
+submodules, configure stops with "Submodules are not checked out".
+
 The build needs only this clone. Local checkouts of esp-ota-ble and esp-bootguard are optional overrides (see
 [External repositories](#external-repositories)).
 
@@ -27,18 +30,20 @@ The repository has these top-level folders:
 
 | Path | Contents |
 |---|---|
-| `src/` | Firmware sources: control loop (`mppt.*`, `tracker.h`, `pd_control.h`, `buck.h`, `charger.h`), `adc/` sensor backends, `pwm/` gate drivers, `math/` filters, `tele/` services and telemetry, `sync/` clock sync, `sim/` virtual converter, `selftest/`, `cli.cpp` console commands |
-| `main/` | ESP-IDF component glue: `CMakeLists.txt` (source selection, compile options), `Kconfig.projbuild` (feature flags), `idf_component.yml` (managed components), `linker.lf` |
-| `components/` | Vendored libraries (mostly submodules) and `_idf_stubs/`, empty stand-ins for unused arduino-esp32 dependencies |
-| `config/` | littlefs configuration images per board (`fmetal/`, `fugu1/`, `psu_12v/`, `solar-boost/`, …) and [lab profiles](../lab/config-profiles.md) under `lab/` |
+| `src/` | Firmware sources: control loop (`mppt.*`, `tracker.h`, `pd_control.h`, `buck.h`, `charger.h`), `adc/` sensor backends, `pwm/` gate drivers, `math/` filters, `tele/` services and telemetry, `sync/` clock sync, `sim/` virtual converter, `selftest/`, `usb/` USB config drive, `viz/` LCD and LED, `etc/` RT helpers, OTA and profiling, `cli.cpp` console commands |
+| `main/` | ESP-IDF component glue: `CMakeLists.txt` (source selection, compile options), `Kconfig.projbuild` (feature flags), `idf_component.yml` (managed components), linker fragments (`linker.lf`, `rt_iram*.lf`, `rtc_pin.ld`) |
+| `components/` | Vendored libraries (mostly submodules), `fugu_flash_chip/` (flash driver list for auto-suspend) and `_idf_stubs/`, empty stand-ins for unused arduino-esp32 dependencies |
+| `config/` | littlefs configuration images per board (`fmetal/`, `fugu1/`, `psu/`, `psu_12v/`, `solar-boost/`) and [lab profiles](../lab/config-profiles.md) under `lab/` |
 | `etc/` | Host tools: console client, OTA, provisioning helpers, e2e tests, config editor, measurement scripts |
 | `test/` | Unity on-target tests (`test_*.cpp`, `main.cpp`), host C++ tests (`host-stub/`), host Python tests (`host_py/`) |
 | `doc/` | Working notes, specs and reviews that are not part of this site |
 | `plans/` | Implementation plans |
 | `website/` | This documentation site (Docusaurus); pages are in `website/docs/` |
+| `.github/workflows/` | `docs.yml`: builds and publishes this site |
 
 The repository root holds these files: `CMakeLists.txt` (project, sdkconfig layering, littlefs image), `sdkconfig.defaults` and its fragments,
-`partitions.csv`, `provision.py`, `ota.sh`, `flash.sh`, `idf_ext.py` (ELF archiving on flash), `wokwi.toml` and
+`partitions.csv`, `idf-export.sh` (sources ESP-IDF, sets target and port), `provision.py`, `ota.sh`, `flash.sh`,
+`idf_ext.py` (ELF archiving on flash), `wokwi.toml` and
 `diagram.json` (Wokwi simulator).
 
 ## Tools in `etc/`
@@ -48,7 +53,8 @@ The host tools in `etc/` include:
 | Path | Purpose |
 |---|---|
 | `etc/fugu_console.py` | Console client over serial, telnet, BLE, BLE proxy or MQTT |
-| `etc/ota.py`, `etc/ota_ble.py` | Firmware updates over Wi-Fi and BLE |
+| `etc/ota.py`, `etc/ota_mqtt.py`, `etc/ota_ble.py` | Firmware updates over Wi-Fi (HTTP or the MQTT console) and BLE |
+| `etc/fleet-build.sh` | Builds the production image (`sdkconfig.d/fleet`) of a commit in a clean worktree |
 | `etc/e2e-test/` | End-to-end test suite, see [Testing](testing.md) |
 | `etc/config-tool/` | `conf-editor.html` single-page config editor, `conf-tool.py` |
 | `etc/scope.py` | Launcher for the adcscope client, see [Measurements](../lab/measurements.md#adc-noise) |
@@ -56,6 +62,8 @@ The host tools in `etc/` include:
 | `etc/matrix_build.sh` | Build the common feature/target variants, see [Build](build.md) |
 | `etc/filter-studies/` | Filter-design studies |
 | `etc/patches/` | Patches for upstream code |
+| `etc/mqtt-console-logger/` | Logger that stores the console output of all devices from MQTT |
+| `etc/bsync-beacon/` | ESP-IDF project for the beacon node of the clock-sync experiments |
 
 ## Submodules
 

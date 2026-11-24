@@ -5,12 +5,14 @@ sidebar_position: 6
 
 # Testing
 
-The firmware has four test layers. The following table lists them from fastest to most hardware-dependent.
+The firmware has these test layers. The following table lists them from fastest to most hardware-dependent.
 
 | Layer | Where | Needs |
 |---|---|---|
-| Host unit tests | `test/host-stub/*-test.cpp` | A C++ compiler |
-| Host Python tests | `test/host_py/` | Python |
+| Host unit tests | `test/host-stub/*-test.cpp` | A C++ compiler (clang++) |
+| Host closed-loop simulation | `test/host-stub/mppt-sim.cpp` (`mppt-sim.sh`) | A C++ compiler |
+| Host Python tests | `test/host_py/test_*.py`, `etc/test_*.py` | Python (`.venv`) |
+| QEMU tests | `test/unity_qemu.py`, `test/rt_task_qemu.py`, `test/bl_ota_qemu.py` | ESP-IDF with QEMU |
 | On-target unit tests | `test/test_*.cpp` (Unity) | An ESP32-S3 board with no powered stage (drives gate pins) |
 | End-to-end tests | `etc/e2e-test/` | A device over serial/telnet; some clusters need a power stage |
 
@@ -18,13 +20,32 @@ For power-stage tests with a programmable supply and load, see [Automated Bench 
 
 ## Host unit tests
 
-Each `test/host-stub/*-test.cpp` is self-contained. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`.
-The following command builds and runs one test:
+Each `test/host-stub/*-test.cpp` builds into its own executable; there is no common build file. The header comment
+of each test gives its exact compile command. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`
+(`esp/`, `freertos/`, `mqtt-stub/`, and the `arduino-shim` submodule). Some tests also compile firmware sources, for
+example `src/sim/vconv.cpp` or `src/usb/vfat.cpp`. The following command builds and runs one test:
 
 ```bash
 clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
     -o /tmp/service-test test/host-stub/service-test.cpp && /tmp/service-test
 ```
+
+Tests that link more of the firmware have a wrapper script in `test/host-stub/` that builds and runs them:
+`calib-noise-test.sh`, `izero-test.sh`, `settle-test.sh` and `vconv-spice-check.sh`.
+
+### Closed-loop simulation
+
+`test/host-stub/mppt-sim.sh [scenario ...]` builds `mppt-sim.cpp` with the real `src/mppt.cpp`, sensor setup and the
+virtual converter plant (`src/sim/vconv.cpp`), then runs the named scenarios (default: all except `cv-hold-*`). The
+exit status reports whether any scenario failed. `minpulse-sim.sh` runs closed-loop checks on top of it.
+
+## Host Python tests
+
+The Python tests need no device. Most run directly, for example
+`.venv/bin/python3 test/host_py/test_conf_hash.py -v` or `.venv/bin/python3 etc/test_ota_common.py`; all of them run
+under `.venv/bin/python3 -m pytest <file>`, which the files without a `__main__` block need.
+`test/host_py/` covers the config, coredump and migration helpers; `etc/test_*.py` cover the console client and the
+OTA tools.
 
 ## On-target unit tests
 
@@ -50,14 +71,26 @@ alternative, `idf.py -p $ESPPORT flash monitor` resets the board and attaches in
 
 The PWM/MCPWM tests only run in an MCPWM build (`CONFIG_FUGU_WITH_MCPWM=y`). The software suite passes without it.
 
+`TEST_ADC_HW=1` together with `RUN_TESTS=1` builds a suite that runs only the internal-ADC and INA226 liveness tests
+(`test/test_adc_hw.cpp`) and skips the tests that drive gate pins.
+
 Without a board, `python3 test/unity_qemu.py` (after `. ./idf-export.sh`) builds the suite in `build/qemu`, runs it in
 QEMU (esp32s3), and exits non-zero on a failure or crash. QEMU's flash has no QIO mode, so the script sets DIO in that
 build directory's sdkconfig only. The tests that need real pin edges (GPIO interrupts, MCPWM output and capture)
 detect QEMU by its blank factory MAC and report as Ignored.
 
 `MAIN_SRC=<file>` replaces the application sources with one file that provides `setup()`/`loop()`, for example
-`MAIN_SRC=../test/main_ads_rate.cpp idf.py build`. The `test_*.cpp` files run under `test/main.cpp` via
-`RUN_TESTS=1`. They aren't entry points.
+`MAIN_SRC=../test/main_ads_rate.cpp idf.py -B build/ads-rate build`. The `test_*.cpp` files run under
+`test/main.cpp` via `RUN_TESTS=1`. They aren't entry points.
+
+| Entry point | Purpose |
+|---|---|
+| `test/main_ads_rate.cpp` | ADS1x15 sample-rate check on a board |
+| `test/main_rt_task.cpp` | RT task start-up check, run in QEMU by `test/rt_task_qemu.py <build-dir>` |
+| `test/main_bl_ota.cpp` | Bootloader OTA refusal cases and install, run in QEMU by `test/bl_ota_qemu.py <build-dir>` |
+
+The two QEMU scripts expect a build in its own directory with `CONFIG_ESPTOOLPY_FLASHMODE_DIO=y` in that build's
+sdkconfig; the command is in each script's header.
 
 ## End-to-end tests
 

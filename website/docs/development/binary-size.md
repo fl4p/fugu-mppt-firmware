@@ -9,12 +9,13 @@ description: "This page lists the changes already made to shrink the firmware im
 *Original hand-written note: [doc/dev-notes/binary size.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/dev-notes/binary%20size.md).*
 
 This page lists the changes already made to shrink the firmware image and the ones still open. The 1.87 MB OTA slot
-(`partitions.csv`) is the hard ceiling for WITH_BLE=1 builds. Inspect the image with `idf.py size`,
+(`partitions.csv`) (1,871,872 B per slot) is the hard ceiling for builds with `CONFIG_FUGU_WITH_BLE=y`. Inspect the image with `idf.py size`,
 `idf.py size-components` and `idf.py size-files`.
 
-## Size progression (WITH_BLE=1, esp32s3)
+## Size progression
 
-The following table shows how each change moved the bin size and the free share of the OTA slot.
+The following table shows how each change moved the bin size and the free share of the OTA slot (BLE on, ESP32-S3).
+The `WITH_*` names in it are the former environment flags, now `CONFIG_FUGU_WITH_*` Kconfig options.
 
 | Stage                                                                                       |       Bin size |        Δ |       Free |
 |---------------------------------------------------------------------------------------------|---------------:|---------:|-----------:|
@@ -45,6 +46,8 @@ The following changes predate the dated rounds below:
 - `CONFIG_LWIP_IPV6=n`: `~15–20 KB`. The source has no `AF_INET6`/`in6_*`.
 - `CONFIG_LIBC_NEWLIB_NANO_FORMAT=y`: `~37–46 KB`. All `src/` format strings were first audited for `%hh*`/`%ll*`,
   which newlib-nano silently misparses.
+- `CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y` (`sdkconfig.defaults`): `assert()` still aborts with a backtrace
+  and coredump, but without the file/line/expression strings in flash. Estimated `~5–15 KB`, not measured.
 - Make sprofiler build-time optional: `~10 KB`. The option is `WITH_SPROFILER=1` (now `CONFIG_FUGU_WITH_SPROFILER`).
   When it is unset, the top-level CMakeLists sets `EXCLUDE_COMPONENTS esp32-semihosting-profiler`.
 
@@ -79,22 +82,30 @@ This round pruned unused IDF and Arduino features and fixed the build breaks tha
   `target_link_libraries(${arduino_lib} PUBLIC idf::esp_wifi …)`.
 - ESPTelnet REQUIRES esp_wifi. The root cause is the same. Here the component's own REQUIRES list was the cleanest
   place to add it.
-- `src/web/server.cpp` trimmed from 36 lines of dead WebServer/SPIFFS/ArduinoOTA/AsyncTCP includes around one
+- `src/web/server.cpp` (since removed) trimmed from 36 lines of dead WebServer/SPIFFS/ArduinoOTA/AsyncTCP includes around one
   `MDNS.addService(...)` call to 6 lines.
 
 ### 2026-05-25 round (gating)
 
-`WITH_MEASURE_COIL` (default off) drops `src/measure_coil.cpp` (~11 KB), the `measure-coil` console command, and the
+`WITH_MEASURE_COIL`, now `CONFIG_FUGU_WITH_MEASURE_COIL` (default off), drops `src/selftest/measure_coil.cpp` (~11 KB), the `measure-coil` console command, and the
 `isMeasuring()` guards in `cli.cpp` / `main.cpp`. Together these shrank the image by 14 KB (1,709,968 → 1,695,936 B). It is a bench-only tool ported from `etc/measure_coil.py`. To run
-coil sweeps on the bench, enable it with `idf.py menuconfig` (CONFIG_FUGU_WITH_MEASURE_COIL), then `idf.py build`.
+coil sweeps on the bench, enable it with `idf.py menuconfig` (`CONFIG_FUGU_WITH_MEASURE_COIL`) or the `sdkconfig.d/measure_coil` fragment, then
+`idf.py build`.
 
 ### 2026-05-25 round (per-file optimization)
 
-Per-file `-Os` on cold libmain TUs saved ~25 KB with no measurable RT regression. The build applies
-`set_source_files_properties(... COMPILE_OPTIONS "-Os")` to
-`cli.cpp / sensor_setup.cpp / logging.cpp / util.cpp / viz/lcd.cpp / console.cpp / etc/rt.cpp / math/float16.cpp`,
-plus all `NETW_SRC` (telemetry, ftp_service, ftp_server, telnet_service, scope_service, mqtt, HAMqttDevice, home_assistant,
-tamp_compress, web/server, etc/ota), `BLE_SRC` (console_ble, etc/ota_ble), and `measure_coil.cpp` when enabled.
+Per-file `-Os` on cold libmain TUs saved ~25 KB with no measurable RT regression. `main/CMakeLists.txt` applies
+`set_source_files_properties(... COMPILE_OPTIONS "-Os")` to `cli.cpp`, `selftest/bflow_test.cpp`, `sync/bsync.cpp`,
+`adc/sensor_setup.cpp`, `logging.cpp`, `util.cpp`, `viz/lcd.cpp`, `console.cpp`, `etc/rt.cpp` and `math/float16.cpp`,
+plus the enabled network sources (`NETW_SRC`: telemetry, mqtt, `etc/ota` and the optional telnet, TLS console, scope,
+FTP, HTTP conf, Home Assistant and MQTT telemetry files), the BLE sources (`BLE_SRC`: console_ble and the optional BLE
+telemetry, advertising and Improv files), the telemetry core (`tele_core`, `tamp_compress`), and `measure_coil.cpp`,
+`usb/*.cpp` and `etc/pwr_knobs.cpp` when enabled.
+
+Since then, the top-level `CMakeLists.txt` also compiles the core-0-only components (`bt`, `lwip`, `mdns`, `littlefs`,
+`wpa_supplicant`, `mqtt`, the HTTP/TLS stack, `esp_wifi`, `esp-ota-ble` and others, list `FUGU_OS_COMPONENTS`) and
+arduino-esp32 with `-Os`. arduino-esp32's I2C, Wire, GPIO, misc and peripheral-manager sources, which the RT loop
+calls, stay at `-O2`.
 
 These files keep `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`): `main.cpp` (hosts `loopRT`), `mppt.cpp`
 (`mppt.update` per ADC sample), and `adc/adc_esp32_cont.cpp` (DMA ISR helpers).
@@ -112,9 +123,8 @@ This round removed STL templates that no other TU shares:
   `wlocale` all went to 0 refs.
 
   This is the same trap as the earlier `<fstream>`/`<sstream>` bans. One `std::filesystem` use pulls in the locale
-  code, so grep for `std::filesystem` to keep it out. The `<iostream>` include in `tele/scope.h` now costs 0 KB
-  because the cascade is gone. It is dead, though, and should be removed so that a future `std::cout` cannot pull the
-  chain back in.
+  code, so grep for `std::filesystem` to keep it out. The dead `<iostream>` include in `tele/scope.h` has since been
+  removed as well.
 
 - Drop `std::unordered_map` from `rtcount` (`src/etc/rt.{h,cpp}`): `~80 KB` (measured 4 % → 8 % free this build).
   The per-section profiler keyed its stats by `const char*` in an `unordered_map`, which instantiated the whole
@@ -151,12 +161,7 @@ server against the CA bundle. The option adds about 72 KB of flash, most of it t
 
 ## Candidates (not applied)
 
-The following options remain open, grouped by how safe they are for the current config.
-
-### High-confidence, safe for current config
-
-- `CONFIG_COMPILER_OPTIMIZATION_ASSERTION_LEVEL=0`: `~5–15 KB`. Assertions are currently full
-  (`__FILE__/__LINE__` strings in flash). Silent assertions strip them, at the cost of opaque crashes.
+The following options remain open, grouped by how invasive they are.
 
 ### Code-level STL bloat
 
@@ -228,7 +233,9 @@ Prefer `fopen`/`fgets`, POSIX `dirent`, `snprintf`, and flat `vector<pair>` over
 
 ## Matrix build (pre-2026-05-25)
 
-The following table shows the image size for each target and feature combination before the 2026-05-25 changes:
+The following table shows the image size for each target and feature combination before the 2026-05-25 changes. The
+column names are the former environment flags; `etc/matrix_build.sh` now seeds `CONFIG_FUGU_WITH_BLE` and
+`CONFIG_FUGU_WITH_NETW` through a per-variant sdkconfig fragment.
 
 ```
   ┌─────────┬──────────┬───────────┬─────────────┬───────────────────┐

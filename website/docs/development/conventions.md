@@ -27,8 +27,9 @@ The control loop (`loopRT`) runs alone on core 1 (`RT_CORE`) and blocks on the n
 `adcSampler.update()`. See [Architecture](../internals/architecture.md). The following rules protect it:
 
 - Don't call `vTaskDelay` or sleep voluntarily on the RT path.
-- Keep every other task off core 1. `sdkconfig.defaults` pins the Arduino, lwIP and mDNS tasks to core 0; `loopRT` asserts
-  it runs on `RT_CORE`. Pin new tasks to core 0.
+- Keep every other task off core 1. `sdkconfig.defaults` pins the Arduino, lwIP, mDNS and MQTT tasks and the
+  `esp_timer` task and ISR to core 0, `sdkconfig.d/ble` the NimBLE host and BT controller; `loopRT` asserts it runs
+  on `RT_CORE`. Pin new tasks to core 0.
 - `vout` is the last sensor added in the sensor setup (`src/adc/sensor_setup.cpp`), so output over-voltage
   protection sees the freshest sample. Add new sensors before it.
 

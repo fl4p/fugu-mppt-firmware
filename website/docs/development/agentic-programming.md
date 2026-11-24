@@ -85,7 +85,7 @@ a port.
 
 ## 3. VirtualConverter (vconv)
 
-`src/sim/vconv.h` is a physics model of a synchronous buck converter in plain C++, with no
+`src/sim/vconv.h` is a physics model of a synchronous buck or boost converter in plain C++, with no
 Arduino, FreeRTOS, or ESP-IDF headers. It simulates the following parts:
 
 - A single-diode PV source (Isc, Voc, fill-factor k)
@@ -94,6 +94,7 @@ Arduino, FreeRTOS, or ESP-IDF headers. It simulates the following parts:
 - PWM gate timing (HS on-count, LS on-count, freq), at the LEDC or the MCPWM count resolution
   (`vconv.conf::pwm_clk`)
 - Pluggable AC ripple models (sine inverter, |sin| rectifier, spiky China-inverter pulse)
+- An optional irradiance profile: clear-sky day and night with Markov clouds
 
 With `CONFIG_FUGU_WITH_VCONV=y`, the firmware replaces the real PWM driver with `PWM_VConv` and
 the real ADC with `ADC_VConv`. The complete control stack (MPP tracker, PD controllers,
@@ -152,7 +153,7 @@ The tests in `test/host-stub/` cover the following areas:
 
 | File | What it tests |
 |---|---|
-| `vconv-test.cpp` | VirtualConverter: CCM/DCM physics, energy conservation, PV model, ripple models (21 cases A–U) |
+| `vconv-test.cpp` | VirtualConverter: CCM/DCM physics, energy conservation, PV model, ripple models, boost branch, irradiance profile (cases A–Z and variants) |
 | `converter-test.cpp` | `SynchronousConverter` buck math (diode emulation timing) |
 | `integrator-test.cpp` | Integrator / coulomb-counter arithmetic |
 | `tracker-window-test.cpp` | Tracker averaging period under a limiter that takes over every period; `MeanAccumulator` saturation |
@@ -163,6 +164,8 @@ The tests in `test/host-stub/` cover the following areas:
 | `plot-test.cpp` | `plot.h` Series rendering at small/degenerate N (heap-safety) |
 | `service-test.cpp` | `ServiceManager` state machine (boot without `wifi.conf`) |
 
+These are a selection; every `test/host-stub/*-test.cpp` carries its compile command in its header comment, and
+`test/host-stub/mppt-sim.sh` runs the closed-loop simulation scenarios. See [Testing](testing.md#host-unit-tests).
 An agent can run these before flashing to catch physics regressions without hardware.
 
 ---
@@ -185,11 +188,12 @@ The following commands build and flash the test suite, or build a single entry p
 ```bash
 RUN_TESTS=1 idf.py -B build/tests build flash monitor
 # or target a single entry point:
-MAIN_SRC=../test/main_ads_rate.cpp idf.py build
+MAIN_SRC=../test/main_ads_rate.cpp idf.py -B build/ads-rate build
 ```
 
-Tests run on the device, report `PASS`/`FAIL`/`SKIP` via the console, and exit. The e2e harness
-can drive this flow and collect results over serial.
+The suite runs once from `setup()` and prints Unity's per-test `PASS`/`FAIL`/`IGNORE` lines and the
+`N Tests N Failures N Ignored` summary on the console. Without a board, `python3 test/unity_qemu.py` builds the
+suite, runs it in QEMU and exits non-zero on a failure, which suits unattended runs.
 
 ---
 
@@ -367,7 +371,8 @@ following rules apply to a real converter:
       buck, `hv_i_max`/`hv_max` in a boost). The converter stops and backs off.
     - `sync off` (diode emulation) is safer than `sync forced` (no reverse-current check).
     - For on-device calibration, use `measure-coil l0` / `measure-coil ls` instead of raw PWM
-      stepping. It uses a controlled DCM sweep and restores MPPT when done.
+      stepping. It needs a `CONFIG_FUGU_WITH_MEASURE_COIL=y` build and a converter stopped with `dc 0`, uses a
+      controlled DCM sweep, and ends in manual PWM at duty 0; `mppt` resumes tracking.
 
   Validate PWM command sequences on a vconv build first, then apply them to the real unit with
   telemetry open.
