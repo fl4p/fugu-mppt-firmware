@@ -332,7 +332,7 @@ static void sweepLs(const MeasArgs &a) {
     float Xls[MEAS_MAX_PTS], Yio[MEAS_MAX_PTS];
     int n = 0;
     float peak_io = -1e9f;
-    const uint8_t gen = converter.lsClamps(); // an LS clamp or a stop voids the pin, also one set after it
+    const uint32_t gen = converter.lsClamps(); // an LS clamp or a stop voids the pin, also one set after it
     for (int ls = ls_lo; ls <= ls_hi && n < MEAS_MAX_PTS; ls += step) {
         converter.setManualRect(ls, gen);
         bool ok = dwell(a.dwellMs);

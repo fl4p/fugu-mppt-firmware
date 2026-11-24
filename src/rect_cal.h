@@ -741,7 +741,7 @@ private:
     // RT
     bool owns = false;    // manualRect is held by the run
     uint16_t hsPrev = 0;  // HS before the run (0: none)
-    uint8_t clamps = 0;   // converter LS-clamp count at start
+    uint32_t clamps = 0;  // converter LS-clamp count at start
     uint32_t upT0 = 0, offT0 = 0, lockT0 = 0; // start of: start-up hold, off time, lock
     uint16_t enSeen = 0;                        // converter enable count at offT0
     bool upPending = false, upDone = false;     // start-up hold running / over until the next stop

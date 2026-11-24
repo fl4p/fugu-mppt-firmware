@@ -1208,7 +1208,8 @@ public:
     std::atomic<bool> hsClearReq{false};
     float hsI0 = 0;
     uint32_t hsClampMs = 0, hsRampUs = 0, hsRampPos = 0; // ramp: last step, position (µs)
-    uint8_t hsRise = 0, hsRampCnt = 0;
+    uint8_t hsRise = 0;
+    uint32_t hsRampCnt = 0;
     std::atomic<bool> hsClampUnsafe{false}; // a clamp met battery current: disarmed until a fresh blocks pass (persisted)
     void hsLatchRt(uint32_t nowMs, float i, char why);
     void hsClearRt();

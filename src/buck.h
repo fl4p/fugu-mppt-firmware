@@ -57,6 +57,10 @@ using LegacyPwm = PWM_Mock;
 /**
  * Synchronous buck or boost converter
  */
+#ifdef FUGU_HOST_SIM
+inline void (*g_simLsCommitHook)() = nullptr; // host sim: before an LS driver write
+#endif
+
 class SynchronousConverter {
     static constexpr uint8_t pwmCh_Ctrl = 0; // Ctrl FET; buck: IN, HI (HS signal)
     static constexpr uint8_t pwmCh_Rect = 1; // Rect FET; buck: EN or LO, depending on `pwmEnLogic`
@@ -123,12 +127,12 @@ class SynchronousConverter {
     uint16_t pwmRect = 0; // buck: LS
     uint16_t pwmRectMax = 0;
     int32_t manualRect = -1; // >=0: hold LS at this count (bench) while lsClampCount == manualRectGen, -1: auto
-    uint8_t manualRectGen = 0;
+    uint32_t manualRectGen = 0;
     float pwmRectRatioDCM = 0; // t_onRect/t_onCtrl when in DCM
     float rectDitherErr = 0; // carried LS-count rounding remainder (DCM error-feedback dither)
     int16_t rectOnOffset = 0; // DCM LS-count dead-time/gate-delay offset (counts; >0 = LS off later, toward zero crossing)
     uint8_t rectCalLevel = 1; // coil.conf rect_offset_cal on the active driver: 0 uncalibrated, 1 measured, 2 bound
-    std::atomic<uint8_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0)
+    std::atomic<uint32_t> lsClampCount{0}; // bumped by syncRectMinDuty() and disable() (also core 0), which drop manualRect
     std::atomic<uint16_t> enables{0};      // bumped by each start in pwmPerturb()
     std::atomic<uint8_t> startInhibit{0}; // owner bits; pwmPerturb() does not start the converter
     std::atomic<bool> startWanted{false};
@@ -477,6 +481,9 @@ class SynchronousConverter {
 
     // Commit only the LS off-count (instant clamp when an LS limit decreases).
     void drvCommitLsOff(uint16_t ctrl, uint16_t rect) {
+#ifdef FUGU_HOST_SIM
+        if (g_simLsCommitHook) g_simLsCommitHook();
+#endif
         if (lsClamp.load(std::memory_order_relaxed)) return;
 #if HAVE_MCPWM
         if (useMcpwm) { mcpwmDrv.setLsOff(ctrl + rect); return; }
@@ -1106,7 +1113,10 @@ public:
     void setRectOffsetNeedsCal(bool v) { rectCalLevel = !v; }
     [[nodiscard]] uint8_t rectOffsetCal() const { return rectCalLevel; }
     void setRectOffsetCal(uint8_t v) { rectCalLevel = v; }
-    [[nodiscard]] uint8_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
+    [[nodiscard]] uint32_t lsClamps() const { return lsClampCount.load(std::memory_order_relaxed); }
+#ifdef FUGU_HOST_SIM
+    void simSkipClamps(uint32_t n) { lsClampCount.fetch_add(n, std::memory_order_relaxed); } // n clamps elsewhere
+#endif
     [[nodiscard]] uint16_t enableCount() const { return enables.load(std::memory_order_acquire); }
     // owners of startInhibit: rect-cal save and `pwr pwm` share InhibitCal, the idle profile holds InhibitIdle,
     // a restart InhibitBoot
@@ -1165,8 +1175,15 @@ public:
     // [pwmRectMin, complementary max]. NOTE: exceeding the natural zero-crossing draws reverse
     // current - same envelope as forced PWM; protections stay active. gen: lsClamps() when the caller decided on
     // the pin; an LS clamp or a stop since then (or later) voids it.
-    void setManualRect(int ls) { setManualRect(ls, lsClamps()); }
-    void setManualRect(int ls, uint8_t gen) {
+    // the pin; an LS clamp or a stop since then (or later) voids it. RT core: applied at once.
+    void setManualRect(int ls) {
+        setManualRect(ls, lsClamps());
+        if (!manualRect_()) return;
+        pwmRect = (uint16_t) manualRect;
+        drvCommitLsOff(pwmCtrl, pwmRect);
+    }
+    // any core: the RT's next pwmPerturb() applies it
+    void setManualRect(int ls, uint32_t gen) {
         if (ls < 0) {
             manualRect = -1;
             return;
@@ -1175,9 +1192,6 @@ public:
         // LS would stay HIGH the whole period.
         manualRectGen = gen;
         manualRect = constrain(ls, (int) pwmRectMin, (int) (driverPwmMax - pwmCtrl - 1));
-        if (!manualRect_()) return;
-        pwmRect = (uint16_t) manualRect;
-        drvCommitLsOff(pwmCtrl, pwmRect);
     }
 
     __attribute__((cold)) void init(const ConfFile &converterConf, const ConfFile &boardConf, const ConfFile &coilConf) {
@@ -1491,6 +1505,7 @@ public:
 
     void disable() {
         lsClampCount.fetch_add(1, std::memory_order_relaxed);
+        manualRect = -1;
         const bool clamp = lsClamp.load(std::memory_order_seq_cst);
         if (pinSd != 255) digitalWrite(pinSd, !clamp);
         if (clamp) drvShortLs();
@@ -1872,6 +1887,7 @@ public:
      */
     void syncRectMinDuty() {
         lsClampCount.fetch_add(1, std::memory_order_relaxed);
+        manualRect = -1;
         if (pwmRect > pwmRectMin) {
             if (pwmRect > pwmRectMin + pwmRectMin / 2) {
                 ESP_LOGW("dcdc", "set sync-rect PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmRect,

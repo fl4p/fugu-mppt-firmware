@@ -2419,11 +2419,11 @@ static int runMcBoost(const std::string &name) {
 
 // The real measure-coil task (src/selftest/measure_coil.cpp) runs inline; its vTaskDelay() waits run the simulation.
 static void mcDelayHook();
+static bool g_simInDelay; // the task waits: the simulation runs
 static void simDelay(uint32_t ms) {
-    static bool in;
-    if (in) return; // a wait inside the RT/LF path
+    if (g_simInDelay) return; // a wait inside the RT/LF path
     mcDelayHook();
-    in = true, run(ms * 1e-3, 0), in = false;
+    g_simInDelay = true, run(ms * 1e-3, 0), g_simInDelay = false;
 }
 
 static struct {
@@ -2432,8 +2432,12 @@ static struct {
                 // published again and the BF closed (a core-0 close racing the shutdown), 6 the reverse-current tick
                 // during the LS sweep (manual LS pinned), 7 shutdown without backoff mid-ramp, 8 shutdown, then the BF
                 // closed from outside (the request stays cancelled), 9 the reverse-current tick between an LS row and
-                // the next pin, 10 a shutdown racing the task's cleanup (another thread, paused inside shutdownDcdc)
-    bool injected, reqKept, revBad, lsBad, lsStop, lsMode, pinWait, lsCommitBad;
+                // the next pin, 10 a shutdown racing the task's cleanup (another thread, paused inside shutdownDcdc),
+                // 11 256 reverse ticks in a row from that point (an 8-bit clamp count wraps), 12 a shutdown between
+                // the task's next pin and the RT tick after it, 13 as 11, then the clamp count advanced by 2^32 - 256
+    bool injected, reqKept, revBad, lsBad, lsStop, lsMode, pinWait, lsCommitBad, armed;
+    int wrapN, wrapSkip; // reverse ticks done, ticks since the 2^32 skip (inject 11)
+    uint32_t taskLsWrites; // LS driver writes from the task (outside the RT ticks), inject 12
     uint32_t offTicks, backoffTicks, closedTicks, srTicks, restartTicks, pinTicks, rowsAfter;
     uint16_t lastCtrl;
     double tPub, tInject = -1, tAbort = -1;
@@ -2452,11 +2456,12 @@ static void mcRevTick(float z) {
     if (ok) mppt.updateManual();
     const unsigned lsU = converter.getRectOnPwmCnt();
     converter.pwmPerturb(0);
-    printf("== inject: reverse tick at t=%.3f: protect %d, BF after protect %d, after updateManual %d; LS %u, at the "
-           "end of the tick %u (min %u), manual LS %d\n", tNow(), (int) ok, (int) bfP, (int) mppt.bflow.state(), lsU,
-           converter.getRectOnPwmCnt(), converter.getRectOnPwmMin(), (int) converter.manualRect_());
-    g_mc.revBad = mppt.bflow.state();
-    g_mc.lsBad = converter.manualRect_() || converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + 1u;
+    if (!g_mc.injected)
+        printf("== inject: reverse tick at t=%.3f: protect %d, BF after protect %d, after updateManual %d; LS %u, at "
+               "the end of the tick %u (min %u), manual LS %d\n", tNow(), (int) ok, (int) bfP, (int) mppt.bflow.state(),
+               lsU, converter.getRectOnPwmCnt(), converter.getRectOnPwmMin(), (int) converter.manualRect_());
+    g_mc.revBad |= mppt.bflow.state();
+    g_mc.lsBad |= converter.manualRect_() || converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + 1u;
     g_mc.injected = true;
 }
 
@@ -2469,7 +2474,20 @@ static void raceSeam() {
 }
 
 // the task's first wait after the injected clamp follows its next pin: that must not have moved LS off the minimum
+static void mcStaleShutdown(const char *where) {
+    printf("== inject: shutdown %s at t=%.3f (manual LS %d, plant LS %u)\n", where, tNow(), (int) converter.manualRect_(),
+           g_vconv.getPwm().pwmRect);
+    mppt.shutdownDcdc("inject", 5);
+    g_mc.armed = false, g_mc.injected = true, g_mc.tInject = tNow();
+}
+static void mcLsCommitHook() {
+    if (g_simInDelay) return;
+    ++g_mc.taskLsWrites;
+    if (g_mc.armed) mcStaleShutdown("before the task's LS driver write");
+}
+
 static void mcDelayHook() {
+    if (g_mc.armed) mcStaleShutdown("after the task's pin, before the next RT tick");
     if (!g_mc.pinWait) return;
     g_mc.pinWait = false;
     g_mc.lsCommitBad = converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + 1u;
@@ -2489,6 +2507,8 @@ static void mcLog(const char *msg) {
     if (g_mc.lsMode && sscanf(msg, " %u %f %f %f %3s", &row, &a, &b, &c, m) == 5) {
         g_mc.rowsAfter += g_mc.injected;
         if (g_mc.inject == 9 && !g_mc.injected && row >= 780) mcRevTick(mppt.mcBfZero.load()), g_mc.pinWait = true;
+        if ((g_mc.inject == 11 || g_mc.inject == 13) && !g_mc.wrapN && row >= 780) g_mc.wrapN = -1;
+        if (g_mc.inject == 12 && !g_mc.injected && row >= 780) g_mc.armed = true;
     }
     if (g_mc.inject == 10 && !g_mc.injected && !strncmp(msg, "measure-coil: Iout zero", 23)) {
         printf("== inject: shutdown on another thread, paused inside it, while the task cleans up\n");
@@ -2530,6 +2550,12 @@ static void mcTick() {
                                               converter.periodCounts() / (converter.realizedFreqHz() * g_vconv.getL())));
     g_mc.restartTicks += g_mc.tInject >= 0 && !off && !g_mc.done;
     g_mc.pinTicks += g_mc.injected && converter.manualRect_();
+    if (g_mc.wrapN && g_mc.wrapN < 256) {
+        g_mc.wrapN = std::max(g_mc.wrapN, 0) + 1, mcRevTick(mppt.mcBfZero.load());
+        // inject 13: then 2^32 - 256 clamps at once: the count is back at the task's pin, which must stay dropped; 20 ticks
+        // later one more, so the task (in its dwell) sees the change
+        if (g_mc.wrapN == 256 && g_mc.inject == 13) converter.simSkipClamps(0xffffff00u), g_mc.wrapSkip = 1;
+    } else if (g_mc.wrapSkip && ++g_mc.wrapSkip == 21) converter.simSkipClamps(1);
     const uint16_t ctrl = converter.getCtrlOnPwmCnt();
     const bool ramping = ctrl != g_mc.lastCtrl;
     g_mc.lastCtrl = ctrl;
@@ -2597,6 +2623,10 @@ static void mcTick() {
 //   -ls, -ls-trip-pub: `measure-coil ls`; the RT closes BF and sync rect.
 //   -ls-revtick: the reverse-current tick during the LS sweep: the clamp drops the pinned LS, which stays at its minimum
 //     at the end of the tick, and the sweep stops.
+//   -ls-wrap: 256 reverse ticks in a row after an LS row (an 8-bit clamp count would wrap): no pin comes back.
+//   -ls-wrap32: the same, then the count advanced to a 32-bit wrap: the pin stays dropped.
+//   -ls-stale: a shutdown between the task's next LS pin and the RT tick after it: the task never writes the LS driver,
+//     PWM stays off in the plant.
 //   -ls-repin: the same tick right after an LS row is logged, before the task pins the next LS: no pin survives the
 //     clamp and no further row is measured.
 //   suffix -p0: reverse_current_paranoia=0.
@@ -2617,7 +2647,8 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
     g_mc.inject = sc == "mc-flat-trip-pub" || sc == "mc-flat-ls-trip-pub" ? 1 : sc == "mc-flat-trip-ramp" ? 2
                   : sc == "mc-flat-off" ? 3 : sc == "mc-flat-revtick" ? 4 : sc == "mc-flat-trip-stray" ? 5
                   : sc == "mc-flat-ls-revtick" ? 6 : sc == "mc-flat-trip0" ? 7 : sc == "mc-flat-trip-close" ? 8
-                  : sc == "mc-flat-ls-repin" ? 9 : sc == "mc-flat-latch-race" ? 10 : 0;
+                  : sc == "mc-flat-ls-repin" ? 9 : sc == "mc-flat-latch-race" ? 10 : sc == "mc-flat-ls-wrap" ? 11
+                  : sc == "mc-flat-ls-stale" ? 12 : sc == "mc-flat-ls-wrap32" ? 13 : 0;
     settle(30);
     for (double dl = tNow() + 120; tNow() < dl && !(g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin()) > 140.f);)
         run(0.5, 0);
@@ -2644,9 +2675,14 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
         printf("== %s: `dc 0` ramp-down %s after %.2f s\n", name.c_str(), converter.disabled() ? "off" : "still on",
                tNow() - tEnter);
     }
-    g_tickHook = mcTick, g_simDelayHook = simDelay, g_simRunTasks = true;
+    g_tickHook = mcTick, g_simDelayHook = simDelay, g_simRunTasks = true, g_simLsCommitHook = mcLsCommitHook;
     const bool started = measureCoilStart(ls, false, 0, 0);
-    g_tickHook = nullptr, g_simDelayHook = nullptr, g_simRunTasks = false;
+    g_tickHook = nullptr, g_simDelayHook = nullptr, g_simRunTasks = false, g_simLsCommitHook = nullptr;
+    uint16_t plantHi = 0; // plant HS/LS counts with the converter off after the task
+    for (int k = 0; k < 100; ++k) {
+        run(0.01, 0);
+        if (converter.disabled()) plantHi = std::max({plantHi, g_vconv.getPwm().pwmRect, g_vconv.getPwm().pwmCtrl});
+    }
     int entryTrips = 0;
     for (size_t i = trips0; i < g_trips.size(); ++i) entryTrips += g_trips[i].t < tEnter + 2;
     for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
@@ -2667,7 +2703,7 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
     if (g_mc.inject) {
         chk(g_mc.injected, "fault injected");
         const int i = g_mc.inject;
-        chk(g_trips.size() - trips0 <= (i == 1 || i == 2 || i == 5 || i == 7 || i == 8 || i == 10),
+        chk(g_trips.size() - trips0 <= (i == 1 || i == 2 || i == 5 || i == 7 || i == 8 || i == 10 || i == 12),
             "the sweep stopped: no protection trip but the injected one");
     }
     if (g_mc.inject == 1 || g_mc.inject == 2 || g_mc.inject == 7) chk(!g_mc.reqKept, "the shutdown cancelled the request");
@@ -2679,6 +2715,19 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
         chk(!g_mc.lsCommitBad, "the task's stale pin left LS at its minimum");
         chk(!g_mc.rowsAfter, "no LS row measured after the clamp");
         chk(g_mc.lsStop, "the LS sweep stopped on the clamp");
+    }
+    if (g_mc.inject == 11 || g_mc.inject == 13) {
+        printf("== %s: %d reverse ticks: pin honoured on %u ticks, %u rows after\n",
+               name.c_str(), g_mc.wrapN, g_mc.pinTicks, g_mc.rowsAfter);
+        chk(g_mc.wrapN == 256 && !g_mc.revBad && !g_mc.lsBad, "BF open, LS clamped at the end of every reverse tick");
+        chk(!g_mc.pinTicks, "no LS pin honoured after the first clamp");
+        chk(!g_mc.rowsAfter && g_mc.lsStop, "the LS sweep stopped on the clamp, no row after it");
+    }
+    if (g_mc.inject == 12) {
+        printf("== %s: %u LS driver writes from the task, plant HS/LS up to %u with the converter off after it\n",
+               name.c_str(), g_mc.taskLsWrites, plantHi);
+        chk(!g_mc.taskLsWrites, "no LS driver write from the task");
+        chk(!plantHi, "PWM off in the plant while the converter is off after the task");
     }
     if (g_mc.inject == 10) {
         chk(!g_raceThread.joinable() && g_raceStage.load() == 3, "the racing shutdown ran to its end");
