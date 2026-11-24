@@ -669,8 +669,10 @@ their own regulation.
 
 A scan takes 1.5 to 4 s and costs 10 to 150 J at 200 to 450 W, depending on the number of probes: the power
 given up at the probes plus the travel between them. A scan that moves to a better maximum pays this back
-within seconds. A probe sits on the flat side of its maximum, so a maximum less than about 5 % above the
-operating point is often not taken.
+within seconds. A probe aims at the flat low-voltage side of its maximum. From a maximum at which shaded substrings
+conduct, $V_{in}/m_0$ overestimates the share, and the probe can land a few percent above the maximum, on its steep
+side, where it reads a few percent low. A maximum less than about 5 % above the operating point is therefore often not
+taken.
 
 ## When the tracker does not sweep
 
