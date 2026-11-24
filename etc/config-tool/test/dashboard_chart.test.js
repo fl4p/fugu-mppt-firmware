@@ -309,22 +309,22 @@ test('vin chart: last 30 s of Vin, <= 301 vertices, hidden without telemetry', a
   assert.equal(card(window, 'nopts').querySelector('path.vin'), null);
   assert.equal(card(window, 'nopts').querySelector('.vinwrap').style.display, 'none');
 
-  // a single sample: at least the 4 V minimum span
+  // a single sample: at least the 1 V minimum span
   client.emit('message', 'pv/tele/one', mqttMsg([{ fields: { P: 1, Ui: 20 }, ts: t }], { syms: new Map() }));
   Dash.flush();
   const yo = [...card(window, 'one').querySelectorAll('svg.vinchart g.ylab text')].map(e => parseFloat(e.textContent));
-  assert.ok(yo[0] <= 18 && yo.at(-1) >= 22, yo.join());
+  assert.ok(yo[0] <= 19.5 && yo.at(-1) >= 20.5, yo.join());
 
-  // 0.1 V of noise stays a thin band: span >= 4 V, trace within the middle 10 % of the plot height
+  // 0.1 V of noise stays a band: span >= 1 V, trace within 15 % of the plot height
   const sn = { syms: new Map() };
   for (let i = 0; i < 50; i++)
     client.emit('message', 'pv/tele/noisy', mqttMsg([{ fields: { P: 1, Ui: 36 + (i % 2) * 0.1 }, ts: t - 5000 + i * 100 }], sn));
   Dash.flush();
   const cn = card(window, 'noisy');
   const yn = [...cn.querySelectorAll('svg.vinchart g.ylab text')].map(e => parseFloat(e.textContent));
-  assert.ok(yn.at(-1) - yn[0] >= 4 && yn[0] <= 36 && yn.at(-1) >= 36.1, yn.join());
+  assert.ok(yn.at(-1) - yn[0] >= 1 && yn[0] <= 36 && yn.at(-1) >= 36.1, yn.join());
   const ys = [...cn.querySelector('svg.vinchart path.vin').getAttribute('d').matchAll(/[ML][\d.]+ ([\d.]+)/g)].map(m => +m[1]);
-  assert.ok(Math.max(...ys) - Math.min(...ys) < 0.1 * (60 - 5 - 14), ys.join());
+  assert.ok(Math.max(...ys) - Math.min(...ys) < 0.15 * (60 - 5 - 14), ys.join());
 });
 
 test('chart: a flagged sweep draws the curve dimmed and says so; the verdict line refetches', async () => {
