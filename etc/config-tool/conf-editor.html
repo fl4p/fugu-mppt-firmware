@@ -407,6 +407,9 @@
   .tst-what { margin:4px 0 0; line-height:1.55; color:var(--fg-2); }
   .tst-ctl { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:16px 0 0; }
   .tst-ctl button { border-color:var(--line-2); padding:5px 12px; }
+  .tst-ctl button.run { background:var(--icon); border-color:var(--icon); color:var(--bg); font-weight:600; }
+  .tst-ctl button.run:hover:not(:disabled) { opacity:.88; background:var(--icon); }
+  .tst-ctl button.run:disabled { background:transparent; border-color:var(--line-2); color:inherit; opacity:.45; }
   .tst-state, .tst-l0 { font-size:12.5px; color:var(--muted); }
   .tst-l0:empty { display:none; }
   .tst-state:empty { display:none; }
