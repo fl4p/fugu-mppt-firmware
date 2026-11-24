@@ -1,28 +1,27 @@
 ---
-title: "PWM Drivers (MCPWM)"
+title: "MCPWM driver"
 sidebar_position: 7
 ---
 
-# MCPWM synchronous-buck PWM driver
+# MCPWM driver
 
-This page specifies the MCPWM-based gate driver that replaces the LEDC implementation in
-`src/pwm/ledc.h`. It targets ESP32-S3 and classic ESP32 (ESP-IDF ≥ 5.5).
+The MCPWM gate driver drives a synchronous buck as an alternative to the LEDC driver in `src/pwm/ledc.h`. It targets
+ESP32-S3 and classic ESP32 (ESP-IDF ≥ 5.5).
 
 ## MCPWM vs LEDC
 
 MCPWM has four features that LEDC lacks: a per-operator dead-time submodule, an OST brake
 driven by a GPIO fault, timer sync sources for interleaved legs, and a 16-bit period counter
-that we can size to the available source clock. LEDC has no hardware dead-time, no hardware
-fault input, and no native multi-channel phase control, and it forces a fixed 2048-tick period.
+that the driver sizes to the available source clock. LEDC instead uses a fixed 2048-tick period.
 
 ## Scope
 
 The driver covers edge-aligned (count-up) PWM, a two-switch synchronous buck (HS + LS),
 hardware dead-time, a GPIO fault brake, and N interleaved legs sharing one fault source.
 
-Center-aligned (up-down) carriers are out of scope, because the existing buck controller and
-ADC sample timing assume HS-at-TEZ alignment. On-chip analog comparator faults are also out of
-scope; the driver supports GPIO faults only.
+It has no center-aligned (up-down) carriers, because the buck controller and ADC sample timing
+assume HS-at-TEZ alignment. Faults come from a GPIO only; on-chip analog comparator faults are not
+supported.
 
 ## Switch-cycle model
 
@@ -43,7 +42,7 @@ The generators act in the count-up direction only, as the following table shows:
 `HiLi` drives the HS and LS MOSFETs through a discrete gate driver with no built-in
 interlock, so the MCPWM dead-time submodule is responsible for shoot-through prevention.
 
-`InEn` drives an integrated half-bridge driver (e.g. IR2814 family), and the chip inserts its
+`InEn` drives an integrated half-bridge driver (for example the IR2814 family), and the chip inserts its
 own dead-time. MCPWM emits only IN and an EN window.
 
 The driver enforces these invariants, so the controller does not have to:
@@ -53,11 +52,11 @@ The driver enforces these invariants, so the controller does not have to:
 - The driver reaches D = 0 and D = 1 by forcing both gates, not by setting `cmpHS = 0` or
   `cmpHS = period_ticks`. Those values produce one-tick glitches at the period boundary.
 
-## Timing — `bestTiming(fsw)`
+## Timing
 
 For a given switching frequency, `bestTiming()` picks the largest `period_ticks` that fits in
 16 bits, using the highest available source clock and an integer group prescaler. The result is
-the highest duty resolution the hardware can give us at `fsw`.
+the highest duty resolution the hardware can give at `fsw`.
 
 The source clock `MCPWM_TIMER_CLK_SRC_DEFAULT` resolves to `PLL_F160M` = 160 MHz on both
 ESP32-S3 and classic ESP32 in IDF 5.5.
@@ -115,13 +114,13 @@ The driver converts nanoseconds to ticks with
 
 `InEn` mode passes `0, 0`, because the half-bridge driver chip owns the dead-time.
 
-## Comparator updates — TEZ-buffered
+## Comparator updates
 
 Both comparators are created with `update_cmp_on_tez = true`. Writes to `cmpHS` and `cmpLS` are
 double-buffered and latched at the next TEZ. A write pair is atomic only if no TEZ falls between
 the two writes. This has three consequences:
 
-- The order of `setHsOff()` / `setLsOff()` matters, because a TEZ between the two writes publishes
+- The order of `setHsOff()` and `setLsOff()` matters, because a TEZ between the two writes publishes
   a mixed pair. The next section explains the hazard and the write order.
 - The wrong-direction race can't occur, because the new value only takes effect at TEZ. In that
   race, firmware writes a smaller `cmpLS` after the counter has already passed it, the comparator
@@ -154,10 +153,10 @@ writes are ordered: LS first when HS widens, HS first when HS narrows, so every 
 `cmpLS >= cmpHS`. The comparators are written first when the period shrinks, and the period first
 when it grows.
 
-## Fault brake (zero-CPU shutdown)
+## Fault brake
 
-Each MCPWM group has one GPIO fault, shared by all legs in that group. The driver sets it up as
-follows:
+The fault brake shuts the gates off without the CPU. Each MCPWM group has one GPIO fault, shared by all legs in that
+group. The driver sets it up as follows:
 
 - `mcpwm_new_gpio_fault` with configurable `active_level` and matching pull resistor.
 - `mcpwm_operator_set_brake_on_fault` with `MCPWM_OPER_BRAKE_MODE_OST` (one-shot trip;
@@ -180,7 +179,7 @@ sequences:
   to the desired new values, *then* clear the force; the next TEZ will apply both
   comparators and resume switching from a known state.
 
-## Interleaving — N legs
+## Interleaving
 
 `MCPWM_Converter<N>` (in `test/test_pwm.cpp`, not used by the firmware) holds an `std::array` of N legs (= N operators / N timers) in one
 group plus one fault brake. The legs keep their phase relationship as follows:
@@ -190,7 +189,7 @@ group plus one fault brake. The legs keep their phase relationship as follows:
   (`mcpwm_timer_set_phase_on_sync`), giving uniform 360°/N spacing.
 - Leg 0's TEZ re-syncs legs 1..N-1 every period (the sync source stays connected), so the
   phase offset is re-imposed each cycle. Changing leg 0's period changes all legs.
-- `setHsOff` / `setLsOff` fan out to all legs. Per-leg phase trimming is not in scope.
+- `setHsOff` and `setLsOff` fan out to all legs. There is no per-leg phase trimming.
 
 `N = 1` is the same code with no sync source created.
 
@@ -206,7 +205,7 @@ The driver exposes two classes; the test-only `MCPWM_Converter<N>` wraps them.
 `MCPWM_SyncLeg`
 - `init(group, fsw, pinHS, pinLS, dtHlTicks, dtLhTicks, enLogic, fixedTicks = 0)`: build timer,
   operator, comparators, generators, dead-time. `fixedTicks > 0` overrides
-  `bestTiming()` (kept for migration / bit-identical replays; not the production path).
+  `bestTiming()` (kept for migration and bit-identical replays; not the production path).
 - `setHsOff(uint16_t)`, `setLsOff(uint16_t)`: comparator writes (TEZ-buffered).
 - `start()`: enable + `START_NO_STOP`.
 - `forceShutdown()`, `clearForce()`: RT-safe force-level on both gates.

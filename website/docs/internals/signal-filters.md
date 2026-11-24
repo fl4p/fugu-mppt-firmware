@@ -1,10 +1,10 @@
 ---
-title: "Signal Filters"
+title: "Signal filters"
 sidebar_position: 5
 description: "ADC noise sources and the filters that reduce them: filter chain, median filter, residual noise, and the inverter-ripple notch."
 ---
 
-# Signal Filters
+# Signal filters
 
 *Original hand-written notes: [doc/Signal Filters.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Signal%20Filters.md) and the README section [Signal Filtering](https://github.com/fl4p/fugu-mppt-firmware#signal-filtering).*
 
@@ -16,7 +16,8 @@ Each new sample of a physical sensor, after scaling and offset calibration, pass
 sample → notch → 5-sample running median → 2-pass EWMA
 ```
 
-1. [Inverter-ripple notch](#inverter-ripple-notch), only on channels fast enough for it.
+1. [Inverter-ripple notch](#inverter-ripple-notch), only on channels fast enough for it. `ripple_filter` can replace it
+   with the [ripple comb](#ripple-comb) or add the comb after it.
 2. [Median filter](#median-filter) over the last 5 samples.
 3. [2-pass EWMA](#ewma), an exponential moving average applied twice.
 
@@ -34,19 +35,18 @@ Different consumers read different stages:
 
 Noise can degrade tracking performance significantly.
 
-The ADC itself is the most obvious noise source. You can easily reduce this noise by increasing the ADC conversion time
-and sample averaging.
+The ADC itself is the most obvious noise source. Increasing the ADC conversion time and sample averaging reduces it.
 
 The loads connected to the battery are another significant noise source. The higher the impedance of the battery and
 wiring, the greater the noise. To reduce noise coupling from the loads to the charger, connect the MPPT charger and the
-loads separately, as close as possible to the battery terminals. Keep in mind that high-frequency noise can propagate
-more easily due to wire inductance, even with very thick cables.
+loads separately, as close as possible to the battery terminals. High-frequency noise can propagate more easily due to
+wire inductance, even with very thick cables.
 
 Laptops can have complex noise spectra that are difficult to describe. A sliding median filter and an averaging filter
 work well here.
 
 A 50 Hz inverter puts a 100 Hz ac component on the input, because the input sees `abs(sin(a*t))`. A notch filter can
-remove this quite well. The [inverter-ripple notch](#inverter-ripple-notch) section describes the firmware's notch.
+remove this quite well; see the firmware's [inverter-ripple notch](#inverter-ripple-notch).
 
 See also: [Krampmeier/uncertainty](https://github.com/Krampmeier/uncertainty).
 
@@ -58,8 +58,8 @@ The firmware uses a running median over 5 samples. By default every sample is re
 
 ### Despike
 
-With `sensor.conf::despike` set to a value k > 0 (about 8; lower clips more), the median becomes decision-based. A
-sample passes through unchanged unless both hold:
+With `sensor.conf::despike` set to a value k > 0 (about 8; lower clips more), the median stage's output to the EWMA
+becomes decision-based. A sample passes through unchanged unless both hold:
 
 - it deviates from the median by more than k × the running mean deviation, and
 - it deviates by more than 4 quantisation steps (learned per sensor).
@@ -132,14 +132,14 @@ An adaptive noise estimator exists only as a diagnostic (console `anf on`); it d
 An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 50 Hz, 120 Hz for 60 Hz), which
 corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
 notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
-The notch is 15 dB deep at its centre (`notch_depth`). With Q 20 it is narrow: at 100 Hz it attenuates 6 dB at
-1 Hz off and 2.5 dB at 2 Hz off (at 450 sps, nearly independent of the depth), and it passes the ripple's
-harmonics.
 
 - Gain at the notch frequency: `notch_depth`, default −15 dB.
 - Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).
 - On a multiplexed ADC, `Vout` is sampled between every other channel, so it runs at a higher rate than the rest. Each
   notch is tuned to its sensor's actual rate.
+
+With Q 20 the notch is narrow: at 100 Hz it attenuates 6 dB at 1 Hz off and 2.5 dB at 2 Hz off (at 450 sps, nearly
+independent of the depth), and it passes the ripple's harmonics.
 
 By default, the notch tunes itself (`sensor.conf::notch_adaptive=1`):
 
@@ -151,7 +151,7 @@ By default, the notch tunes itself (`sensor.conf::notch_adaptive=1`):
 - Detection and retuning run on the RT core, so filter coefficients never change under a running filter.
 - Retuning updates one sensor per sample and waits while a flash write or erase is in progress.
 
-With `notch_adaptive=0`, the notch stays at `notch_freq` (default 100 Hz). `notch_q` sets the bandwidth. See
+With `notch_adaptive=0`, the notch stays at `notch_freq` (default 100 Hz). See
 [`sensor.conf`](../reference/config/sensor.md).
 
 Background: [notch filters (video)](https://www.youtube.com/watch?v=tpAA5eUb6eo).
@@ -163,7 +163,7 @@ L = fs/f samples, where L is usually fractional (4.5 samples for 100 Hz at 450 s
 linearly interpolated input over the last L samples. With N = floor(L) and a = L − N, the taps from the newest sample
 back are 1/2, 1, …, 1, 1/2 + a − a²/2 and a²/2, all divided by L. The taps sum to L, so the DC gain is exactly 1.
 
-Properties:
+The comb has these properties:
 
 - Rejection at the ripple frequency and its harmonics below fs/2 is deep but finite (exact zeros only for an integer
   L); see the table below. A harmonic that aliases (3f at 450 sps lands at 150 Hz) is attenuated less.
@@ -175,11 +175,19 @@ Properties:
 - Every sample enters a 24-sample ring, which keeps its history over a retune. A frequency change or a change of N
   causes no reset transient, but the output can still step because the window weights change.
 
-The comb delays everything read from the median or EWM. These protections read raw samples and are not delayed:
-the Vout over-voltage trip, the 1.5× Iout trip, the instantaneous reverse-current check (two raw samples) and the
-Vout > 2·Vin trip. These read filtered values, so the comb's delay and its spreading of current spikes apply to them:
-the lower Iout trips (median above 1.25×, EWM above 1.15× the limit), the reverse average-current trip, the
-Vout > 1.25·Vin check and the short-circuit check.
+The comb delays everything read from the median or EWMA. These protections read raw samples and are not delayed:
+
+- the Vout over-voltage trip,
+- the 1.5× Iout trip,
+- the instantaneous reverse-current check (two raw samples), and
+- the Vout > 2·Vin trip.
+
+These read filtered values, so the comb's delay and its spreading of current spikes apply to them:
+
+- the lower Iout trips (median above 1.25×, EWMA above 1.15× the limit),
+- the reverse average-current trip,
+- the Vout > 1.25·Vin check, and
+- the short-circuit check.
 
 The comb follows the same frequency as the notch (`notch_adaptive`, `notch_freq`). A channel whose period does not fit
 the ring keeps the notch. The comb needs 2 ≤ L < 23 samples; with adaptive tuning over 80–140 Hz that is
