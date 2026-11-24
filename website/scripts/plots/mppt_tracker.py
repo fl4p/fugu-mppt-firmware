@@ -187,7 +187,7 @@ def fig_pv():
     dot(bx, v_op, p_op, INK)
     bx.annotate("start P₀", (v_op, p_op), xytext=(6, 6), textcoords="offset points", fontsize=8.5)
     for m in range(1, N_SUB + 1):
-        vc = 0.97 * m * sh
+        vc = (1.015 if m > m0 else 0.97) * m * sh
         if m == m0:
             continue
         if vc > 0.95 * voc:

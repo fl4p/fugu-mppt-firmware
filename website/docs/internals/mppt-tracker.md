@@ -433,7 +433,10 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV-sim 
    maximum when it lies in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.82 at start). The operating point is assigned to the
    nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
    operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their
-   mean $s = (V_{in}/m_0 + s_0)/2$. Each candidate $m \neq m_0$ is placed at $0.97\,m\,s$. A candidate below
+   mean $s = (V_{in}/m_0 + s_0)/2$. A lower candidate ($m < m_0$) is placed at $0.97\,m\,s$, on the flat
+   low-voltage side of its maximum. A higher one ($m > m_0$) is placed at $1.015\,m\,s$: it includes substrings
+   weaker than any at the operating point, which lifts it above $m$ shares, and below such a maximum the power falls
+   about in proportion to the voltage (the weak substring limits the current). A candidate below
    1.05 times the input voltage floor (the input undervoltage limit, and on a buck the start ratio of the
    low-side minimum pulse, about $1.2\,V_{out}$), or above $0.95\,V_{oc}$, is skipped.
 2. A lower candidate ($m < m_0$) delivers at most $m\,s$ times the largest current seen since the last sweep
@@ -559,10 +562,18 @@ their own regulation.
 Each probe takes at most 2.6 s: up to 1.5 s to reach its voltage (within 1 %), the power filter settle (at most
 1 s) and 100 ms of averaging. A scan measures the reference, up to 5 candidates and the start point again, plus the
 two near-point probes; one that is not done 30 s after the near-point probes ends at the start point. The cost is
-the power given up at the probes plus the travel between them. A probe aims at the flat low-voltage side of its maximum. From a maximum at which shaded substrings
-conduct, $V_{in}/m_0$ overestimates the share, and the probe can land a few percent above the maximum, on its steep
-side, where it reads a few percent low. A maximum less than about 5 % above the operating point is therefore often not
-taken.
+the power given up at the probes plus the travel between them.
+
+A lower probe aims at the flat low-voltage side of its maximum; from a maximum at which shaded substrings conduct it
+can land a few percent above it and still reads within about 5 % of its power. A higher maximum sits above its $m$
+shares, and below it the power falls about in proportion to the voltage, so its probe aims at $1.015\,m\,s$. A probe
+still reads a few percent below its maximum, so with the 3 % margin a maximum less than about 5 % above the operating
+point is often not taken.
+
+Heating since the sweep lowers every maximum, while $s_0$ keeps the cold share. After a drop of about 10 % in
+$V_{oc}$, a higher probe can land on the steep high-voltage side of its maximum and miss a move that a lower
+placement would have found. A higher factor finds more upward moves in cool conditions and loses more of them
+after heating; 1.015 is the compromise.
 
 ## When the tracker does not sweep
 

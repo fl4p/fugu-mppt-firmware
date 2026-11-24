@@ -16,8 +16,10 @@
  * operating point sits off the local peak; with no candidate they run alone, at most once per interval.
  */
 struct PeakScan {
-    static constexpr float kProbeLow = 0.97f; // probe on the flat low-voltage side of a peak
     static constexpr uint16_t kMeasMs = 100, kTravelMs = 1500, kSteadyMs = 5000;
+    // probe m at m shares times: below m0 on the flat low-voltage side of a peak; above m0 weaker substrings conduct
+    // and lift the peak over m shares. Not const: the host sim varies them
+    static inline float probeLow = 0.97f, probeHigh = 1.015f;
 
     uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = learn,
                              // 1 = single peak, nothing to scan
@@ -215,7 +217,7 @@ struct PeakScan {
             claim();
             nc = 0;
             for (int m = 1; m <= n; ++m) {
-                const float v = kProbeLow * (float) m * sh;
+                const float v = (m > m0 ? probeHigh : probeLow) * (float) m * sh;
                 // unreachable, at our own peak, or a lower peak that cannot beat us even at the best current seen
                 if (m == m0 || v < vMin || v > 0.95f * voc || (m < m0 && iEnv > 0 && (float) m * sh * iEnv < pw * (1 + margin)))
                     continue;
