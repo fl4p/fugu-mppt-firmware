@@ -39,7 +39,7 @@ static bool s_tripped = false;
 // the coil current: the output's in a buck, the input's in a boost
 static const Sensor *coilI() { return converter.boost() ? sensors.Iin : sensors.Iout; }
 
-// boost trip check, then sleep ~ms; false: tripped (PWM stopped by the RT loop at once)
+// boost trip check, then sleep ~ms; false: tripped (PWM stopped by the RT loop at once) or cancelled
 static bool waitMs(uint32_t ms) {
     for (const time_ms dl = wallClockMs() + ms;;) {
         if (!s_tripped && s_hvTrip > 0 &&
@@ -49,7 +49,7 @@ static bool waitMs(uint32_t ms) {
             UART_LOG("measure-coil: TRIP Vout %.2f (max %.1f) Iin %.2f A (max %.1f), stopped", sensors.Vout->med3.get(),
                      s_hvTrip, coilI()->med3.get(), s_iTrip);
         }
-        if (s_tripped) return false;
+        if (s_tripped || mppt.mcCancel.load(std::memory_order_relaxed)) return false;
         if (wallClockMs() >= dl) return true;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
@@ -79,26 +79,35 @@ static float medianN(float *a, int n) {
     return n ? a[n / 2] : NAN;
 }
 
+// the BF request was cancelled by a protection shutdown (or is not published yet)
+static bool cancelled() {
+    const float z = mppt.mcBfZero.load();
+    return z != z || mppt.mcCancel.load(std::memory_order_relaxed);
+}
+
+static bool stopped() { return converter.disabled() || cancelled(); }
+
+// false: cancelled or tripped
+static bool dwell(uint32_t ms) {
+    for (const time_ms dl = wallClockMs() + ms; wallClockMs() < dl;)
+        if (cancelled() || !waitMs(20)) return false;
+    return !cancelled();
+}
+
 // Set the duty target, wait for the RT fade to arrive (or stall), settle, then median 5 EWM reads.
 static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     mppt.setManualTarget(H);
     time_ms deadline = wallClockMs() + max<uint32_t>(dwellMs, 3000) + (uint32_t) H * 4;
-    while (converter.getCtrlOnPwmCnt() != H && wallClockMs() < deadline && waitMs(20)) {}
-    waitMs(dwellMs);
+    while (converter.getCtrlOnPwmCnt() != H && wallClockMs() < deadline && !cancelled() && waitMs(20)) {}
+    if (!dwell(dwellMs)) return;
     float vi[5], vo[5], io[5];
     for (int k = 0; k < 5; ++k) {
         vi[k] = sensors.Vin->ewm.avg.get();
         vo[k] = sensors.Vout->ewm.avg.get();
         io[k] = coilI()->ewm.avg.get();
-        waitMs(50);
+        if (!dwell(50)) return;
     }
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
-}
-
-// converter off, or a protection shutdown cancelled the BF request (the sweep would go on with BF open)
-static bool stopped() {
-    const float z = mppt.mcBfZero.load();
-    return converter.disabled() || z != z;
 }
 
 // coil current with the converter off: ramp down, settle, median of 5 EWM reads (NAN: still on)
@@ -199,6 +208,10 @@ static float sweepL0(const MeasArgs &a) {
     }
     const float z0 = readZero(zDwell);
     if (z0 != z0) { UART_LOG("measure-coil: converter did not stop for the current zero"); return NAN; }
+    // buck: BF closed once forward current flows (as MPPT closes it), by the RT loop each sample: open, its body diode
+    // carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L. Boost: BF stays
+    // closed from above; z0 only arms the shutdown cancel
+    mppt.mcBfZero.store(z0);
     if (boost) { // a low duty lifts Vout above Vin first: below it the coil does not reset and the duty must not climb
         mppt.setManualTarget((uint16_t) max(2, h_lo / 3));
         for (const time_ms dl = wallClockMs() + 5000; !(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() + 2.0f)
@@ -210,10 +223,6 @@ static float sweepL0(const MeasArgs &a) {
             h_hi = -1;
         }
     }
-    // buck: BF closed once forward current flows (as MPPT closes it), by the RT loop each sample: open, its body diode
-    // carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L. Boost: BF stays
-    // closed from above; z0 only arms the shutdown cancel
-    mppt.mcBfZero.store(z0);
     const char *iName = boost ? "Iin" : "Iout";
     UART_LOG("      H      D    Vin   Vout   %4s mode    L_uH", iName);
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
@@ -328,15 +337,16 @@ static void sweepLs(const MeasArgs &a) {
     float peak_io = -1e9f;
     for (int ls = ls_lo; ls <= ls_hi && n < MEAS_MAX_PTS; ls += step) {
         converter.setManualRect(ls);
-        vTaskDelay(pdMS_TO_TICKS(a.dwellMs));
-        if (stopped()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
+        bool ok = dwell(a.dwellMs);
         float ii[5], vv[5], oo[5];
-        for (int k = 0; k < 5; ++k) {
+        for (int k = 0; k < 5 && ok; ++k) {
             ii[k] = sensors.Iout->ewm.avg.get();
             vv[k] = sensors.Vin->ewm.avg.get();
             oo[k] = sensors.Vout->ewm.avg.get();
-            vTaskDelay(pdMS_TO_TICKS(50));
+            ok = dwell(50);
         }
+        if (!ok || stopped()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
+        if (!converter.manualRect_()) { UART_LOG("  LS clamped by reverse-current protection; stopping"); break; }
         float io = medianN(ii, 5);
         uint16_t rect = converter.getRectOnPwmCnt();
         Xls[n] = rect; Yio[n] = io; ++n;
@@ -408,6 +418,7 @@ static void measureCoilTask(void *arg) {
         vTaskDelay(pdMS_TO_TICKS(10));
     mppt.mcBfZero.store(NAN);
     mppt.mcSyncRect.store(false, std::memory_order_relaxed);
+    mppt.mcCancel.store(false, std::memory_order_relaxed);
     const bool off = converter.disabled();
     if (boost) mppt.setExplicitOvLimit(ov0);
     s_hvTrip = 0;
@@ -418,7 +429,7 @@ static void measureCoilTask(void *arg) {
         else UART_LOG("measure-coil: fsw %lu Hz restore failed, now %lu Hz: run `pwm-freq %lu`", (unsigned long) fNom,
                       (unsigned long) converter.getPwmFrequency(), (unsigned long) fNom);
     }
-    if (off && mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
+    if (off) mppt.bflow.enable(false); // also with paranoia off; MPPT or `dc` closes it again
     if (!off) UART_LOG("measure-coil: converter still on after the ramp-down");
     if (a.apply && l0 == l0 && !off) UART_LOG("  measure-coil: L0 not applied (converter still on)");
     else if (a.apply && l0 == l0) { // flash write with the converter off (it stalls the RT loop)

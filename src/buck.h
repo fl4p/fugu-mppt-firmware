@@ -1867,6 +1867,7 @@ public:
      */
     void syncRectMinDuty() {
         lsClampCount.fetch_add(1, std::memory_order_relaxed);
+        manualRect = -1; // a pinned LS would come back with the next pwmPerturb()
         if (pwmRect > pwmRectMin) {
             if (pwmRect > pwmRectMin + pwmRectMin / 2) {
                 ESP_LOGW("dcdc", "set sync-rect PWM to minimum %hu -> %hu (vRatio=%.3f, pwmMaxLS=%hu)", pwmRect,

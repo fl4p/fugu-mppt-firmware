@@ -449,7 +449,8 @@ public:
     void shutdownDcdc(const char *who, uint32_t backoffSec = 5) {
         _limitPert = 0;
         lvPgood.release();
-        mcBfZero.store(NAN, std::memory_order_relaxed);
+        if (const float z = mcBfZero.exchange(NAN, std::memory_order_relaxed); z == z)
+            mcCancel.store(true, std::memory_order_relaxed);
         bflow.enable(false);
         converter.disable();
         if (backoffSec) {
@@ -1759,6 +1760,7 @@ public:
     // (with sync rect if mcSyncRect), opens it with the converter off
     std::atomic<float> mcBfZero{NAN};
     std::atomic<bool> mcSyncRect{false};
+    std::atomic<bool> mcCancel{false}; // a shutdown cancelled the request: manual duty 0 until the task ends
 
     time_us lastUs = 0;
 
