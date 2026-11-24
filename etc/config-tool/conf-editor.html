@@ -4771,7 +4771,9 @@ function tstPaint(id){
   if (r.note) parts.push(tstEl("span", "d note"+(r.noteErr ? " err" : ""), r.note));
   if (r.recheck && d.recheck && !mine){ const b=tstEl("button", "recheck", `Check (${d.recheck})`); b.type="button";
     b.disabled=!t || !!devBusy; b.onclick=()=>tstRecheck(id); parts.push(b); }
-  res.replaceChildren(...parts);
+  // rebuilding an unchanged result restarts the spinner's animation on every output line
+  const sig=parts.map(e=>e.outerHTML).join("");
+  if (res._sig!==sig){ res.replaceChildren(...parts); res._sig=sig; }
   const fig=c.querySelector(".tst-chart"), coil=d.root==="measure-coil";
   if (coil) tstCoilChart(fig, r.lines, c.clientWidth, d.save ? tstL0Cur(r) : 0);
   else if (fig) tstChart(fig, r.sum && !(mine && r.st==="run") ? r.sum.curve : null, c.clientWidth);

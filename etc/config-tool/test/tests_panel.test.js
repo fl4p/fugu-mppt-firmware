@@ -685,6 +685,20 @@ test('measure-coil from MPPT: dc 0, measure, mppt under one lock; Resumed MPPT i
   assert.deepEqual(ls.sent, ['selftest', 'measure-coil ls', 'dc 0', 'measure-coil ls', 'mppt']);
 });
 
+test('output lines during a run keep the same spinner node, so its animation does not restart', async () => {
+  const { window, dev } = await connected({ coil: true });
+  Object.assign(window.tstTimings(), { stop: 100 });
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  const h = dev.handler, seen = [];
+  dev.handler = (cmd, s) => { seen.push([cmd, card(window, 'coil').querySelector('.tst-res .busy')]); return h(cmd, s); };
+  await window.tstStart('coil');
+  const at = c => seen.filter(x => x[0] === c).map(x => x[1]);
+  const measured = at('measure-coil l0').at(-1), resumed = at('mppt')[0];
+  assert.ok(measured && resumed, 'a spinner shows while measuring and resuming');
+  assert.strictEqual(resumed, measured);
+});
+
 test('measure-coil waits out a protection backoff that dc 0 tripped, and ends a persistent one with a sentence', async () => {
   let { window, sent } = await coilRun({ backoff: 2 });
   assert.deepEqual(sent, ['selftest', 'measure-coil l0', 'dc 0', 'measure-coil l0', 'measure-coil l0', 'measure-coil l0', 'mppt']);
