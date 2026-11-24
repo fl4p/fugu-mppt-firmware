@@ -320,7 +320,15 @@ command (repeat `-c` for several over one connection), `--stdin` runs newline-se
 from stdin over one connection (best for scripted/agent use — one connect, replies tagged `=== cmd ===`;
 auto-selected when no mode flag is given and stdin is piped, so a heredoc just works),
 and the default (a transport but no mode flag) is an
-interactive REPL. With no args at all it scans every transport for devices. The PASS/FAIL/SKIP
+interactive REPL. With no args at all it scans every transport for devices.
+**Lock guard:** state-changing commands (anything not in the firmware's `kRoCmds` list in
+`src/etc/con_guard.h` plus host-side `peek`/`sym`/`coredump info|get`/`pwr` reads; unknown commands
+count as state-changing) to a hostname in `etc/protected-devices` (fry, flat; `$FUGU_PROTECTED`
+overrides) are refused before sending unless the caller holds the device lock (`lock.sh mine fry`;
+`ota-<dev>` counts for `ota`/`ota-ble` only). `--take-lock [--lock-note WHY]` takes it for the run,
+`--no-lock-guard` sends anyway. Every state-changing command sent to fry/flat is recorded (masked) in
+`elf-archive/console-commands.jsonl` with the same `who` as `ota-owners.jsonl`. `ota_mqtt.py` uses
+`Console` directly with its own `ota-*` locks and is not guarded. The PASS/FAIL/SKIP
 command exerciser moved out of the client into the e2e suite
 (`etc/e2e-test/test_console_plan.py`, with `--mock`/`--include-network` flags). Transport +
 line-console mechanics live in the vendored `etc/fugu/` package (its own repo, `fl4p/fugu-py`):

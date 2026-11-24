@@ -228,6 +228,29 @@ EOF
 The client resolves `peek <symbol>` and `sym <pattern>` against the build ELF (`--elf`, default `$FUGU_ELF` or the
 newest `build*/fugu-firmware.elf`). See [`peek`](../development/debugging/peek.md).
 
+## Protected devices
+
+Hostnames listed in `etc/protected-devices` (one per line; `$FUGU_PROTECTED`, comma-separated, overrides the file)
+are guarded against unattributed changes. The client sends read-only commands to them as usual. Before a
+state-changing command, it confirms the hostname from the device (`hn`). Then it checks that the caller holds the
+device's lock from `~/bin/lock.sh`, named after the hostname. Without the lock, the client refuses before sending
+anything, and names the lock and its current holder.
+
+Read-only commands are the firmware's read-only console list (`kRoCmds` in `src/etc/con_guard.h`) plus the host-side
+`peek`, `sym`, `peek-struct`, `coredump info|get` and the `pwr` reads. Everything else is state-changing, including
+`+N`/`-N` and unknown commands. A line is read-only only if each of its `;;`-separated commands is.
+
+| Option | Effect |
+|---|---|
+| `--take-lock` | Acquire the free device lock for this run; it is released on exit, Ctrl-C or error |
+| `--lock-note "<why>"` | Note stored with the lock that `--take-lock` takes |
+| `--no-lock-guard` | Send without the lock; the command is still recorded |
+
+The lock `ota-<hostname>` also counts, but only for `ota` and `ota-ble`. In the REPL the check runs on every
+line. Each state-changing command sent to a protected device is appended to `elf-archive/console-commands.jsonl`
+with the time, device, command (secrets masked as in the firmware log), transport, caller and whether the lock was
+held. Unlisted hostnames, for example bench boards, are not guarded.
+
 ## Common scenarios
 
 ### Find a device

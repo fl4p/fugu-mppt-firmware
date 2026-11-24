@@ -14,6 +14,9 @@ package (`fugu.transport`, `fugu.console.Console`); this file is the CLI.
 Defaults to serial; `--ble`/`--ip` select BLE or TCP/telnet, `--ble-proxy HOST` reaches BLE NUS
 through an ESPHome bluetooth_proxy (plaintext API, no noise encryption).
 
+Lock guard: state-changing commands to a hostname in etc/protected-devices need its lock.sh lock
+(`--take-lock`, `--no-lock-guard`) and are recorded in elf-archive/console-commands.jsonl.
+
 The PASS/FAIL/SKIP command exerciser that used to be this client's `--test`/`--mock` mode now lives
 in the e2e suite: `python etc/e2e-test/test_console_plan.py --serial … [--mock] [--include-network]`.
 
@@ -51,12 +54,12 @@ import time
 try:  # works both as `python etc/fugu_console.py` and `python -m etc.fugu_console`
     from fugu.transport import (SerialTransport, SocketTransport, BleTransport,
                                 EspHomeBleTransport, MqttTransport, TlsPskTransport)
-    from fugu.console import Console, Reply, REJECT
+    from fugu.console import Console, Reply, REJECT, mask_secrets
     from fugu.discover import discover_scope_servers
 except ImportError:
     from etc.fugu.transport import (SerialTransport, SocketTransport, BleTransport,
                                     EspHomeBleTransport, MqttTransport, TlsPskTransport)
-    from etc.fugu.console import Console, Reply, REJECT
+    from etc.fugu.console import Console, Reply, REJECT, mask_secrets
     from etc.fugu.discover import discover_scope_servers
 
 # `peek <symbol>` resolver + `sym <pattern>` need the build ELF; the implementation lives in the
@@ -196,13 +199,272 @@ _WELCOME_RE = re.compile(r"Welcome to (\S+)")  # banner: "Welcome to <hostname> 
 _HOSTNAME_RE = re.compile(r"Hostname:\s*(\S+)")  # reply of the bare `hostname` command
 
 
-def query_hostname(con: Console) -> str | None:
+def query_hostname(con: Console, timeout: float = 2.0) -> str | None:
     """Ask the device for its hostname (the `hn` command), or None on failure."""
-    for ln in con.command("hn", timeout=2.0):
+    for ln in con.command("hn", timeout=timeout):
         m = _HOSTNAME_RE.search(ln)
         if m:
             return m.group(1)
     return None
+
+
+LOCK_SH = os.path.expanduser('~/bin/lock.sh')
+_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Host-side reads on top of the firmware's kRoCmds (same entry syntax, see roCmdAllowed).
+_RO_HOST = ("peek|*", "sym|*", "peek-struct|*", "coredump|,info,get", "pwr|,locks,pmwin,gap")
+
+
+def _c_strings(path, pattern):
+    try:
+        with open(path) as f:
+            src = f.read()
+    except OSError:
+        return []
+    return [s for m in re.finditer(pattern, src, re.S) for s in re.findall(r'"([^"]*)"', m.group(1))]
+
+
+def load_ro_list():
+    """Read-only command entries: the firmware's kRoCmds (src/etc/con_guard.h) plus _RO_HOST."""
+    fw = _c_strings(os.path.join(_REPO, "src", "etc", "con_guard.h"), r"kRoCmds\[\]\s*=\s*\{(.*?)\};")
+    if not fw:
+        print("lock guard: kRoCmds not found in src/etc/con_guard.h, every device command counts as "
+              "state-changing", file=sys.stderr)
+    return list(fw) + list(_RO_HOST)
+
+
+def load_known_verbs():
+    names = _c_strings(os.path.join(_REPO, "src", "cli.cpp"), r'cli\.add\w+\(("[^"]+")')
+    return {v for n in names for v in n.split(",")} | {"sym", "peek-struct"}
+
+
+def ro_allowed(entries, verb, args):
+    """Python twin of the firmware's roCmdAllowed(), matching `verb` against every alias; any
+    matching entry may allow (so _RO_HOST can widen a firmware entry)."""
+    for e in entries:
+        names, bar, vals = e.partition("|")
+        if verb not in names.split(","):
+            continue
+        if (not args if not bar else vals == "*" or
+                len(args) <= 1 and (args[0] if args else "") in vals.split(",")):
+            return True
+    return False
+
+
+def classify(cmd, entries, known=None):
+    """('ro'|'rw'|'unknown', reason) for one console line; `;;` separates commands."""
+    worst = ("ro", "")
+    for part in (p.strip() for p in cmd.split(";;")):
+        if not part:
+            continue
+        if part[0] in "+-":
+            return "rw", f"{part!r} steps the PWM"
+        verb, *args = part.split()
+        if ro_allowed(entries, verb, args):
+            continue
+        if known is not None and verb not in known:
+            return "unknown", f"{verb!r} is not a known command, treated as state-changing"
+        worst = ("rw", f"{part!r} is state-changing (not on the read-only list)")
+    return worst
+
+
+def protected_devices():
+    """Hostnames the lock guard protects: $FUGU_PROTECTED (comma-separated), else etc/protected-devices."""
+    env = os.environ.get("FUGU_PROTECTED")
+    if env is not None:
+        return {h.strip().lower() for h in env.split(",") if h.strip()}
+    try:
+        with open(os.path.join(_REPO, "etc", "protected-devices")) as f:
+            return {ln.split("#")[0].strip().lower() for ln in f} - {""}
+    except OSError:
+        return set()
+
+
+def owner():
+    """Who runs this: $OTA_OWNER, else the Claude session name, else user@host."""
+    if v := os.environ.get('OTA_OWNER'):
+        return v
+    sid = os.environ.get('CLAUDE_CODE_SESSION_ID')
+    finder = os.path.expanduser('~/dev/bin/session-find')
+    if sid and os.access(finder, os.X_OK):
+        try:
+            out = subprocess.run([finder, sid], capture_output=True, text=True, timeout=10).stdout.split()
+            if out:
+                return f'{out[0]} ({sid[:8]})'
+        except Exception:
+            pass
+    import getpass
+    return f'{getpass.getuser()}@{socket.gethostname().split(".")[0]}'
+
+
+class Locks:
+    """System-wide lock.sh locks owned by this process (stale, so takeable, once it dies)."""
+
+    def __init__(self, wait, label='ota'):
+        self.wait, self.held, self.sid, self.label = wait, [], None, label
+        self.env = dict(os.environ, AGENT_LOCK_OWNER_PID=str(os.getpid()))
+
+    def _run(self, *a):
+        return subprocess.run([LOCK_SH, *a], env=self.env, capture_output=True, text=True,
+                              timeout=self.wait + 60)
+
+    def take(self, name, note):
+        if name in self.held:
+            return True
+        if self.sid is None:
+            r = self._run('newsession', self.label)
+            if r.returncode or not r.stdout.strip():
+                print(f'⛔ lock.sh newsession failed (exit {r.returncode}): {r.stderr.strip()}')
+                return False
+            self.sid = r.stdout.strip()
+        if self._run('resolve', name).returncode:
+            r = self._run('acquire', name, note, '--new', '--session', self.sid)
+        elif self.wait:
+            print(f'waiting up to {self.wait:.0f} s for lock {name} ...')
+            r = self._run('wait', name, note, str(int(self.wait)), '--session', self.sid)
+        else:
+            r = self._run('acquire', name, note, '--session', self.sid)
+        if r.returncode == 0:
+            self.held.append(name)
+            return True
+        print(f'⛔ lock {name} not taken (exit {r.returncode}; --lock-wait S to queue):\n'
+              f'{(r.stdout + r.stderr).strip()}')
+        return False
+
+    def mine(self, name):
+        return name in self.held and self._run('mine', name, '--quiet', '--session', self.sid).returncode == 0
+
+    def release(self, *names):
+        for n in [n for n in reversed(self.held) if not names or n in names]:
+            r = self._run('release', n, '--session', self.sid)
+            if r.returncode:
+                print(f'⚠️  lock {n} not released (exit {r.returncode}): {(r.stdout + r.stderr).strip()}')
+            self.held.remove(n)
+
+
+def console_log_path():
+    """elf-archive/console-commands.jsonl of the main checkout (also from a worktree)."""
+    if p := os.environ.get("FUGU_CONSOLE_LOG"):
+        return p
+    root = _REPO
+    try:
+        common = subprocess.run(["git", "-C", _REPO, "rev-parse", "--path-format=absolute",
+                                 "--git-common-dir"], capture_output=True, text=True, timeout=5).stdout.strip()
+        if common:
+            root = os.path.dirname(common)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return os.path.join(root, "elf-archive", "console-commands.jsonl")
+
+
+class LockGuard:
+    """Refuses state-changing commands to protected hostnames unless the caller holds the device
+    lock (lock.sh `mine <host>`; `ota-<host>` also counts for ota/ota-ble), and records every
+    state-changing command sent to a protected host in console_log_path()."""
+
+    OTA_VERBS = ("ota", "ota-ble")
+
+    def __init__(self, enabled=True, take=False, note=None, transport="?", protected=None,
+                 run=subprocess.run, log_path=None, who=None):
+        self.enabled, self.take, self.transport, self.run = enabled, take, transport, run
+        self.note = note
+        self.protected = protected_devices() if protected is None else set(protected)
+        self.entries, self.known = load_ro_list(), load_known_verbs()
+        self.locks = Locks(0, label='console')
+        self.log_path = log_path
+        self._who = who
+
+    @property
+    def who(self):
+        if self._who is None:
+            self._who = owner()
+        return self._who
+
+    def state_changing(self, cmd):
+        return classify(cmd, self.entries, self.known)[0] != "ro"
+
+    def protected_host(self, hint):
+        """The protected hostname `hint` (exact, or a --name substring filter) points at, or None."""
+        h = (hint or "").lower()
+        if not h:
+            return None
+        if h in self.protected:
+            return h
+        return next((p for p in sorted(self.protected) if h in p or p in h), None)
+
+    def _lock_names(self, host, cmd):
+        verb = cmd.split(None, 1)[0] if cmd.strip() else ""
+        return [host] + ([f"ota-{host}"] if verb in self.OTA_VERBS else [])
+
+    def holds(self, host, cmd):
+        for n in self._lock_names(host, cmd):
+            if self.locks.mine(n):
+                return True
+            try:
+                if self.run([LOCK_SH, "mine", n, "--quiet"], capture_output=True, text=True,
+                            timeout=30).returncode == 0:
+                    return True
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"lock guard: lock.sh mine {n} failed ({e})", file=sys.stderr)
+        return False
+
+    def holder(self, name):
+        try:
+            r = self.run([LOCK_SH, "status", name, "--brief"], capture_output=True, text=True, timeout=30)
+            return (r.stdout + r.stderr).strip() or "unknown"
+        except Exception as e:
+            return f"unknown ({e})"
+
+    def allowed(self, cmd, host, confirmed=True):
+        """True if `cmd` may go to `host` (None = hostname not confirmed). Prints why not."""
+        kind, why = classify(cmd, self.entries, self.known)
+        if kind == "ro" or not self.enabled:
+            return True
+        if host is None:
+            print(f"⛔ lock guard: refusing {cmd!r}: could not confirm the device hostname "
+                  f"({why}); --no-lock-guard to send anyway", file=sys.stderr)
+            return False
+        host = host.lower()
+        if host not in self.protected:
+            return True
+        if self.holds(host, cmd):
+            return True
+        if self.take and self.locks.take(host, self.note or f"fugu_console by {self.who}: {cmd.split()[0]}"):
+            print(f"lock guard: took lock {host} for this run", file=sys.stderr)
+            return True
+        names = " or ".join(self._lock_names(host, cmd))
+        where = "" if confirmed else f" (--name points at {host})"
+        print(f"⛔ lock guard: refusing {cmd!r} to protected device {host}{where}: {why}.\n"
+              f"   needs lock {names} (~/bin/lock.sh acquire {host} \"<why>\"), now: {self.holder(host)}\n"
+              f"   or pass --take-lock [--lock-note \"<why>\"]; --no-lock-guard sends without it (logged)",
+              file=sys.stderr)
+        return False
+
+    def record(self, cmd, host):
+        """Append a state-changing command sent to a protected host to the attribution log."""
+        if not host or host.lower() not in self.protected or not self.state_changing(cmd):
+            return
+        import datetime
+        import json
+        host = host.lower()
+        held = any(n in self.locks.held for n in self._lock_names(host, cmd)) or self.holds(host, cmd)
+        rec = dict(ts=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                   device=host, command=mask_secrets(cmd), transport=self.transport, who=self.who,
+                   lock_held=held, guard=self.enabled)
+        if self.note:
+            rec["note"] = self.note
+        path = self.log_path or console_log_path()
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError as e:
+            print(f"⚠️  lock guard: attribution not written to {path} ({e})", file=sys.stderr)
+        if not held:
+            print(f"⚠️  lock guard: {host} sent {mask_secrets(cmd)!r} without its lock (recorded)",
+                  file=sys.stderr)
+
+    def close(self):
+        self.locks.release()
 
 
 def probe_serial_hostname(port, baud=115200, timeout=2.0) -> str | None:
@@ -858,9 +1120,9 @@ class _PromptSafePrinter:
             sys.stdout.flush()
 
 
-def interactive(con: Console, elf_path: str | None = None):
+def interactive(con: Console, elf_path: str | None = None, guard: "LockGuard | None" = None):
     print("interactive console — type commands, Ctrl-C / EOF to quit (live output streams below)")
-    hostname = query_hostname(con)
+    hostname = query_hostname(con, timeout=6.0 if guard else 2.0)
     prompt = f"{hostname}> " if hostname else "> "
     _install_readline_history()
     _install_readline_completion(elf_path)
@@ -899,6 +1161,10 @@ def interactive(con: Console, elf_path: str | None = None):
                 except (KeyError, FileNotFoundError, ValueError) as e:
                     print(f"peek: {e}", file=sys.stderr)
                     continue
+            if guard:
+                if not guard.allowed(raw.strip(), hostname):
+                    continue
+                guard.record(raw.strip(), hostname)
             con.command(cmd)  # reply lines print via on_line
     finally:
         con.on_line = None
@@ -967,6 +1233,23 @@ def pull_coredump(con, action, elf_path):
 
 def _ble_target_name(args):
     return args.ble if isinstance(args.ble, str) else args.name
+
+
+def transport_label(args):
+    for attr, label in (("ble_proxy", "ble-proxy"), ("ble", "ble"), ("mqtt", "mqtt"), ("tls", "tls"),
+                        ("ip", "telnet")):
+        if getattr(args, attr, None):
+            return label
+    return "serial"
+
+
+def target_hint(args):
+    """Device name the arguments point at before connecting (--name/--ble NAME), or None."""
+    if args.ble_proxy or args.mqtt:
+        return args.name
+    if args.ble:
+        return _ble_target_name(args)
+    return None
 
 
 def make_transport(args):
@@ -1068,6 +1351,13 @@ def parse_args(argv=None):
                     help="pull the saved panic core dump: `info` (default) shows presence/size, "
                          "`get` streams it (base64), decodes to coredump.bin and runs esp-coredump, "
                          "`erase` clears it")
+    ap.add_argument("--take-lock", action="store_true",
+                    help="for a protected device: take its lock.sh lock for this run when free "
+                         "(released on exit) instead of refusing state-changing commands")
+    ap.add_argument("--lock-note", metavar="WHY", help="note for the lock --take-lock takes")
+    ap.add_argument("--no-lock-guard", action="store_true",
+                    help="send state-changing commands to protected devices without their lock "
+                         "(still recorded in elf-archive/console-commands.jsonl)")
     return ap.parse_args(argv)
 
 
@@ -1088,6 +1378,22 @@ def main():
         print("--tele requires --ble", file=sys.stderr)
         return 1
 
+    guard = LockGuard(enabled=not args.no_lock_guard, take=args.take_lock, note=args.lock_note,
+                      transport=transport_label(args))
+    atexit.register(guard.close)
+    commands = list(args.command or [])
+    read_stdin, active, delimit = resolve_command_mode(
+        commands, args.stdin, bool(args.coredump), sys.stdin.isatty())
+    if read_stdin:
+        commands += [ln for ln in (raw.strip() for raw in sys.stdin)
+                     if ln and not ln.startswith("#")]
+    guarded = [] if args.mqtt_readonly else (
+        (["set-time 0", "tele-ble 1"] if args.tele else [])
+        + (commands if active else [f"coredump {args.coredump}"] if args.coredump else []))
+    hint = guard.protected_host(target_hint(args))
+    if hint and not all(guard.allowed(c, hint, confirmed=False) for c in guarded):
+        return 1  # refused before connecting
+    host = None
     try:
         transport = make_transport(args)
         # Telnet drops the first byte sent during the post-connect handshake; wait for the banner.
@@ -1099,22 +1405,24 @@ def main():
         return 1
     elf_path = peek_symbols.find_elf(args.elf)
     try:
+        if any(guard.state_changing(c) for c in guarded):
+            host = query_hostname(con, timeout=6.0)
+            if not all(guard.allowed(c, host) for c in guarded):
+                return 1  # refused before sending
         if args.tele:
             for cmd in (f"set-time {int(time.time() * 1000)}", "tele-ble 1"):
+                guard.record(cmd, host)
                 r = con.command(cmd)
                 print(f"{cmd} -> {'OK' if r.ok else 'ERR'}: {r.text.strip()}")
                 if not r.ok:
                     return 1
-        commands = list(args.command or [])
-        read_stdin, active, delimit = resolve_command_mode(
-            commands, args.stdin, bool(args.coredump), sys.stdin.isatty())
-        if read_stdin:
-            commands += [ln for ln in (raw.strip() for raw in sys.stdin)
-                         if ln and not ln.startswith("#")]
         if active:
             for cmd in commands:
                 if delimit:
                     print(f"=== {cmd} ===")
+                if not guard.allowed(cmd, host):  # the lock can be lost mid-batch
+                    return 1
+                guard.record(cmd, host)
                 reply = dispatch_command(con, cmd, elf_path)
                 if reply is not None and is_app_ota(cmd):
                     return 0 if reply.ok or reply.dropped else 1  # the device reboots on success
@@ -1123,9 +1431,10 @@ def main():
                     return 0 if cmd.split()[0] in ("ota", "restart") else 1
             return 0
         if args.coredump:
+            guard.record(f"coredump {args.coredump}", host)
             return pull_coredump(con, args.coredump, elf_path)
 
-        interactive(con, elf_path)  # default
+        interactive(con, elf_path, None if args.mqtt_readonly else guard)  # default
         return 0
     except (OSError, EOFError, ConnectionError) as e:
         # A mid-session connection drop (e.g. the firmware's single-client telnet server reused
@@ -1134,6 +1443,7 @@ def main():
         return 1
     finally:
         con.close()
+        guard.close()
 
 
 if __name__ == "__main__":

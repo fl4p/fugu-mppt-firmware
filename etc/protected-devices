@@ -1,0 +1,4 @@
+# Hostnames whose state-changing console commands need the device lock (etc/fugu_console.py lock guard).
+# One per line; $FUGU_PROTECTED (comma-separated) overrides this file.
+fry
+flat

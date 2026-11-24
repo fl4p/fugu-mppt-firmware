@@ -22,7 +22,6 @@ import argparse
 import atexit
 import datetime
 import difflib
-import getpass
 import glob
 import hashlib
 import json
@@ -43,8 +42,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from etc.fugu.console import Console  # noqa: E402
 from etc.fugu.transport import MqttTransport  # noqa: E402
-from etc.fugu_console import (broker_endpoint, etc_file, free_port, load_env_file,  # noqa: E402
-                              relay_ssh_dest, run_ota, tcp_ok)
+from etc.fugu_console import (Locks, broker_endpoint, etc_file, free_port, load_env_file,  # noqa: E402
+                              owner, relay_ssh_dest, run_ota, tcp_ok)
 from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E402
                         build_has_networking, build_is_plant_sim, device_driver_label,
                         gate_driver_verdict, image_is_dirty, is_current, is_pending_verify, judge,
@@ -71,7 +70,6 @@ RE_LOGPFX = re.compile(r'^([EWI]) \(\d+\) ')
 OTA_BUDGET = 330.0  # firmware OTA watchdog (300 s) + margin
 LIVE = ('fry', 'flat')  # live converters: no -dirty firmware without --allow-dirty
 FW_INPUTS = ('src/', 'main/', 'components/', 'lib/', 'sdkconfig', 'CMakeLists.txt', 'partitions.csv')
-LOCK_SH = os.path.expanduser('~/bin/lock.sh')
 OWNERS = os.path.join(elf_archive.ARCHIVE_DIR, 'ota-owners.jsonl')
 
 
@@ -245,48 +243,6 @@ class GatewayTx:
                   f'({type(e).__name__}: {e}); set it by hand: POST /txpower?wifi={self.orig}')
 
 
-class Locks:
-    """System-wide lock.sh locks owned by this process (stale, so takeable, once it dies)."""
-
-    def __init__(self, wait):
-        self.wait, self.held, self.sid = wait, [], None
-        self.env = dict(os.environ, AGENT_LOCK_OWNER_PID=str(os.getpid()))
-
-    def _run(self, *a):
-        return subprocess.run([LOCK_SH, *a], env=self.env, capture_output=True, text=True,
-                              timeout=self.wait + 60)
-
-    def take(self, name, note):
-        if name in self.held:
-            return True
-        if self.sid is None:
-            r = self._run('newsession', 'ota')
-            if r.returncode or not r.stdout.strip():
-                print(f'⛔ lock.sh newsession failed (exit {r.returncode}): {r.stderr.strip()}')
-                return False
-            self.sid = r.stdout.strip()
-        if self._run('resolve', name).returncode:
-            r = self._run('acquire', name, note, '--new', '--session', self.sid)
-        elif self.wait:
-            print(f'waiting up to {self.wait:.0f} s for lock {name} ...')
-            r = self._run('wait', name, note, str(int(self.wait)), '--session', self.sid)
-        else:
-            r = self._run('acquire', name, note, '--session', self.sid)
-        if r.returncode == 0:
-            self.held.append(name)
-            return True
-        print(f'⛔ lock {name} not taken (exit {r.returncode}; --lock-wait S to queue):\n'
-              f'{(r.stdout + r.stderr).strip()}')
-        return False
-
-    def release(self, *names):
-        for n in [n for n in reversed(self.held) if not names or n in names]:
-            r = self._run('release', n, '--session', self.sid)
-            if r.returncode:
-                print(f'⚠️  lock {n} not released (exit {r.returncode}): {(r.stdout + r.stderr).strip()}')
-            self.held.remove(n)
-
-
 class ExactMqtt(MqttTransport):
     """MqttTransport that only accepts `pv/log/<device>` exactly, not a substring match."""
 
@@ -360,22 +316,6 @@ def firmware_dirt(bin_path):
 def image_git_sha(version):
     m = re.search(r'-g([0-9a-f]{7,})', version or '')
     return m[1] if m else None
-
-
-def owner():
-    """Who runs this OTA: $OTA_OWNER, else the Claude session name, else user@host."""
-    if v := os.environ.get('OTA_OWNER'):
-        return v
-    sid = os.environ.get('CLAUDE_CODE_SESSION_ID')
-    finder = os.path.expanduser('~/dev/bin/session-find')
-    if sid and os.access(finder, os.X_OK):
-        try:
-            out = subprocess.run([finder, sid], capture_output=True, text=True, timeout=10).stdout.split()
-            if out:
-                return f'{out[0]} ({sid[:8]})'
-        except Exception:
-            pass
-    return f'{getpass.getuser()}@{socket.gethostname().split(".")[0]}'
 
 
 def last_record(device):
