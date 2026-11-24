@@ -152,7 +152,8 @@ The following limits and fault rules apply in PSU mode:
   trips 5–8 use the normal backoff, and the 9th latches the output off (`psu` shows the latch). Other faults use their
   normal backoff. Any mode command (`psu <V>`, `psu off`, `mppt`, `dc`) clears the latch.
 - A higher setpoint, and every start of the converter (also the fast retry after a trip), ramps up from the
-  measured Vout at `converter.conf::psu_slew_up`: 5 V/s in a boost, immediate in a buck. A lower setpoint ramps
+  measured Vout at `converter.conf::psu_slew_up`: 5 V/s in a boost, immediate in a buck. A boost ramp starts no
+  lower than Vin + 0.5 V, because a boost cannot regulate below its input. A lower setpoint ramps
   down at `psu_slew_down` (2 V/s). The OV threshold follows the commanded setpoint, not the ramp.
 - `+N` and `-N` are rejected. Use `psu off` first.
 - The charger's battery logic does not act on the output: the wire-fault guard gets no samples, and the stuck-output

@@ -41,6 +41,8 @@ The file accepts the following keys.
 | `pwm_clk`       | Hz   | int   | 0       | Gate-driver timing the PWM shim emulates, read at boot: 0 = LEDC (80 MHz, power-of-two period: 2047 counts at 39 kHz), else the MCPWM timer clock (160000000: the MCPWM period of 4103 counts at 39 kHz; the plant runs at the realized frequency in whole Hz, 38995). `rect_offset_ns` and `boot_refresh_ns` are converted at this tick rate |
 | `bflow_model`   |      | int   | 0       | 1 = backflow switch between the output node and the battery: on, it conducts both ways; off, it is a diode (0.7 V) toward the battery. Vout and Iout then read the battery side (terminal voltage, battery current). The firmware's backflow switch drives it (`selftest bflow`); `vconv set bflow_model` at runtime |
 | `bflow_stuck`   |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bflow_model` only) |
+| `in_bf`         |      | int   | 0       | 1 = boost fed from a battery behind its backflow switch (`pv_isc`/`pv_voc` model the battery): C_in charges only up to the switch's gate, and Vin senses the battery side. The switch follows the firmware's backflow switch output and `bflow_stuck` |
+| `in_bf_tau`     | s    | float | 0.005   | Time constant of that gate after turn-on (charge pump into the gate capacitance), so the battery connects as a soft start |
 | `i_unidir`      |      | int   | 0       | 1 = the Iout channel clips at 0, like a one-direction current amplifier: `selftest bflow` runs its toggle variant and `hs_clamp` is ignored. `vconv set i_unidir` at runtime |
 | `hs_short`      |      | int   | 0       | 1 = buck high side conducts permanently; with the low side on as well, the input capacitor is shorted to ground. 2 = the same, and the low side never turns on. For the [high-side short check](../../internals/protection.md#high-side-short-check) |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_freq`, then 3000)        |
@@ -124,7 +126,7 @@ The firmware reads `vconv.conf` once at boot. The console changes part of the pl
 - `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.
 
 The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `r_hs`, `r_ls`, `t_sw`,
-`pwm_clk`, `adc_freq`, `noise_*`) need a reboot. See [console](../console.md).
+`pwm_clk`, `adc_freq`, `noise_*`, `out_d_i0`, `out_d_vt`, `in_bf`, `in_bf_tau`) need a reboot. See [console](../console.md).
 
 ## Switch-node ring
 

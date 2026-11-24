@@ -16,6 +16,7 @@
 //                              # shade | shade-cv: half-shaded string (two peaks)
 //                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
 //                              # psu-boost-dark: fry in boost, battery in, dark PV string out, `psu` 32..80 V (SIM_DWELL)
+//                              # psu-boost-cold: the same, `psu 32` from the night state: string at 6.85 V, battery behind the open backflow switch
 //                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
 //                              # bf-ok, bf-open, bf-closed: `selftest bflow` (vconv.conf bflow_model=1)
 //                              # bf-daily-flat: the daily run from MPPT at ~160 W in CCM on flat's plant
@@ -3224,6 +3225,39 @@ static int runPsuBoostDark(const std::string &name) {
     return fails != 0;
 }
 
+// psu-boost-cold: `psu 32` from the night state. The backflow switch between the battery and C_in is open (in_bf),
+// C_in and the string sit at 6.85 V, Vin senses the battery. Pass: the ramp never starts below Vin + headroom,
+// the output settles at 32 V within 20 s, no PSU trip, no latch
+static int runPsuBoostCold(const std::string &name) {
+    g_vconv.setVin(6.85f), g_vconv.setVout(6.85f);
+    run(5, 0);
+    traceLine("manual ");
+    const float vset = 32.f, vin = sensors.Vin->ewm.avg.get();
+    if (!simPsuWait(mppt.queuePsuSetpoint(vset)) || !(mppt.psuTarget == vset)) {
+        printf("== SUMMARY %s: FAILED (request refused)\n", name.c_str());
+        return 1;
+    }
+    float rampMin = INFINITY, vMax = 0, iMax = 0;
+    unsigned dMax = 0;
+    double tReach = -1, sv = 0, n = 0;
+    g_vconv.takeVoutMax();
+    for (const double t0 = tNow(); tNow() - t0 < 30;) {
+        run(0.002, 0);
+        if (!converter.disabled()) rampMin = std::min(rampMin, mppt.getPsuSetpoint()), dMax = std::max(dMax, (unsigned) converter.getCtrlOnPwmCnt());
+        vMax = std::max(vMax, g_vconv.takeVoutMax()), iMax = std::max(iMax, g_vconv.getIinAvg());
+        if (tReach < 0 && g_vconv.getVout() > 0.99f * vset) tReach = tNow() - t0;
+        if (tNow() - t0 >= 20) sv += g_vconv.getVout(), ++n;
+    }
+    const float vm = (float) (sv / n);
+    const bool ok = rampMin >= vin + MpptController::BoostHeadroomV - 0.05f && g_psuTrips == 0 && !mppt.isPsuLatched() &&
+                    tReach >= 0 && tReach < 20 && std::fabs(vm - vset) < 0.01f * vset;
+    printf("== COLD Vin %.2f V: ramp start %.2f V, D max %u, Vout max %.2f, %.2f V at 32 V after %.2f s, mean %.2f V,"
+           " Iin max %.1f A, %d PSU trips%s\n", vin, rampMin, dMax, vMax, 0.99f * vset, tReach, vm, iMax, g_psuTrips,
+           mppt.isPsuLatched() ? " LATCHED" : "");
+    printf("== SUMMARY %s: %s\n", name.c_str(), ok ? "OK" : "FAILED");
+    return !ok;
+}
+
 // ---- top of charge on a shared bus (cv-hold-*) ----
 // Vout sensor error [V]: idle, both units converting, converting alone; linear in 0..2 A own and 0..5 A sibling
 // current, so no step at a threshold
@@ -3672,7 +3706,7 @@ static int simMain(int argc, char **argv) {
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 5 && sc.compare(sc.size() - 5, 5, "-flat") == 0)
         setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
-    const bool psuBoost = sc == "psu-boost-dark";
+    const bool psuBoost = sc == "psu-boost-dark" || sc == "psu-boost-cold";
     if (psuBoost) { // fry in boost: MCPWM timing, its ADC rate and filters, INA226 (Vin, Iin) on the LV side, no HV shunt
         std::string c = "converter.conf:topo=boost,tracker.conf:target_duty_cycle=0,coil.conf:L0=80e-6,"
                         "sensor.conf:lv_v_ch=0,sensor.conf:hv_v_ch=1,sensor.conf:lv_i_ch=3,sensor.conf:lv_i_factor=-1,"
@@ -3789,6 +3823,10 @@ static int simMain(int argc, char **argv) {
     if (psuBoost)
         ov = {{"pv_isc", "200"}, {"pv_voc", "26.6"}, {"pv_k", "0.95"}, {"v_bat", "0"}, {"r_bat", "207.5e3"}, {"plant_c_in", "470e-6"},
               {"plant_c_out", "1.2e-3"}, {"out_d_i0", "1.2e-4"}, {"out_d_vt", "8.3"}};
+    if (sc == "psu-boost-cold") {
+        ov.push_back({"in_bf", "1"});
+        if (const char *e = getenv("SIM_BFSTUCK"); e && *e) ov.push_back({"bflow_stuck", e});
+    }
     boot(ov, p0);
     if (rcal) g_vconv.setDiodeVf(0.7f);
     if (sc == "rcal-sun" && !g_ring) g_vconv.setRing(5e-9f, 40.f);
@@ -3808,7 +3846,7 @@ static int simMain(int argc, char **argv) {
     }
     if (sc == "ring-coil" || sc == "ring-coil-weak") return runRingCoil(name, sc == "ring-coil-weak");
     if (isWx) return runWx(name, wx);
-    if (psuBoost) return runPsuBoostDark(name);
+    if (psuBoost) return sc == "psu-boost-cold" ? runPsuBoostCold(name) : runPsuBoostDark(name);
     if (cvHold) return runCvHold(name, sc);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 

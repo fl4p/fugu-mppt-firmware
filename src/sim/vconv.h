@@ -167,6 +167,13 @@ public:
     [[nodiscard]] bool bfConducts() const { return bfStuck ? bfStuck == 2 : bfOn; }
     [[nodiscard]] float getVoutSense() const { return bfModel ? vSense_ : vOut_; }
     [[nodiscard]] float getIoutSense() const { return bfModel ? ibat_ : iOutAvg_; }
+    // Boost from a battery behind its backflow switch (opt-in): a source follower, C_in charges only up to its gate,
+    // which rises with inBfTau toward the battery once enabled (charge pump through R21 into C20 + Cgs).
+    // Vin senses the battery side.
+    bool inBf = false;
+    float inBfTau = 5e-3f;
+    [[nodiscard]] bool srcOff() const { return inBf && !(vIn_ < bfVg_); }
+    [[nodiscard]] float getVinSense() const { return inBf && bfVg_ < pv_.voc ? pv_.voc : vIn_; }
 
     // Open backflow switch at the PV input: its body diode passes only forward PV current.
     void setPvBlocking(bool b) { pvBlocking_ = b; }
@@ -307,6 +314,7 @@ private:
     float pvG_[kPvSubMax] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f};    // substring factors, strongest first
     float pvInvW_[kPvSubMax] = {1.f, 1.f, 1.f, 1.f, 1.f, 1.f}; // 1 / Voc share of the m+1 strongest
     bool pvBlocking_ = false;
+    float bfVg_ = 0.0f; // input backflow switch: highest source-side voltage its gate allows
 
     // Battery + passives
     float vbat_ = 28.0f;

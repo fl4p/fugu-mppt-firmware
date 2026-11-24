@@ -124,6 +124,7 @@ void VirtualConverter::stepOneCycle(float T) {
     // V_out near zero while the converter still delivers large I_L, and the
     // phase math handles V_out → 0 (phase-2/3 slopes go to zero, coil idles).
     vbNow_ = vBatEff;
+    if (inBf) bfVg_ = !bfConducts() ? 0.0f : bfVg_ + (pv_.voc + 5.0f - bfVg_) * (inBfTau > T ? T / inBfTau : 1.0f);
     struct HsRestore { uint16_t &r; uint16_t v; ~HsRestore() { r = v; } } hsRestore{pwm_.pwmCtrl, ctrl}, lsRestore{pwm_.pwmRect, rect};
     if (hsShort && !boost_ && ctrl < pmax && pmax) {
         if (rect && hsShort != 2) { // shorted HS + LS on: C_in dumps, the node sees ground
@@ -140,8 +141,9 @@ void VirtualConverter::stepOneCycle(float T) {
 
     constexpr float kVMin = 1e-4f;
     if (vIn_ < kVMin || pmax == 0 || L <= 0.0f) {
-        const float Ipv = pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
+        const float Ipv = srcOff() ? 0.f : pvBlocking_ ? std::max(0.f, pvCurrent(vIn_)) : pvCurrent(vIn_);
         vIn_  += Ipv * T * invCin_;
+        if (Ipv > 0.0f && inBf) vIn_ = std::min(vIn_, bfVg_);
         vOut_ = outNext(vOut_, 0.0f, T);
         if (vIn_  < 0.0f) vIn_  = 0.0f;
         if (vOut_ < 0.0f) vOut_ = 0.0f;
@@ -162,8 +164,9 @@ void VirtualConverter::stepOneCycle(float T) {
     // V_in: the PV current is linearized at the cycle start and taken implicit (backward Euler); explicit, a stiff
     // source (bench PSU, k -> 1: T G / C_in > 2) rings or settles where I_pv(V_in) != I_in. Above Voc the panel
     // diode sinks what the HS body diode pumps back (curve slope at Voc), implicit for the same reason.
-    const float ipv0 = pvBlocking_ ? std::max(0.f, pvCurrent(vi0)) : pvCurrent(vi0);
-    const float g = std::max(0.0f, (ipv0 - pvCurrent(vi0 + 0.01f)) * 100.0f); // -dI_pv/dV
+    const bool off = srcOff();
+    const float ipv0 = off ? 0.f : pvBlocking_ ? std::max(0.f, pvCurrent(vi0)) : pvCurrent(vi0);
+    const float g = off ? 0.f : std::max(0.0f, (ipv0 - pvCurrent(vi0 + 0.01f)) * 100.0f); // -dI_pv/dV
     const float hIn = T * invCin_ / (1.0f + g * T * invCin_);
     auto vinNext = [&](float iIn) {
         float v = vi0 + (ipv0 - iIn) * hIn;
@@ -187,6 +190,7 @@ void VirtualConverter::stepOneCycle(float T) {
     iInAvg_ = (qIn1 + 2.0f * iInAvg_) * (1.0f / 3.0f);
 
     vIn_ = vinNext(iInAvg_);
+    if (inBf && vIn_ > vi0 && vIn_ > bfVg_) vIn_ = std::max(vi0, bfVg_); // the follower stops at its gate
     vOut_ = outNext(vOut_, iOutAvg_, T);
     if (vOut_ > vOutMax_) vOutMax_ = vOut_;
     iLsOffMin_ = std::min(iLsOffMin_, iLsOff_), iOutMin_ = std::min(iOutMin_, iOutAvg_);

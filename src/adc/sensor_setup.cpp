@@ -122,6 +122,8 @@ static void configureVirtualConverter() {
     }
     g_vconv.bfModel = vc.getByte("bflow_model", 0);
     g_vconv.bfStuck = vc.getByte("bflow_stuck", 0);
+    g_vconv.inBf = vc.getByte("in_bf", 0);
+    g_vconv.inBfTau = vc.f("in_bf_tau", 5e-3f);
     g_vconv.hsShort = vc.getByte("hs_short", 0);
     g_vconv.iUnidir = vc.getByte("i_unidir", 0);
 

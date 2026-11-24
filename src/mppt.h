@@ -254,6 +254,7 @@ private:
     Plot sweepPlot{};
 
     time_ms lastTimeProtectPassed = 0;
+    time_ms boostOpenSinceMs = 0; // boost switching with Vout below Vin: since when (|1), 0 = not now
     time_us _lastPointWrite = 0;
     time_us _backoffUntilUs = 0;
     uint32_t _backoffArmedSec = 0; // length of the running backoff, so a repeat can't extend it
@@ -1049,6 +1050,24 @@ public:
             return false;
         }
 
+        // A boost passes Vin through to Vout once its input conducts, so Vout well below Vin means the input path is
+        // open (backflow switch off). Duty then converts nothing, and an input that closes at high duty ramps the coil
+        // current every period. Vr-sensor-fail cannot see this: M reads MaxBoostRatio below Vin.
+        if (converter.boost() && iOutSmall && converter.getCtrlOnPwmCnt() > converter.pwmCtrlMax / 4
+            && vOut < sensors.Vin->ewm.avg.get() - 2.f) {
+            if (!boostOpenSinceMs) boostOpenSinceMs = nowMs | 1;
+            else if (nowMs - boostOpenSinceMs > 1000) {
+                boostOpenSinceMs = 0;
+                RT_COLD(
+                ESP_LOGE("MPPT", "Boost D=%d%% but Vout %.2f < Vin %.2f at I %.2f: input open, shutdown",
+                         100 * converter.getCtrlOnPwmCnt() / converter.pwmCtrlMax, vOut, sensors.Vin->ewm.avg.get(),
+                         sensorPhysicalI->ewm.avg.get());
+                shutdownDcdc("boost-no-input", 10);
+                );
+                return false;
+            }
+        } else boostOpenSinceMs = 0;
+
         lastTimeProtectPassed = nowMs;
 
         return true;
@@ -1202,9 +1221,15 @@ public:
         VoutController.reset();
         psuTarget = v;
         // slew down only from an active plain-PSU setpoint, up from Vout; PV-sim owns its own slew
-        if (!(g_app.psuMode() && !pvSim.active && v < psuVsetpoint))
-            psuVsetpoint = !pvSim.active && psuSlewUpVps > 0 && vout < v ? vout : v;
+        if (!(g_app.psuMode() && !pvSim.active && v < psuVsetpoint)) {
+            const float r = psuRampStart(vout);
+            psuVsetpoint = !pvSim.active && psuSlewUpVps > 0 && r < v ? r : v;
+        }
         publishedPsuSetpoint.store(psuVsetpoint, std::memory_order_release);
+    }
+    // Upward ramp start: Vout, in a boost not below Vin + headroom (it cannot regulate under its input)
+    [[nodiscard]] float psuRampStart(float vout) const {
+        return converter.boost() && sensors.Vin ? std::fmax(vout, sensors.Vin->ewm.avg.get() + BoostHeadroomV) : vout;
     }
 
     // RT-only, plain PSU: advance psuVsetpoint one tick toward psuTarget.
@@ -1219,7 +1244,7 @@ public:
     // RT, PSU cold start: backflow switch on, the upward ramp restarts from Vout (a trip or backoff left it lower)
     void psuArm() {
         bflow.enable(true);
-        const float v = sensors.Vout->med3.get();
+        const float v = psuRampStart(sensors.Vout->med3.get());
         if (!pvSim.active && psuSlewUpVps > 0 && v < psuVsetpoint) {
             psuVsetpoint = v;
             publishedPsuSetpoint.store(v, std::memory_order_release);

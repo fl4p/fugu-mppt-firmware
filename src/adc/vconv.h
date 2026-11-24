@@ -88,7 +88,7 @@ public:
         float x;
         float sigma = 0.0f;
         switch (readingChannel_) {
-            case 0: x = g_vconv.getVin();     sigma = noiseVin_;  break;
+            case 0: x = g_vconv.getVinSense(); sigma = noiseVin_;  break;
             case 1: x = g_vconv.getVoutSense();sigma = noiseVout_; break;
             case 2: x = g_vconv.getIoutSense();sigma = noiseIout_; break;
             case 3: x = g_vconv.getIinAvg();  sigma = noiseIin_;  break;
