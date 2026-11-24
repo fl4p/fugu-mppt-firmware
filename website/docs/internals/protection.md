@@ -354,9 +354,9 @@ Without a battery, the test runs only on request, never as the daily run. It ref
 - Vbat max is unknown, or
 - min(Vin/2, 0.8 × Vbat max) is below Vout + 5 V.
 
-It aborts when BMS data arrives or Vout does not rise within 3 s (a pack behind an open divider). Without the low side,
-a switch stuck closed cannot pull reverse current from such a pack. A raised output after a no-battery run does not
-count as a battery.
+It aborts when BMS data arrives or Vout does not rise within 3 s: a pack holds the output, or an open Vout divider reads
+no rise and may hide one. Without the low side, a switch stuck closed cannot pull reverse current from such a pack. A
+raised output after a no-battery run does not count as a battery.
 
 A FAIL latches `bf-fail` like a blocks FAIL. A PASS counts as a blocks pass for the verified state, but does not arm
 the [low-side clamp](#low-side-clamp).
