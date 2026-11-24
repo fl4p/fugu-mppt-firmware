@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 
 // N series cells, i > 0 charges [A]. Cell k: ocv[k] + vp[k] + i r0. ocv is double: a 2 ms sim tick at a few A moves it
 // by less than a float ulp. ah[k] is the cell's charge [Ah] on the axis of the polarization and the knee; it only
@@ -85,8 +86,11 @@ struct LfpPack {
 // high cell's. Valid from ah ~-50 (the fit's start, ~80 % SoC); lower, the polarization is underestimated. The upper
 // knee is an assumption: the pack never rested above ~3.36 V and the last field hold ends at ah ~+1.3. It is put at
 // ah +10 (where the 3.500 V hold current is down to 4.7 A, ~0.02 C), 0.02 V/Ah ramped in over 5 Ah.
+// At the field's hold entries the model is -36..+27 mV off (mean -2 mV), low after a discharge or rest. SIM_PACK_RP
+// scales rp: 1.25 puts the worst entry (11:45, -36 mV) at -9 mV, every other one 6-66 mV high (a pessimistic plant).
 inline void topOfCharge(LfpPack &p, float a = 0.f) {
     p.r0 = 0.0021f, p.rp = 0.0194f, p.rpd = 0.0039f, p.tauP = 410.f, p.qR = 17.7f, p.iRef = 10.f, p.n = 1.19f;
+    if (const char *e = getenv("SIM_PACK_RP")) p.rp *= strtof(e, nullptr);
     p.dvdah = 0.0003f, p.knee = 0.02f, p.kneeAh = 10.f, p.kneeW = 5.f;
     p.place(3.348f, a, 17.4f);
 }

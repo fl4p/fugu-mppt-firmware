@@ -175,7 +175,7 @@
 //     (the sweep). Vout error: linear in 0..2 A own and 0..5 A sibling current. Overrides:
 //     SIM_VOUT_ERR=u:idle,both,alone[;u:...]  SIM_LOAD=W,on_s,off_s,from_s (W,1,0,0: constant)  SIM_REBOOT_AT=t
 //     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_BASE_A=A  SIM_T
-//     SIM_TR
+//     SIM_TR  SIM_PACK_RP=x (scales the pack's polarization, lfp_pack.h topOfCharge())
 //
 #include <algorithm>
 #include <cmath>

@@ -3,8 +3,9 @@
 //
 //   clang++ -std=gnu++20 -I test/host-stub test/host-stub/lfp-pack-test.cpp -o /tmp/lfp-pack-test && /tmp/lfp-pack-test
 //
-// replay of the measured pack current (highest cell and pack voltage), CV holds at 3.500 V from the field state at
-// four hold starts, the taper of one long hold, the relaxation after the 13:33 hold and a 0.5 A trickle.
+// replay of the measured pack current (highest cell and pack voltage), the error at each hold entry, CV holds at
+// 3.500 V from the field state at four hold starts, the taper of one long hold, the relaxation after the 13:33 hold and
+// a 0.5 A trickle.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -87,6 +88,36 @@ static void test_replay() {
     CHECK(ec < 15 && ep < 10, "replay rms %.1f / %.1f mV", ec, ep);
 }
 
+// hold entries (the field cell crossing 3.47 V upwards): model - field at the field's peak within -60..+300 s. Mixed
+// signs, the model reads low after a discharge or rest (11:45, 12:22) and high after long charging at 30 A (10:31, 14:14).
+static void test_entries() {
+    LfpPack p = stateAt(0);
+    std::vector<float> m(g_d.size());
+    for (size_t k = 0; k < g_d.size(); ++k) p.step(g_d[k].i, DT), m[k] = p.vcellHigh(g_d[k].i);
+    float last = 9, worst = 0, sum = 0;
+    double tLast = -1e9;
+    int n = 0;
+    for (size_t k = 0; k < g_d.size(); ++k) {
+        const float v = g_d[k].v;
+        if (std::isnan(v)) continue;
+        if (last < 3.47f && v >= 3.47f && g_d[k].t > tLast + 300) {
+            tLast = g_d[k].t;
+            size_t kp = k;
+            for (size_t j = k - std::min<size_t>(k, 3); j < std::min(g_d.size(), k + 16); ++j)
+                if (g_d[j].v > g_d[kp].v) kp = j;
+            const float e = m[kp] - g_d[kp].v;
+            const int t = (int) g_d[kp].t + 36000;
+            printf("  entry %02d:%02d:%02d: field peak %.4f V at %5.1f A, model %.4f V (%+5.1f mV)\n", t / 3600,
+                   t / 60 % 60, t % 60, g_d[kp].v, g_d[kp].i, m[kp], e * 1e3f);
+            worst = std::min(worst, e), sum += e, ++n;
+        }
+        last = v;
+    }
+    printf("  %d entries: mean %+.1f mV, worst optimistic %.1f mV\n", n, sum / n * 1e3f, -worst * 1e3f);
+    CHECK(n >= 10 && std::fabs(sum / n) < 0.01f && worst > -0.04f, "entries: %d, mean %+.1f mV, worst %.1f mV", n,
+          sum / n * 1e3f, worst * 1e3f);
+}
+
 static void test_holds() {
     struct H { int h, m, mins; } hs[] = {{10, 54, 20}, {11, 50, 16}, {12, 30, 14}, {13, 5, 23}};
     for (auto &h: hs) {
@@ -156,6 +187,7 @@ int main() {
         return 2;
     }
     test_replay();
+    test_entries();
     test_holds();
     test_taper();
     test_relax();
