@@ -180,6 +180,8 @@ FTP settings: 1 simultaneous connection, disable passive mode.
 
 # Control Loop
 
+Details: [Control loop](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/control-loop/)
+
 The control loop reads Vout, Vin, Iin and adjusts the PWM duty cycle of the buck DC-DC converter for MPPT and output
 regulation. The control loop updates once a Vout reading is available. This ensures low latency for output voltage
 control, which is important (see below).
@@ -239,6 +241,8 @@ current
 signals. Another IIR smoothing filter suppresses residual noise.
 
 # MPPT Algorithm
+
+Details: [MPP tracker](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/mppt-tracker/)
 
 The tracking consists of 3 phases:
 
