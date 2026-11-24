@@ -405,7 +405,7 @@ without coordination. The gains are sized for that:
   frame of $K R/r$, with $R$ the cell's resistance within a frame, and must
   stay below 1 with a frame of lag: downward for $R < r/1.5$ (8.3 mΩ at
   280 Ah with the defaults), upward for $R < 2r$.
-- A model fitted to a field charge of a 280 Ah LFP pack near the top has
+- A model fitted to a field charge of a 245 Ah LFP pack near the top has
   2.1 mΩ at once plus a polarization that follows the current with a 410 s
   time constant and grows with the charge put in. At a 3.50 V hold its
   incremental resistance is about 23 mΩ once settled, but it builds by less
