@@ -1199,6 +1199,34 @@ static void test_bal_low_line_no_hold_cuts_at_band() {
           "low line: hold in the band, no ceiling, peak %.3f <= cv_eoc + 15 mV", vmax);
 }
 
+// look-ahead on the cell rise, 10 A, cell 3.460 -> 3.490 V in 10 mV steps: 12 s apart it brakes (0.83 mV/s); 60 s
+// apart (lost frames, 0.17 mV/s) or republished every 12 s between the steps it keeps the plain law (10.47 A at 3.490 V:
+// the limit rises 0.4 x 0.47 A per ibat frame)
+static void test_hold_rise_frame_spacing() {
+    for (int mode = 0; mode < 3; ++mode) { // 0: 12 s, 1: 60 s, 2: republished every 12 s, a step every 60 s
+        BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+        c.termCond.reset();
+        c.balanceNow();
+        enterHold(c);
+        const int per = mode == 1 ? 60 : 12, every = mode == 2 ? 5 : 1, frames = 3 * every + 1;
+        float before = NAN;
+        for (int s = 0, n = 0; n < frames || s % 4 != 1; ++s) { // ends one ibat frame after the last cell frame
+            setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+            if (s % 4 == 0) c.batSt.updateBatCurrent(10.f);
+            if (n < frames && s % per == 0) {
+                if (n == frames - 1) before = c.Iout_max();
+                c.batSt.setVcellHigh(3.46f + 0.01f * (float) (n++ / every));
+            }
+            c.update(28.f, 30.f, true); // iout 30 A: the headroom does not cap the limit
+        }
+        const float after = c.Iout_max();
+        printf("  rise look-ahead, cell frames %d s apart%s: limit %.2f -> %.2f A at 3.490 V\n", per,
+               mode == 2 ? " (republished)" : "", before, after);
+        CHECK(c.termCond.cvHold(), "in hold (mode %d)", mode);
+        CHECK(mode ? after > before + 0.1f : after < before - 0.5f, "mode %d: limit %.2f -> %.2f A", mode, before, after);
+    }
+}
+
 // flat 11-24 11:19: 50 s after a restart (ibat peak reset), ibat ~1 A, the line at 3.360 V and a cell at 3.363 V
 // entered a hold at ~80 % SoC. Hold mode and a due balance run enter no hold below the tail band; in the band a
 // low-current line crossing still enters one, and with the hold off the line latches as before.
@@ -1325,6 +1353,7 @@ static void test_reseed_rtc_pairing() {
 }
 
 int main() {
+    test_hold_rise_frame_spacing();
     test_bal_low_line_no_hold_cuts_at_band();
     test_hold_no_entry_after_restart_low_line();
     test_hold_blind_decay(1, 120);

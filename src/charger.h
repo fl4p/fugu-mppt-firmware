@@ -488,7 +488,7 @@ class BatteryCharger {
     bool _termJoin = false; // terminated without authority, joined at float because the pack discharges
     bool _wasCvHold = false, _apArm = false; // hold entered without an approach limit: cut pending
     float _cvIlim = NAN, _cvIbat = NAN; // [A] CV hold: output-current limit (NAN = none), pack-current target
-    float _cvVprev = NAN, _cvIprev = NAN, _cvRise = NAN; // CV hold, previous cell frame: cell [V], ibat [A], rise [V]
+    float _cvVprev = NAN, _cvIprev = NAN, _cvRise = NAN; // CV hold, previous cell frame: cell [V], ibat [A], rise [V/s]
 
     // Integrator step gate: advance vpack_pin only on a fresh BMS frame so the
     // step rate matches the cell-voltage update rate (otherwise loopLF at 1 Hz
@@ -953,7 +953,8 @@ public:
     // (tau BLIND_TAU_S), as the expiry latch would end it; the floor holds for any number of units on the bus.
     void _cvHoldStep(bool step, float iout, float ibatCap) {
         constexpr float K_UP = 0.5f, K_DOWN = 1.5f, G = 0.4f, STEP_UP_A = 2.f, HEADROOM_A = 2.f, BLIND_TAU_S = 20.f;
-        constexpr float RISE_V = 0.003f, RISE_N = 3.f, R_OHM = 0.0025f; // [V] per cell frame, frames, [Ohm]
+        constexpr float RISE_VS = 0.00025f, AHEAD_S = 36.f, R_OHM = 0.0025f; // [V/s] (3 mV per 12 s frame), [s], [Ohm]
+        constexpr uint32_t RISE_DT_MIN_US = 4000000, RISE_DT_MAX_US = 30000000; // cell frame spacing for a rise
         constexpr uint32_t BLIND_S = 20; // 5 ibat frames
         const uint32_t age = std::max(ibatAgeS(), coarseTicksToSec(batSt.cellAgeTicks()));
         if (step && age > BLIND_S)
@@ -962,14 +963,17 @@ public:
         const float ibat = batSt.ibat_raw;
         uint32_t frame = batSt.vcell_high_t;
         if (frame != _lastBmsFrameUs || std::isnan(_cvIbat)) {
+            // near cv_eoc a cell rising beyond its ohmic step on two frame pairs (polarization building, tau
+            // minutes) rises on: aim AHEAD_S ahead. A pair spaced outside RISE_DT_* (lost frames, burst) restarts it.
+            const uint32_t dt = frame - _lastBmsFrameUs;
             _lastBmsFrameUs = frame;
-            // near cv_eoc a cell rising beyond its ohmic step for two frames (polarization building, tau minutes)
-            // rises on: aim RISE_N frames ahead
-            const float v = batSt.vcell_high, r = v - _cvVprev - R_OHM * (ibat - _cvIprev);
-            const float rise = r < _cvRise ? r : _cvRise; // NAN until two frames
+            const bool dtOk = dt >= RISE_DT_MIN_US && dt <= RISE_DT_MAX_US;
+            const float v = batSt.vcell_high;
+            const float r = dtOk ? (v - _cvVprev - R_OHM * (ibat - _cvIprev)) * 1e6f / (float) dt : NAN; // [V/s]
+            const float rise = r < _cvRise ? r : _cvRise; // NAN until two pairs
             _cvVprev = v, _cvIprev = ibat, _cvRise = r;
             float err = params.cv_eoc - v;
-            if (err < 2 * APPROACH_V && rise > RISE_V) err -= RISE_N * rise;
+            if (err < 2 * APPROACH_V && dtOk && rise > RISE_VS) err -= AHEAD_S * rise;
             _cvIbat = fminf(ibat + (err > 0 ? K_UP : K_DOWN) * err * params.tail_c_rate * params.Cbat
                                    / (params.cv_eoc - params.cv_min), ibatCap);
         }

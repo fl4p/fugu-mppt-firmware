@@ -314,11 +314,15 @@ loops run on the BMS frames:
   resistance implied by the termination line (12.5 mΩ for 280 Ah with the
   defaults, see above).
   $K$ is 1.5 with the cell above `cv_eoc` and 0.5 below it.
-  Within 60 mV of `cv_eoc`, a cell that rose by more than 3 mV per frame on
-  two frames in a row, beyond the ohmic step of the `ibat` change (2.5 mΩ), uses
-  the voltage three frames ahead at that rise instead of the present one. The
-  polarization of a nearly full cell builds over minutes, so a cell below
-  `cv_eoc` that still rises has no room left.
+- Look-ahead, part of the cell loop: within 60 mV of `cv_eoc`, a cell that
+  rose faster than 0.25 mV/s (3 mV per 12 s frame) on two frame pairs in a
+  row, beyond the ohmic step of the `ibat` change (2.5 mΩ), uses its voltage
+  36 s ahead at that rate instead of the present one. $K$ follows the sign of
+  this projected error, so a cell still below `cv_eoc` can get the downward
+  gain. The rate is taken over the frames' arrival times; a pair less than 4 s
+  or more than 30 s apart (lost frames, a burst) starts the count of two pairs
+  again. The polarization of a nearly full cell builds over minutes, so a cell
+  below `cv_eoc` that still rises has no room left.
 - Current loop, on each `ibat` frame: the converter's output-current limit
   moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
   stays at most 2 A above the converter's own output current, so it does not
@@ -397,14 +401,21 @@ Parallel chargers on one pack each run their own hold on the same BMS data,
 without coordination. The gains are sized for that:
 
 - All chargers compute the same pack-current target from the same frames, so
-  the cell loop gain does not add up. Its gain per frame is $K R/r$, with $R$
-  the short-term cell resistance, and must stay below 1 with a frame of lag.
-  A model fitted to a field charge of a 280 Ah LFP pack near the top gives
-  1 mΩ at once plus 2 mΩ that builds up over about 30 s, so $R$ is about
-  2–3 mΩ. Downward that holds for
-  $R < r/1.5$ (8.3 mΩ at 280 Ah with the defaults), upward for $R < 2r$. The slow upward gain keeps
-  the polarization that relaxes after a current cut from being read as room
-  for more current.
+  the cell loop gain does not add up. Its proportional part has a gain per
+  frame of $K R/r$, with $R$ the cell's resistance within a frame, and must
+  stay below 1 with a frame of lag: downward for $R < r/1.5$ (8.3 mΩ at
+  280 Ah with the defaults), upward for $R < 2r$.
+- A model fitted to a field charge of a 280 Ah LFP pack near the top has
+  2.1 mΩ at once plus a polarization that follows the current with a 410 s
+  time constant and grows with the charge put in. At a 3.50 V hold its
+  incremental resistance is about 23 mΩ once settled, but it builds by less
+  than 3 % in a 12 s frame, so $R$ is about 3 mΩ, well inside both bounds.
+  The slow upward gain keeps the polarization that relaxes after a current cut
+  from being read as room for more current.
+- The look-ahead is not part of that bound. It acts only near `cv_eoc` and
+  only on a sustained rise, and lowers the target. Each lower current shrinks
+  the next rise, so it lets go by itself; the measured `ibat` step is taken
+  out of the rise, so a current step is not read as a rise or fall of the cell.
 - Each charger's limit moves `ibat` one for one, so N chargers sum to a gain of
   0.4 N per `ibat` frame: 0.8 for two, stable also when the BMS reports the
   current one frame late.
