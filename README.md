@@ -26,11 +26,11 @@ Highlights:
 * Supports buck and boost converter operation, and can be used for power supply too
 * Fast [protection](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/) shutdown in over-voltage and over-current conditions
 * Temperature power de-rating and PWM Fan Control
-* Telemetry to InfluxDB over UDP
+* [Telemetry](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#influxdb-over-udp) to InfluxDB over UDP
 * LCD (hd44780) and WS2812B RGB LED driver
-* Configuration files on flash file system (littlefs)
+* [Configuration files](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/config/) on flash file system (littlefs)
 * [Serial UART console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/) and telnet to interact with the charger
-* MQTT support to communicate with the BMS and Home Assistant
+* [MQTT](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/mqtt/) support to communicate with the BMS and Home Assistant
 * ADC abstraction layer with implementations for ESP32(S3) [Internal ADC](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/hardware/internal-adc/), ADS1x15 and
   INA226/INA228
 * Async ADC sampling for low latency control loop (<900µs in-out latency)
