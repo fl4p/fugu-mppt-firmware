@@ -15,16 +15,16 @@ The file accepts the following keys.
 
 | key             | unit | type  | default | description                                                                 |
 |-----------------|------|-------|---------|-----------------------------------------------------------------------------|
-| `isc`           | A    | float | 8.0     | PV short-circuit current                                                    |
-| `voc`           | V    | float | 40.0    | PV open-circuit voltage                                                     |
+| `pv_isc`        | A    | float | 8.0     | PV short-circuit current                                                    |
+| `pv_voc`        | V    | float | 40.0    | PV open-circuit voltage                                                     |
 | `pv_k`          |      | float | 0.8     | V_mpp / Voc                                                                 |
 | `v_bat`         | V    | float | 28.0    | Battery sink voltage (`v_bat=0`, `r_bat=1e9` ≈ open output)                 |
 | `r_bat`         | Ω    | float | 0.05    | Battery series resistance (floor 1 µΩ)                                      |
 | `vbat_ac_amp`   | V    | float | 0.0     | Ripple amplitude (peak) on V_bat; 0 = off                                   |
 | `vbat_ac_freq`  | Hz   | float | 100     | Ripple frequency                                                            |
 | `vbat_ac_shape` |      | int   | 0       | 0 = sine (inverter), 1 = full-wave \|sin\| (rectifier load), 2 = spiky pulse; other values = sine |
-| `c_in`          | F    | float | 470e-6  | Input capacitance                                                           |
-| `c_out`         | F    | float | 470e-6  | Output capacitance                                                          |
+| `plant_c_in`    | F    | float | 470e-6  | Input capacitance of the plant; the real board's is `converter.conf::c_in`                                                           |
+| `plant_c_out`   | F    | float | 470e-6  | Output capacitance                                                          |
 | `ring_c`        | F    | float | 0       | Buck switch-node capacitance; 0 = off. Rings with the coil at f = 1/(2π·√(L0·C)) while both switches are off, see [Switch-node ring](#switch-node-ring) |
 | `ring_q`        |      | float | 20      | Quality factor of that ring (amplitude decays as e^(−πf·t/Q)), minimum 0.5  |
 | `ring_v`        | V    | float | 0       | Input voltage at which `ring_c` applies; > 0 makes the node capacitance scale as (`ring_v`/Vin)^`ring_cexp`, 0 = constant |
@@ -50,17 +50,32 @@ The file accepts the following keys.
 | `ntc_v`         | V    | float | 0.9     | Constant NTC channel voltage; 0.9 V reads about 1 °C, 1.65 V is 25 °C; `vconv set ntc_v` changes it at runtime |
 | `sun_day_s`     | s    | float | 0       | Length of the simulated day; 0 = off (static PV), minimum 1. See [Sun and clouds](#sun-and-clouds) |
 | `sun_night_s`   | s    | float | day/4   | Length of the night after each day; a negative value = `sun_day_s`/4        |
-| `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `isc`/`voc` conditions (clamped to 0..1) |
+| `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `pv_isc`/`pv_voc` conditions (clamped to 0..1) |
 | `cloud_rate`    | 1/min | float | 0      | Mean cloud starts per minute of clear sky; 0 = no clouds                    |
 | `cloud_depth`   |      | float | 0.7     | Maximum irradiance dip of a cloud (clamped to 0..1)                         |
 | `cloud_len_s`   | s    | float | 20      | Mean cloud duration (clamped to 1..600)                                     |
 | `cloud_edge_s`  | s    | float | 3       | Time constant of the cloud edges                                            |
 | `sun_seed`      |      | int   | 1       | Cloud random seed; 0 = 1                                                    |
 
+## Renamed keys
+
+Four keys were renamed so they read as what they configure and stop colliding with
+[converter.conf](converter.md)'s keys:
+
+| old key   | new key       | why                                                              |
+|-----------|---------------|------------------------------------------------------------------|
+| `isc`     | `pv_isc`      | the `pv_` family `pv_k` already used, matching converter.conf      |
+| `voc`     | `pv_voc`      | as above                                                          |
+| `c_in`    | `plant_c_in`  | the plant's capacitor, not the real board's `converter.conf::c_in` |
+| `c_out`   | `plant_c_out` | the plant's capacitor                                             |
+
+An old key without its new one stops setup and names the replacement. `vconv set` takes the new
+names too.
+
 ## Sun and clouds
 
 With `sun_day_s` > 0 the plant scales the PV curve by an irradiance G between 0 and 1, so the tracker
-sees sunrise, noon, sunset, night and passing clouds. `isc`, `voc` and `pv_k` stay the full-sun
+sees sunrise, noon, sunset, night and passing clouds. `pv_isc`, `pv_voc` and `pv_k` stay the full-sun
 values.
 
 - **Clear sky.** A day of `sun_day_s` seconds followed by a night of `sun_night_s` seconds, repeating.
@@ -71,8 +86,8 @@ values.
   an exponentially distributed time with mean `cloud_len_s`. The cloud factor follows the dip
   through a first-order low-pass with time constant `cloud_edge_s`, so edges are soft. A seeded
   random generator makes a run repeatable for one `sun_seed`.
-- **PV curve.** G = G_clear · cloud factor sets Isc = `isc` · G and
-  Voc = `voc` · (1 + 0.04 · ln G): a string loses about 4 % of its open-circuit voltage per e-fold
+- **PV curve.** G = G_clear · cloud factor sets Isc = `pv_isc` · G and
+  Voc = `pv_voc` · (1 + 0.04 · ln G): a string loses about 4 % of its open-circuit voltage per e-fold
   of irradiance. Below G = 0.001 Voc falls linearly toward zero (floors 0.1 mA and 0.5 V), so the
   night looks like a dead panel and the input undervoltage protection acts as at dusk.
 
@@ -99,7 +114,7 @@ the time of day and the effective Isc and Voc.
 
 The firmware reads `vconv.conf` once at boot. The console changes part of the plant in RAM:
 
-- `vconv set <key> <value>`: `c_in`, `c_out`, `r_bat`, `vbat_ac_amp`, `vbat_ac_freq`, `vbat_ac_shape`,
+- `vconv set <key> <value>`: `plant_c_in`, `plant_c_out`, `r_bat`, `vbat_ac_amp`, `vbat_ac_freq`, `vbat_ac_shape`,
   `diode_vf`, `ring_c`, `ring_q`, `bflow_model`, `bflow_stuck`, `hs_short`, `i_unidir`, `ntc_v`, and the
   sun and cloud keys. `vconv set l <H>` overrides the inductor.
 - `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.

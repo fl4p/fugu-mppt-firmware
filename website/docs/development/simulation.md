@@ -191,7 +191,7 @@ describes each scenario.
 | `ring-*` | Switch-node ringing in DCM: sweep, tracking, coil measurement | `== RING` |
 | `hs-*` | High-side short check | |
 | `bf-*` | Backflow switch self-test | |
-| `mc-*` | `measure-coil l0` entered from MPPT | |
+| `mc-*` | [`measure-coil l0`](../lab/coil-inductance.md#on-device-equivalent-measure-coil) entered from MPPT | |
 | `idle-wake` | Start inhibit while Vin rises | |
 | `cv-hold-*` | Two converters charging one LFP pack to the top of charge, with one BMS feed | `== CVHOLD` |
 
@@ -207,7 +207,7 @@ common ones:
 | `SIM_T`, `SIM_TR` | Run length and trace interval of weather scenarios, in seconds |
 | `SIM_V=1` | Print the firmware log in weather and shade runs |
 | `SIM_ADC_HZ` | ADC tick rate (default 450 Hz) |
-| `SIM_CONF` | Conf overrides, for example `coil.conf:L0=80e-6,vconv.conf:c_out=470e-6` |
+| `SIM_CONF` | Conf overrides, for example `coil.conf:L0=80e-6,vconv.conf:plant_c_out=470e-6` |
 | `SIM_RING`, `SIM_PLANT` | Board plant preset from `test/host-stub/plant_boards.h` (ringing, diode drop, dead time, losses), and per-field overrides. Weather scenarios default to a preset; `SIM_RING=ideal` selects the lossless `vconv_mock` plant |
 | `SIM_DRV` | Gate-driver timing, `mcpwm` or `ledc` |
 | `SIM_NOISE` | Replay sensor noise recorded on a converter (`test/host-stub/noise/*.fnz`) |

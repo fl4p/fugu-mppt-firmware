@@ -33,7 +33,7 @@ runs without any analog front end. See [Mock ADC](../development/testing.md#mock
 Build with `CONFIG_FUGU_WITH_VCONV=y` (see
 [Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware) for the ESP32-S3
 specifics), then provision `config/lab/vconv_mock`. The gate driver and ADC are replaced by a software plant
-(`src/sim/vconv.*`) configured by `vconv.conf`: a panel curve (`isc`, `voc`, `pv_k`), a battery (`v_bat`, `r_bat`),
+(`src/sim/vconv.*`) configured by `vconv.conf`: a panel curve (`pv_isc`, `pv_voc`, `pv_k`), a battery (`v_bat`, `r_bat`),
 input/output capacitance, and per-channel noise.
 
 ## Half-bridge safety

@@ -95,7 +95,7 @@
 //   SIM_DC=ta,duty,tb  wx runs: console `dc duty` at ta [s], `mppt` at tb [s]
 //   SIM_ADC_HZ=3000 /tmp/mppt-sim a             # ADC tick rate [Hz], default 450
 //   SIM_PHASE_US=500 /tmp/mppt-sim a          # a/b/c/e: plant runs n us past the event before the next ADC tick
-//   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim a   # board overrides
+//   SIM_CONF="coil.conf:L0=80e-6,vconv.conf:plant_c_out=470e-6" /tmp/mppt-sim a   # board overrides
 //   rect-cal (rectCalRt/rectCalLf wired as in main.cpp; the automatic start is off, SIM_RCAL_AUTO=1 enables it):
 //     rcal         `rect-cal force` at full power (CCM), LS body-diode drop 0.7 V, sensor noise
 //     rcal-bus     same, battery +2.5 % linear over 30 s from the start (shared bus)
@@ -693,7 +693,7 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
     if (g_simSenseHook)
         writeConf(confDir, "sensor.conf", {{"hv_v_filt_len", "20"}, {"lv_v_filt_len", "20"}, {"lv_i_filt_len", "20"}, {"hv_i_filt_len", "20"}});
     if (g_ring) writeConf(confDir, "vconv.conf", g_ring->conf(g_ringOn)); // ring_c is at the plant L, set after boot
-    // SIM_CONF="coil.conf:L0=80e-6,vconv.conf:c_out=470e-6" appends board overrides
+    // SIM_CONF="coil.conf:L0=80e-6,vconv.conf:plant_c_out=470e-6" appends board overrides
     if (const char *c = getenv("SIM_CONF")) {
         std::string all = c;
         for (size_t i = 0, j; i < all.size(); i = j + 1) {
@@ -3298,11 +3298,11 @@ static int simMain(int argc, char **argv) {
     g_liveOffset = sc.rfind("rcal", 0) != 0;
     sc = ringBoardFrom(sc);
     std::vector<std::pair<std::string, std::string>> ov;
-    if (sc == "b") ov = {{"isc", "1.6"}};
+    if (sc == "b") ov = {{"pv_isc", "1.6"}};
     if (sc == "c") ov = {{"v_bat", "28.7"}};
     if (sc == "d-noise") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     if (sc.rfind("shade", 0) == 0) {
-        ov = {{"isc", "6.5"}, {"voc", "78"}};
+        ov = {{"pv_isc", "6.5"}, {"pv_voc", "78"}};
         // shade-cv: battery near the Vout cap with inverter ripple, so the Vout limiter touches now and then
         if (sc == "shade-cv") {
             ov.insert(ov.end(), {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}});
@@ -3340,10 +3340,10 @@ static int simMain(int argc, char **argv) {
         if (sc == "bf-open" || sc == "bf-daily-fail" || sc == "bf-uni-open" || sc == "bf-flat-ccm-open") ov.push_back({"bflow_stuck", "1"});
         if (sc == "bf-closed" || sc == "bf-uni-closed" || sc == "bf-uni-offdrop" || sc == "bf-uni-soft-closed" || sc == "bf-nobat-closed")
             ov.push_back({"bflow_stuck", "2"});
-        if (sc.rfind("bf-uni-soft", 0) == 0) ov.push_back({"isc", "1.6"}); // the PV, not the duty, sets the current
+        if (sc.rfind("bf-uni-soft", 0) == 0) ov.push_back({"pv_isc", "1.6"}); // the PV, not the duty, sets the current
         if (sc.rfind("bf-uni-", 0) == 0 || sc == "hs-short-unidir" || sc == "bf-daily-uni" || sc == "bf-nobat-reconnect")
             ov.push_back({"i_unidir", "1"});
-        if (sc == "bf-uni-dcm" || sc == "bf-ok-dcm") ov.push_back({"isc", "0.5"});
+        if (sc == "bf-uni-dcm" || sc == "bf-ok-dcm") ov.push_back({"pv_isc", "0.5"});
         if (const char *e = getenv("SIM_BFSTUCK")) ov.push_back({"bflow_stuck", e});
         if (getenv("SIM_UNIDIR")) ov.push_back({"i_unidir", "1"});
         if (sc == "bf-uni-slow") c += ",sensor.conf:lv_i_filt_len=300", setenv("SIM_CONF", c.c_str(), 1);
@@ -3351,12 +3351,12 @@ static int simMain(int argc, char **argv) {
         if (sc.rfind("bf-uni-soft", 0) == 0) c += ",board.conf:pwm_freq=100000", setenv("SIM_CONF", c.c_str(), 1);
         // the switch's body diode takes 0.7 V of the drive: a bit more sun for the same live point
         if (sc.rfind("bf-flat-ccm", 0) == 0)
-            ov.insert(ov.end(), {{"isc", sc == "bf-flat-ccm-open" ? "1.9" : "1.83"}, {"voc", "69"}, {"pv_k", "0.86"}, {"v_bat", "26.2"}});
+            ov.insert(ov.end(), {{"pv_isc", sc == "bf-flat-ccm-open" ? "1.9" : "1.83"}, {"pv_voc", "69"}, {"pv_k", "0.86"}, {"v_bat", "26.2"}});
         else if (dcd)
-            ov.insert(ov.end(), {{"isc", sc.rfind("dcd-ccm", 0) == 0 ? "6" : "2.8"}, {"voc", dcdFry ? "78" : "62"},
+            ov.insert(ov.end(), {{"pv_isc", sc.rfind("dcd-ccm", 0) == 0 ? "6" : "2.8"}, {"pv_voc", dcdFry ? "78" : "62"},
                                  {"pv_k", dcdFry ? "0.86" : "0.95"}, {"v_bat", dcdFry ? "26.8" : "25.6"}});
-        else if (flatTake) ov.insert(ov.end(), {{"isc", "2.8"}, {"voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
-        if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"isc", "1.0"}});
+        else if (flatTake) ov.insert(ov.end(), {{"pv_isc", "2.8"}, {"pv_voc", "62"}, {"pv_k", "0.95"}, {"v_bat", "25.6"}});
+        if (sc == "hs-cal") ov.insert(ov.end(), {{"hs_short", "1"}, {"pv_isc", "1.0"}});
         if (sc.rfind("hs-dawn", 0) == 0) ov.push_back({"noise_iout", "0.04"});
     }
     if (sc.rfind("wx-bms-", 0) == 0) {
@@ -3372,7 +3372,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "wx-cloud-cv-ripple") ov = {{"noise_vout", "0.03"}, {"vbat_ac_amp", "0.26"}, {"vbat_ac_freq", "100"}};
     const bool rcal = sc.rfind("rcal", 0) == 0;
     if (rcal) ov = {{"noise_iout", "0.01"}, {"noise_vout", "0.005"}, {"noise_vin", "0.05"}};
-    if (sc == "rcal-flat") ov.insert(ov.end(), {{"isc", "7.5"}, {"voc", "66"}, {"v_bat", "26.7"}});
+    if (sc == "rcal-flat") ov.insert(ov.end(), {{"pv_isc", "7.5"}, {"pv_voc", "66"}, {"v_bat", "26.7"}});
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
     const bool n1 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-n1") == 0;

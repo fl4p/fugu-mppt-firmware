@@ -94,7 +94,7 @@ seconds and count `shutdown` / `Converter enabled` lines.
 ### 1.2 Output over-voltage (OV)
 - **Setup**: charging normally, then drive output sink voltage above the OV threshold. It is
   `min(ovset, Vout_max)` if an `ovset` is set. Otherwise it is
-  `min(base·(paranoia ? 1.03 : 1.5), Vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV emulator: `voc`) in
+  `min(base·(paranoia ? 1.03 : 1.5), Vout_max)`, where the base is the PSU setpoint (`psu_vout` or `psu <V>`; PV emulator: `pv_voc`) in
   PSU/PV mode and `Vbat_max` otherwise, and `paranoia` is `limits.conf::reverse_current_paranoia`
   (default 1). A bench profile with `reverse_current_paranoia=0` and a 29 V pack gives 43.5 V, not
   29.9 V. Compute it from the unit's `limits.conf`, `charger.conf`, mode and `ovset`; `status` shows

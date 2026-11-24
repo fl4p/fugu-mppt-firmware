@@ -39,7 +39,7 @@ Reproduce:
 
 ```bash
 OUT=/tmp/mppt-sim-sweep test/host-stub/mppt-sim.sh sanity   # build
-SIM_PHASE_US=0 SIM_ADC_HZ=200 SIM_CONF="coil.conf:L0=30e-6,vconv.conf:c_out=470e-6" /tmp/mppt-sim-sweep a
+SIM_PHASE_US=0 SIM_ADC_HZ=200 SIM_CONF="coil.conf:L0=30e-6,vconv.conf:plant_c_out=470e-6" /tmp/mppt-sim-sweep a
 doc/research/overshoot-vs-L/sweep.sh /tmp/mppt-sim-sweep /tmp/lsweep 32     # P=4 local; 4th arg: runner prefix
 .venv/bin/python3 doc/research/overshoot-vs-L/plot.py /tmp/lsweep/results.txt overshoot-vs-L.png
 clang++ -std=gnu++20 -O2 -I src test/host-stub/overshoot-plant.cpp src/sim/vconv.cpp -o /tmp/ovp && /tmp/ovp 30 470 sync

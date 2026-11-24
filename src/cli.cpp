@@ -2470,8 +2470,8 @@ static void cmdVconv(cmd *c) {
         float v  = cc.getArg(2).getValue().toFloat();
         auto &sun = g_vconv.sun();
         if (!std::isfinite(v)) CMD_FAIL_RETURN("vconv set: bad value");
-        if (key == "c_in")          g_vconv.setPassives(v, g_vconv.getCout(), g_vconv.getL());
-        else if (key == "c_out")    g_vconv.setPassives(g_vconv.getCin(), v, g_vconv.getL());
+        if (key == "plant_c_in")   g_vconv.setPassives(v, g_vconv.getCout(), g_vconv.getL());
+        else if (key == "plant_c_out") g_vconv.setPassives(g_vconv.getCin(), v, g_vconv.getL());
         else if (key == "l")        g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), v);
         else if (key == "r_bat")    g_vconv.setBat(g_vconv.getVbat(), v);
         else if (key == "vbat_ac_amp")  g_vconv.setBatRipple(v, g_vconv.getVbatAcFreq(), g_vconv.getVbatAcShape());

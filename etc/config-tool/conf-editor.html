@@ -999,16 +999,16 @@ const FILE_META = {
   },
   "converter.conf":{ vout_max:{unit:"V",desc:"Not read (old output voltage limit; now limits.conf lv_max in buck, hv_max in boost)",type:"float"} },
   "vconv.conf":    {
-    isc:{unit:"A",desc:"PV short-circuit current (vconv pv)",type:"float"},
-    voc:{unit:"V",desc:"PV open-circuit voltage (vconv pv)",type:"float"},
+    pv_isc:{unit:"A",desc:"PV short-circuit current (vconv pv)",type:"float"},
+    pv_voc:{unit:"V",desc:"PV open-circuit voltage (vconv pv)",type:"float"},
     pv_k:{unit:"",desc:"V_mpp / Voc (vconv pv)",type:"float"},
     v_bat:{unit:"V",desc:"Battery sink voltage (v_bat=0, r_bat=1e9 ≈ open output; vconv bat)",type:"float"},
     r_bat:{unit:"Ω",desc:"Battery series resistance (floor 1 µΩ)",type:"float"},
     vbat_ac_amp:{unit:"V",desc:"Ripple amplitude (peak) on V_bat; 0 = off",type:"float"},
     vbat_ac_freq:{unit:"Hz",desc:"Ripple frequency",type:"float"},
     vbat_ac_shape:{unit:"",desc:"Ripple shape: 0 = sine (inverter), 1 = full-wave |sin| (rectifier load), 2 = spiky pulse; other values = sine",type:"int",opts:["0","1","2"]},
-    c_in:{unit:"F",desc:"Input capacitance",type:"float"},
-    c_out:{unit:"F",desc:"Output capacitance",type:"float"},
+    plant_c_in:{unit:"F",desc:"Input capacitance of the plant; the real board's is converter.conf c_in",type:"float"},
+    plant_c_out:{unit:"F",desc:"Output capacitance",type:"float"},
     ring_c:{unit:"F",desc:"Buck switch-node capacitance, rings with the coil while both switches are off; 0 = off",type:"float"},
     ring_q:{unit:"",desc:"Quality factor of the switch-node ring, minimum 0.5",type:"float"},
     ring_v:{unit:"V",desc:"Input voltage at which ring_c applies; > 0 scales the node capacitance as (ring_v/Vin)^ring_cexp, 0 = constant",type:"float"},
@@ -1066,9 +1066,9 @@ const SVC_OFF_WARN = {
 const APPLY_NOTE = {"ftp.conf:ftp_user":"ignored while ftp_user is stored in NVS", "ftp.conf:ftp_pass":"ignored while ftp_pass is stored in NVS",
   "lcd.conf:addr":"only while no display has been found"};
 // vconv.conf is read at boot; these keys also change in RAM with a console command
-for (const [cmd, keys] of [["vconv set", "c_in c_out r_bat vbat_ac_amp vbat_ac_freq vbat_ac_shape diode_vf ring_c ring_q bflow_model bflow_stuck "+
+for (const [cmd, keys] of [["vconv set", "plant_c_in plant_c_out r_bat vbat_ac_amp vbat_ac_freq vbat_ac_shape diode_vf ring_c ring_q bflow_model bflow_stuck "+
     "hs_short i_unidir ntc_v sun_day_s sun_night_s sun_peak cloud_rate cloud_depth cloud_len_s cloud_edge_s sun_seed"],
-    ["vconv pv", "isc voc pv_k"], ["vconv bat", "v_bat"]])
+    ["vconv pv", "pv_isc pv_voc pv_k"], ["vconv bat", "v_bat"]])
   for (const k of keys.split(" ")) APPLY_NOTE["vconv.conf:"+k] = `or now with ${cmd}, RAM only`;
 
 // tracker.conf target_duty_cycle set (absent = MPPT; outside [0,1] ignored) boots manual PWM and ignores converter.conf mode
@@ -1202,11 +1202,11 @@ const FILE_KEYS = {
   "ble.conf":["ble_passkey","ble_security","enabled","idle_adv_ms","log_level","pair_window_s"],
   "pprof.conf":["sprofiler_hz"],
   "wifi.conf":["improv_offline_s","switch_delay"],
-  "vconv.conf":["adc_freq","bflow_model","bflow_stuck","c_in","c_out","cloud_depth","cloud_edge_s",
-    "cloud_len_s","cloud_rate","diode_vf","hs_short","i_unidir","isc","noise_iin","noise_iout",
+  "vconv.conf":["adc_freq","bflow_model","bflow_stuck","plant_c_in","plant_c_out","cloud_depth","cloud_edge_s",
+    "cloud_len_s","cloud_rate","diode_vf","hs_short","i_unidir","pv_isc","noise_iin","noise_iout",
     "noise_ntc","noise_vin","noise_vout","ntc_v","pv_k","pwm_clk","r_bat","r_hs","r_ls","ring_c",
     "ring_cexp","ring_ct","ring_q","ring_v","sun_day_s","sun_night_s","sun_peak","sun_seed",
-    "t_dead","t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","vbat_ac_shape","voc"],
+    "t_dead","t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","vbat_ac_shape","pv_voc"],
 };
 // SCRAPER:END FILE_KEYS
 
@@ -1239,10 +1239,10 @@ const TYPE_KEYS = {
     "rect_offset_ns","sweep_pace","sweep_speed","sweep_verify","sync_phase_deg","sync_phase_ns",
     "tail_c_rate","target_duty_cycle","temp_derate","temp_max","vin_min","vout_max",
     "vout_max_fallback","vout_offset_max","wire_dr_min","wire_p_derate","wire_p_trip",
-    "wire_p_warn","wire_r_max","scan_near_v","c_out","cloud_depth","cloud_edge_s","cloud_len_s",
-    "cloud_rate","diode_vf","isc","noise_iin","noise_iout","noise_ntc","noise_vin","noise_vout","ntc_v",
+    "wire_p_warn","wire_r_max","scan_near_v","plant_c_out","plant_c_in","cloud_depth","cloud_edge_s","cloud_len_s",
+    "cloud_rate","diode_vf","noise_iin","noise_iout","noise_ntc","noise_vin","noise_vout","ntc_v",
     "r_bat","r_hs","r_ls","ring_c","ring_cexp","ring_ct","ring_q","ring_v","sun_day_s","sun_night_s",
-    "sun_peak","t_dead","t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","voc"]),
+    "sun_peak","t_dead","t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq"]),
   string: new Set(["adc","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ble_security",
     "broker_uri","bssid","ca_file","cell_voltages_delta_topic","cell_voltages_max_topic",
     "ftp_pass","ftp_user","ibat_lim_topic","ibat_topic","influxdb_host","log_level","mcu","mode",
@@ -1318,20 +1318,20 @@ const DEFAULTS = {
   // wifi.conf
   "improv_offline_s":"600","switch_delay":"30",
   // vconv.conf
-  "bflow_model":"0","bflow_stuck":"0","c_out":"0.00047","cloud_depth":"0.7","cloud_edge_s":"3.0",
+  "bflow_model":"0","bflow_stuck":"0","plant_c_out":"0.00047","cloud_depth":"0.7","cloud_edge_s":"3.0",
   "cloud_len_s":"20.0","cloud_rate":"0.0","diode_vf":"0.0","hs_short":"0","i_unidir":"0",
-  "isc":"8.0","noise_iin":"0.0","noise_iout":"0.0","noise_ntc":"0.0","noise_vin":"0.0",
+  "pv_isc":"8.0","noise_iin":"0.0","noise_iout":"0.0","noise_ntc":"0.0","noise_vin":"0.0",
   "noise_vout":"0.0","pwm_clk":"0","r_bat":"0.05","r_hs":"0.0","r_ls":"0.0","ring_c":"0.0",
   "ring_cexp":"0.6","ring_ct":"1.0","ring_q":"20.0","ring_v":"0.0","sun_day_s":"0.0",
   "sun_night_s":"-1.0","sun_peak":"1.0","sun_seed":"1","t_dead":"0.0","t_hs_ext":"0.0","t_sw":"0.0",
-  "v_bat":"28.0","vbat_ac_amp":"0.0","vbat_ac_freq":"100.0","vbat_ac_shape":"0","voc":"40.0",
+  "v_bat":"28.0","vbat_ac_amp":"0.0","vbat_ac_freq":"100.0","vbat_ac_shape":"0","pv_voc":"40.0",
 };
 // SCRAPER:END DEFAULTS
 const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };
 
 // defaults the flat DEFAULTS table can't hold: per-file values, and a "" read whose effect is a named mode
 const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "converter.conf|mode":"\"mppt\"",
-  "converter.conf|c_in":"0.001", "vconv.conf|c_in":"0.00047", "vconv.conf|ntc_v":"0.9"};
+  "converter.conf|c_in":"0.001", "vconv.conf|plant_c_in":"0.00047", "vconv.conf|ntc_v":"0.9"};
 function lookupDefault(file, key){
   const base = file.split("/").pop(), fd = FILE_DEFAULTS[base+"|"+key];
   if (fd!==undefined) return fd;

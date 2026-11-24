@@ -82,8 +82,8 @@ static void configureVirtualConverter() {
     if (!vc) {
         ESP_LOGW("vconv", "no vconv.conf found, using defaults");
     }
-    float isc = vc.f("isc", 8.0f);
-    float voc = vc.f("voc", 40.0f);
+    float isc = vc.f("pv_isc", 8.0f);
+    float voc = vc.f("pv_voc", 40.0f);
     float k   = vc.f("pv_k", 0.8f);
     g_vconv.setPv(isc, voc, k);
     auto &sun = g_vconv.sun();
@@ -104,19 +104,20 @@ static void configureVirtualConverter() {
 
     ConfFile coil{"/littlefs/conf/coil.conf"};
     float L0 = coil.f("L0", 50e-6f);
-    g_vconv.setPassives(vc.f("c_in", 470e-6f), vc.f("c_out", 470e-6f), L0);
+    g_vconv.setPassives(vc.f("plant_c_in", 470e-6f), vc.f("plant_c_out", 470e-6f), L0);
     g_vconv.setRing(vc.f("ring_c", 0.0f), vc.f("ring_q", 20.0f));
     g_vconv.setRingNode(vc.f("ring_v", 0.0f), vc.f("ring_cexp", 0.6f), vc.f("ring_ct", 1.0f));
     g_vconv.setDiodeVf(vc.f("diode_vf", 0.0f));
     g_vconv.setSwitching(vc.f("t_dead", 0.0f), vc.f("t_hs_ext", 0.0f), vc.f("r_hs", 0.0f), vc.f("r_ls", 0.0f),
                          vc.f("t_sw", 0.0f));
     g_vconv.setPwmClk((uint32_t) vc.getLong("pwm_clk", 0));
-    // bf_model/bf_stuck were renamed to bflow_*; an old key alone fails setup
-    for (auto k: {"model", "stuck"}) {
-        const std::string o = std::string("bf_") + k, n = std::string("bflow_") + k;
+    // renamed vconv.conf keys: an old key alone fails setup, naming its replacement
+    for (auto [o, n]: {std::pair{"bf_model", "bflow_model"}, {"bf_stuck", "bflow_stuck"},
+                       {"isc", "pv_isc"}, {"voc", "pv_voc"},
+                       {"c_in", "plant_c_in"}, {"c_out", "plant_c_out"}}) {
         if (!vc.has(o)) continue;
-        if (!vc.has(n)) throw std::runtime_error("vconv.conf: " + o + " was renamed to " + n);
-        ESP_LOGW("vconv", "vconv.conf: %s ignored, %s is set; remove %s", o.c_str(), n.c_str(), o.c_str());
+        if (!vc.has(n)) throw std::runtime_error(std::string("vconv.conf: ") + o + " was renamed to " + n);
+        ESP_LOGW("vconv", "vconv.conf: %s ignored, %s is set; remove %s", o, n, o);
     }
     g_vconv.bfModel = vc.getByte("bflow_model", 0);
     g_vconv.bfStuck = vc.getByte("bflow_stuck", 0);

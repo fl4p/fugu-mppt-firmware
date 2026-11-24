@@ -128,8 +128,8 @@ the SynchronousConverter so it can read PWM counts each tick.
 
 New vconv.conf (lives in board configs alongside coil.conf etc.):
 # PV source
-isc=8.0
-voc=40.0
+pv_isc=8.0
+pv_voc=40.0
 pv_k=2.0          # diode ideality * Vt, controls MPP sharpness
 
 # Battery sink
@@ -137,8 +137,8 @@ v_bat=28.0
 r_bat=0.05        # small R for stiffness
 
 # Passives (L comes from coil.conf::L0)
-c_in=470e-6
-c_out=470e-6
+plant_c_in=470e-6
+plant_c_out=470e-6
 
 Plus a vconv console command for runtime tweaks (mirrors set-config style):
 vconv pv <isc> <voc> [k]
