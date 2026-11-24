@@ -106,6 +106,6 @@ These resources cover converter control and related topics:
 - [Microchip PowerSmart DCLD](https://microchip-pic-avr-tools.github.io/powersmart-dcld/)
 - [MDPI Electronics 13(16):3207](https://www.mdpi.com/2079-9292/13/16/3207)
 - [Microchip DPSK3 buck voltage-mode control](https://microchip-pic-avr-examples.github.io/dpsk3-power-buck-voltage-mode-control/a01655.html)
-- [PID auto tuning (video)](https://www.youtube.com/watch?v=fv6dLTEvl74)
+- [PID controller explained (video)](https://www.youtube.com/watch?v=fv6dLTEvl74)
 - [DC/DC control (video)](https://www.youtube.com/watch?v=6brnVTfCp7A)
 - Search term: "voltage regulator control loop design"

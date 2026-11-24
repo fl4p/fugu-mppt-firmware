@@ -32,8 +32,9 @@ Highlights:
 * LCD (hd44780) and WS2812B RGB LED driver
 * [Configuration files](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/config/) on flash file system (littlefs)
 * [Console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/) over serial, telnet, BLE and MQTT
-* [OTA updates](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/updating/ota-wifi/) over Wi-Fi or BLE, with rollback to the previous image
-* BLE: console, [telemetry](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#ble-telemetry-stream) and Wi-Fi setup ([Improv](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/connecting/#improv-over-ble))
+* OTA updates over [Wi-Fi](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/updating/ota-wifi/) or [BLE](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/updating/ota-ble/), with rollback to the
+  previous image (needs a serial-flashed bootloader with rollback support)
+* BLE: console, [telemetry](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/telemetry/#ble-telemetry-stream) (opt-in build option) and Wi-Fi setup ([Improv](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/connecting/#improv-over-ble))
 * Backflow switch [self-test](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#backflow-switch-test) and
   [high-side short](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/protection/#high-side-short-check) detection
 * [MQTT](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/mqtt/) support to communicate with the [BMS](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/charging/bms-integration/) and
@@ -52,7 +53,7 @@ rebuild the firmware.
 Access files through FTP or USB Mass Storage Class (MSC, ESP32-S3).
 I tried to structure components in classes, so they reflect the physical and logical building-blocks of a MPPT solar
 charger.
-See [Voltage & Current Sensors, ADC](#voltage--current-sensors-adc (ADC))
+See [Voltage & Current Sensors, ADC](#voltage--current-sensors-adc)
 Feel free to use parts of the code.
 
 # Reference Hardware
@@ -182,9 +183,9 @@ If Wi-Fi connection is successful you will be able to connect with telnet and FT
 You can send the same commands over telnet as over the [Serial console](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/console/).
 
 Use FTP or the [config editor](https://fl4p.github.io/fugu-mppt-firmware/tools/conf-editor.html) to change the
-configuration files (IO pins, ADC, converter topology). The FTP server takes two sessions; passive mode uses
-[`ftp.conf`](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/config/ftp/)`::pasv_port` (default 50009) and the port after it. Set `ftp_user` and
-`ftp_pass`, because the fallback password is the chip ID.
+configuration files (IO pins, ADC, converter topology). The FTP server accepts up to two sessions; passive
+mode uses [`ftp.conf`](https://fl4p.github.io/fugu-mppt-firmware/docs/reference/config/ftp/)`::pasv_port` (default 50009) and the port after it.
+Set `ftp_user` and `ftp_pass` in `ftp.conf`, because the fallback password is the chip ID.
 
 # Control Loop
 
@@ -277,8 +278,6 @@ can significantly reduce overall efficiency.
 
 # Synchronous Buck and Diode Emulation
 
-Details: [Diode emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation/)
-
 We can leave the Low-Side (LS, aka *sync-FET*, *synchronous rectifier*) switch off and the coil discharge current will
 flow through the LS MOSFET´s body diode.
 The buck converter then operates in non-synchronous mode with reduced conversion efficiency since the mosfet body diode
@@ -298,6 +297,7 @@ modelled using a constant -5% inductance drop, which appears to be reasonably ac
 noticeable during operation near the CCM/DCM transition point, and it usually causes the rectification switch to turn
 off too early. If you experience reverse inductor current, decrease `L0` value.
 A more accurate model would use the DC-bias curve from the core material's datasheet.
+See [Diode Emulation](https://fl4p.github.io/fugu-mppt-firmware/docs/internals/diode-emulation/) for more details and formulae.
 
 For additional safety the low-side duty cycle is slowly faded to its maximum value. As soon as we detect reverse
 current (which might also be noise), we decrease the LS switch duty cycle and slowly recover.
@@ -315,19 +315,22 @@ current (which might also be noise), we decrease the LS switch duty cycle and sl
 
 # Not implemented / TODO
 
-* Learn the converter's start duty cycle (the minimum duty where Vout or Iout rises)
-* Two or more interleaved channels
-* LCD buttons
-* Modbus / serial interface
-* Lead-acid and AGM charging
-  ([example](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
-* Self-test for a shorted LS switch (backflow switch and HS short are covered)
+* learn converter start duty cycle, converter self test * Calibration
+    * find pwm min duty (vout > 0 or iout > 0)
+* 2nd and more (interleaved) channels
+* LCD Buttons
+* Serial / Modbus interface
+* Acid Lead, AGM charging
+  algorithm ([1](https://github.com/RedCommissary/mppt-charger-firmware/blob/c0dba8700d3baff1d13a86c43f5ce570b15e01af/source/application/inc/Battery.hpp#L27))
+* Detect short LS (implement self-test), see libre-solar firmware
+* low current, low voltage drop -> disable bf (might sense phantom current due to temperature drift)
 
-## Known issues
+## Issues
 
-* `IoutCTRL` and `PowerCTRL` work on the wrong side of the MPP in an overload: lowering the duty cycle raises the
-  solar voltage and with it the converted power. Power then rises until it hits the hard limits, shuts down
-  and recovers. This is a transient and should not damage the hardware
+* There is a design issue with `IoutCTRL` and `PowerCTRL`. In an over-load situation, the controllers will
+  decrease duty-cycle, which can increase solar voltage, thus increase conversion power. In this case the converter will
+  increases power until it runs into the hard
+  limits, shuts down and recovers. Because this is a transient situation, it should not cause any damage to hardware
   ([#70](https://github.com/fl4p/fugu-mppt-firmware/issues/70)).
 
 # BMS Communication
@@ -342,16 +345,17 @@ cut-off. This avoids voltage transients, improves cell balancing time and avoids
 
 # Using this Firmware
 
-I use this firmware on a couple of Fugu devices in a real-world application. Each device is connected to
+I am currently using this firmware on a couple of Fugu Devices in a real-world application. Each device is connected to
 2s 410WP solar panels, charging a 24V LiFePo4 battery. They produce more than 4 kWh on sunny days.
 
-The software is in daily use. Filter settings and control loop speed depend on the quality of the measurements (noise,
-outliers) and may need tuning per board; the inverter-ripple notch tunes itself.
+I'd consider the current state of this software as usable. ADC filtering and control loop speed depend on the quality of
+measurements (noise, outliers) and need to be
+adjusted manually, except the inverter-ripple notch, which tunes itself.
 
 Sensor noise increases with power, so we can slow down the control loop to ensure a steady output. Otherwise, the
 converter might repeatedly detect over-voltage or over-current and shut down, wasting solar energy. A slow control loop
-however causes higher voltage transients during load changes (e.g. BMS battery cut-off) which can be dangerous for
-devices.
+however causes higher voltage
+transients during load changes (e.g. BMS battery cut-off) which can be dangerous for devices.
 
 If the battery or load is removed during power conversion expect an over-voltage transient at the output.
 With a battery voltage of 28.5V, I measured 36V for 400ms. See
