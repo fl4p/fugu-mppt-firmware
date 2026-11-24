@@ -213,7 +213,7 @@ struct PhysicalSensor : public Sensor {
     void createNotchFilter(float fs, float f0Hz, float Q, float amp, uint8_t mode, float fLo, float fHi) {
         notchFs = fs;
         const bool c = comb && RippleComb<24>::fits(fs / fLo) && RippleComb<24>::fits(fs / fHi);
-        if (!c) delete comb, comb = nullptr;
+        if (!c) delete comb, comb = nullptr; // one free in begin() (RT task startup, fs known only here), never in the loop
         notchOn = (mode & 1) || !c;
         retuneNotch(f0Hz, Q, amp);
         ESP_LOGI("sampling", "%s %s%s fs=%.1fHz f0=%.1fHz Q=%.0f", params.teleName.c_str(), notchOn ? "notch" : "",

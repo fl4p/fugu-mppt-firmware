@@ -815,7 +815,7 @@ const META = {
   notch_freq:{unit:"Hz",desc:"Notch frequency when not adaptive (2x mains: 100=50Hz, 120=60Hz)",type:"float"},
   notch_q:{unit:"",desc:"Notch quality factor (bandwidth ~ notch_freq/notch_q)",type:"float"},
   notch_depth:{unit:"dB",desc:"Notch attenuation at its centre (<= 0)",type:"float"},
-  ripple_filter:{unit:"",desc:"Inverter-ripple filter: notch (narrow biquad), comb (moving average over one ripple period: nulls the harmonics too, unbiased, ~5 ms delay) or both",type:"enum",opts:["notch","comb","both"]},
+  ripple_filter:{unit:"",desc:"Inverter-ripple filter: notch (narrow biquad), comb (moving average over one ripple period: also attenuates the harmonics, ~5 ms delay) or both",type:"enum",opts:["notch","comb","both"]},
   despike:{unit:"",desc:"Glitch-safe median outlier threshold (mean-dev units): 0=off, ~8 enables. Passes dense load pulses (unbiased current), still clips impulse glitches (only beyond 4 quantization steps). Not applied to the NTC",type:"float"},
   esp32adc1_sr:{unit:"Hz",desc:"Internal ADC1 continuous-mode raw sample rate",type:"int"},
   esp32adc1_avg:{unit:"",desc:"Internal ADC1 hardware averaging count per sample",type:"int"},

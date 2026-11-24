@@ -128,7 +128,8 @@ An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 
 corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
 notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
 The notch is 15 dB deep at its centre (`notch_depth`). With Q 20 it is narrow: at 100 Hz it attenuates 6 dB at
-1 Hz off and 2.5 dB at 2 Hz off, whatever the depth, and it passes the ripple's harmonics.
+1 Hz off and 2.5 dB at 2 Hz off (at 450 sps, nearly independent of the depth), and it passes the ripple's
+harmonics.
 
 - Gain at the notch frequency: −15 dB (fixed).
 - Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).
@@ -159,18 +160,25 @@ back are 1/2, 1, …, 1, 1/2 + a − a²/2 and a²/2, all divided by L. The taps
 
 Properties:
 
-- It has a zero at the ripple frequency and deep zeros at its harmonics while they stay below fs/2. A harmonic that
-  aliases (3f at 450 sps lands at 150 Hz) is attenuated less.
-- The group delay is L/2 samples, half a ripple period (5 ms at 100 Hz), on the filtered values only. Protection
-  reads the raw sample.
-- A step settles within one period.
+- Rejection at the ripple frequency and its harmonics below fs/2 is deep but finite (exact zeros only for an integer
+  L); see the table below. A harmonic that aliases (3f at 450 sps lands at 150 Hz) is attenuated less.
+- The delay at DC and low frequencies is L/2 samples, half a ripple period (5 ms at 100 Hz). With a fractional L the
+  taps are not symmetric, so the delay rises somewhat towards the ripple frequency.
+- A step completes after ceil(L) samples, up to one sample longer than a period. The tracker's settling and sweep
+  delay estimates include the comb.
 - It runs in O(1) per sample: a running sum, re-summed once per buffer turn to bound rounding drift.
-- Every sample enters a 24-sample ring, so a retune only moves the window end over samples that are already there.
-  Neither a frequency change nor a change of N causes a step.
+- Every sample enters a 24-sample ring, which keeps its history over a retune. A frequency change or a change of N
+  causes no reset transient, but the output can still step because the window weights change.
+
+The comb delays everything read from the median or EWM. These protections read raw samples and are not delayed:
+the Vout over-voltage trip, the 1.5× Iout trip, the instantaneous reverse-current check (two raw samples) and the
+Vout > 2·Vin trip. These read filtered values, so the comb's delay and its spreading of current spikes apply to them:
+the lower Iout trips (median above 1.25×, EWM above 1.15× the limit), the reverse average-current trip, the
+Vout > 1.25·Vin check and the short-circuit check.
 
 The comb follows the same frequency as the notch (`notch_adaptive`, `notch_freq`). A channel whose period does not fit
-the ring (L above 22 samples, for example fs above about 1.7 kHz with the adaptive 80 Hz lower bound) or is shorter
-than 2 samples keeps the notch. `ripple_filter=both` runs the notch and then the comb.
+the ring keeps the notch. The comb needs 2 ≤ L < 23 samples; with adaptive tuning over 80–140 Hz that is
+280 sps ≤ fs < 1840 sps. `ripple_filter=both` runs the notch and then the comb.
 
 Attenuation of the comb (adaptive tuning on the ripple), next to the notch:
 
@@ -179,7 +187,7 @@ Attenuation of the comb (adaptive tuning on the ripple), next to the notch:
 | 450 | 100 Hz | −46 dB | −40 dB | −35 dB | −27 dB | −28 dB | −17 dB |
 | 513 | 100 Hz | −52 dB | −39 dB | −34 dB | −27 dB | −39 dB | −29 dB |
 | 1470 | 100 Hz | −78 dB | −40 dB | −34 dB | −26 dB | −66 dB | −58 dB |
-| notch, any fs | 100 Hz | −15 dB | −6 dB | −2.5 dB | −0.5 dB | 0 dB | 0 dB |
+| notch, 450 sps | 100 Hz | −15 dB | −6 dB | −2.5 dB | −0.5 dB | 0 dB | 0 dB |
 
 A comb ahead of the median also keeps the mean of a pulsed current: the median of an unfiltered pulse train or of
 leftover harmonics reads low.
