@@ -103,6 +103,7 @@ function firmware(host, opts = {}) {
         if (st.bfAbort) st.lastBf = ['selftest bflow blocks: ABORTED I=0.80 A (min 0.10) Vin=36.10 Vout=26.80 D=0.7300 dV=0.45', 'selftest bflow: aborted'];
         else if (opts.bfFail) { st.bfLatched = true; s('\x1b[0;31mE (6000) selftest: backflow switch FAILED (blocks F, conducts -): start blocked until `selftest clear`\x1b[0m');
           st.lastBf = ['selftest bflow blocks: FAIL I=-0.45 A (min -0.52) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17 (reverse current)']; }
+        else if (opts.bfLines) st.lastBf = opts.bfLines;
         else st.lastBf = ['selftest bflow blocks: PASS I=0.40 A (min 0.05) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17',
           'selftest bflow conducts: PASS I=-0.62 A (min -0.62) Vin=36.10 Vout=26.80 D=0.7200 dV=0.80 (reverse current)'];
         st.lastBf.forEach(x => s(x));

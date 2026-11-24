@@ -60,7 +60,8 @@ test('parsers: help, selftest, backflow verdicts, coil, rect-cal status, sweep-c
   const fail = window.parseBflow(['selftest bflow blocks: FAIL I=-0.45 A (min -0.52) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17 (reverse current)']);
   assert.equal(fail.cls, 'fail'); assert.match(fail.text, /FAIL in blocks/);
   const ab = window.parseBflow(['selftest bflow toggle: ABORTED', 'selftest bflow: Vin dropped']);
-  assert.equal(ab.cls, 'warn'); assert.match(ab.text, /No verdict: Vin dropped/);
+  assert.equal(ab.cls, 'warn'); assert.equal(ab.text, 'No verdict: toggle check stopped');
+  assert.deepEqual([...ab.details], ['Toggle: stopped', 'The input voltage dropped during the check (less light).']);
   assert.equal(window.parseBflow(['selftest bflow: started, usually 10-30 s']), null, 'the start line is no result');
 
   const c = window.parseCoil(['measure-coil: L = 50.34 uH  (median of 9 DCM pts, Iout>=0.15A; ring not resolved: too few points, expect up to +-5%)',
@@ -340,9 +341,70 @@ test('backflow switch test: typed device name, live power in the prompt, live ou
   const res = card(window, 'bflow').querySelector('.tst-res');
   assert.ok(res.classList.contains('pass'));
   assert.match(res.textContent, /Backflow switch PASS \(blocks, conducts\)/);
-  assert.match(res.textContent, /conducts: PASS I=-0\.62 A/);
+  assert.match(res.textContent, /Conducts: passed \(−0\.62 A reverse current\)/);
+  assert.doesNotMatch(res.textContent, /PASS I=/, 'no raw firmware line in the summary');
   assert.equal(card(window, 'bflow').querySelector('.abort').hidden, true);
   assert.equal(window.tstBusyNow(), false);
+});
+
+test('backflow switch results in plain words: no verdict with an unreached phase, PASS/PASS, FAIL', async () => {
+  const { window } = await loadEditor();
+  const nv = window.parseBflow([
+    'selftest bflow blocks: PASS I=0.00 A (min -0.05) Vin=68.71 Vout=26.41 D=0.3697 dV=1.00',
+    'selftest bflow conducts: ABORTED I=0.00 A (min 0.00) Vin=0.00 Vout=0.00 D=0.0000 dV=0.00',
+    'selftest bflow: no CCM forward current at the duty cap']);
+  assert.equal(nv.cls, 'warn');
+  assert.equal(nv.text, 'No verdict: switch-on check not reached');
+  assert.deepEqual([...nv.details], ['Blocks: passed (0.00 A at D 0.370, Vin 68.7 V)', 'Conducts: not reached',
+    'The converter stayed in DCM up to the duty it was running at, so the switch-on check could not start. Nothing is wrong; it usually passes at lower power or Vin.']);
+  assert.doesNotMatch(nv.details.join(' '), /0\.00 V|D 0\.000|Vin=/, 'no zeros of a phase that never measured, no raw lines');
+
+  const pp = window.parseBflow(['selftest bflow blocks: PASS I=0.40 A (min 0.05) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17',
+    'selftest bflow conducts: PASS I=-0.51 A (min -0.51) Vin=36.10 Vout=26.80 D=0.7200 dV=0.80 (reverse current)']);
+  assert.equal(pp.cls, 'pass'); assert.equal(pp.text, 'Backflow switch PASS (blocks, conducts)');
+  assert.deepEqual([...pp.details], ['Blocks: passed (0.40 A at D 0.710, Vin 36.1 V)', 'Conducts: passed (−0.51 A reverse current)']);
+
+  const f = window.parseBflow(['selftest bflow blocks: FAIL I=-0.45 A (min -0.52) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17 (reverse current)']);
+  assert.equal(f.cls, 'fail'); assert.match(f.text, /^Backflow switch FAIL in blocks: every start is blocked/);
+  assert.deepEqual([...f.details], ['Blocks: FAILED: reverse current −0.45 A through the open switch at D 0.710, Vin 36.1 V, Vout 26.8 V']);
+  const fc = window.parseBflow(['selftest bflow blocks: PASS I=0.40 A (min 0.05) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17',
+    'selftest bflow conducts: FAIL I=0.30 A (min 0.02) Vin=36.10 Vout=26.80 D=0.6000 dV=1.10']);
+  assert.equal(fc.cls, 'fail'); assert.match(fc.text, /FAIL in conducts/);
+  assert.equal(fc.details[1], 'Conducts: FAILED: no reverse current (min 0.02 A) through the closed switch at D 0.600, Vin 36.1 V, Vout 26.8 V');
+
+  const unk = window.parseBflow(['selftest bflow blocks: ABORTED I=0.80 A (min 0.10) Vin=36.10 Vout=26.80 D=0.7300 dV=0.45', 'selftest bflow: something new']);
+  assert.equal(unk.text, 'No verdict: switch-off check stopped');
+  assert.deepEqual([...unk.details], ['Blocks: stopped (0.80 A at D 0.730, Vin 36.1 V)', 'Reason: something new'], 'unknown reasons pass through');
+  assert.equal(window.parseBflow(['selftest bflow: take-over timed out']).text, 'No verdict: no check ran');
+  const mr = window.parseBflow([...pp.details.length ? ['selftest bflow: mode restore timed out'] : [],
+    'selftest bflow blocks: PASS I=0.40 A (min 0.05) Vin=36.10 Vout=26.80 D=0.7100 dV=1.17',
+    'selftest bflow conducts: PASS I=-0.51 A (min -0.51) Vin=36.10 Vout=26.80 D=0.7200 dV=0.80 (reverse current)']);
+  assert.equal(mr.cls, 'pass'); assert.match(mr.details[2], /not confirmed back/);
+
+  const st = window.tstSummary('selftest', ['hs-short: ok', 'bflow: ok; last run P/A 0.1 h ago; blocks pass 0.1 h ago (verified)',
+    'selftest bflow blocks: PASS I=0.00 A (min -0.05) Vin=68.71 Vout=26.41 D=0.3697 dV=1.00',
+    'selftest bflow conducts: ABORTED I=0.00 A (min 0.00) Vin=0.00 Vout=0.00 D=0.0000 dV=0.00',
+    'selftest bflow: no CCM forward current at the duty cap']);
+  assert.ok(st.details.includes('last run blocks: passed (0.00 A at D 0.370, Vin 68.7 V)'));
+  assert.ok(st.details.includes('last run conducts: not reached'));
+});
+
+test('backflow switch card: a no-verdict run shows plain phase lines, the raw lines stay in the device output', async () => {
+  const bfLines = ['selftest bflow blocks: PASS I=0.00 A (min -0.05) Vin=68.71 Vout=26.41 D=0.3697 dV=1.00',
+    'selftest bflow conducts: ABORTED I=0.00 A (min 0.00) Vin=0.00 Vout=0.00 D=0.0000 dV=0.00',
+    'selftest bflow: no CCM forward current at the duty cap'];
+  const { window } = await connected({ bfLines });
+  await openSheet(window); await idle(window);
+  window.prompt = () => 'fry';
+  await window.tstStart('bflow');
+  const c = card(window, 'bflow'), res = c.querySelector('.tst-res');
+  assert.ok(res.classList.contains('warn'));
+  assert.equal(res.querySelector('strong').textContent, 'No verdict: switch-on check not reached');
+  assert.match(res.textContent, /Blocks: passed \(0\.00 A at D 0\.370, Vin 68\.7 V\)/);
+  assert.match(res.textContent, /Conducts: not reached/);
+  assert.match(res.textContent, /stayed in DCM up to the duty it was running at/);
+  assert.doesNotMatch(res.textContent, /ABORTED|Vin=0\.00/);
+  assert.match(c.querySelector('.tst-out').textContent, /conducts: ABORTED I=0\.00 A \(min 0\.00\) Vin=0\.00/);
 });
 
 test('a refusal is shown verbatim and nothing else is sent', async () => {

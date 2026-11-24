@@ -460,7 +460,9 @@ firmware has an abort command (`measure-coil` has none). Folding a running entry
 
 - the latched faults and the backflow switch state, with this boot's last test verdicts;
 - backflow switch PASS, or FAIL with the failing phase (every start stays blocked until the latch is cleared), or no
-  verdict with the reason the test stopped;
+  verdict naming the check that did not finish. One line per phase follows, for example "Blocks: passed (0.00 A at
+  D 0.370, Vin 68.7 V)" or "Conducts: not reached" for a phase that never measured, then the firmware's reason as a
+  sentence (an unknown reason is shown as printed). The raw lines stay under **Device output**;
 - the coil inductance in µH with its fit and error estimate, or the reason there is no result;
 - the calibrated low-side offset, or the reason the calibration failed;
 - the maximum power point of the sweep, with its power-over-voltage curve.

@@ -3893,28 +3893,72 @@ function parseSelftest(lines){
   return r.hs!==null || r.bf!==null ? r : null;
 }
 
-// Verdict lines of a backflow switch run (bfTestPrint), the last one per phase.
+// abortRun / s.why reasons of src/selftest/bflow_test.cpp in plain words; {c}: the check that stopped
+const BF_WHY = {
+  "no CCM forward current at the duty cap":"The converter stayed in DCM up to the duty it was running at, so {c} could not start. Nothing is wrong; it usually passes at lower power or Vin.",
+  "DCM at engage":"The converter dropped back into DCM as {c} was about to start. Nothing is wrong; it usually passes at lower power or Vin.",
+  aborted:"Aborted on request.",
+  protection:"A protection limit stopped the converter.",
+  "protection or a NaN current":"A protection limit stopped the converter, or the current reading was invalid.",
+  "NaN reading":"A current or voltage reading was invalid.",
+  "Vin dropped":"The input voltage dropped during the check (less light).",
+  "Vin collapsed":"The input voltage collapsed during the check.",
+  "source or load changed":"The panel power or the load changed during the check, so the readings did not agree.",
+  "forward current lost":"The forward current dropped out while the switch toggled.",
+  "D Vin below Vout":"The duty fell to where reverse current could flow, so the check stopped.",
+  "Vin rose: energy from the output":"The input voltage rose: energy came back from the output, so the check stopped.",
+  "RT stop":"The control loop stopped the check.",
+  "no battery, but current flows":"No battery was detected, yet output current flowed.",
+  "no battery, but BMS data arrived":"No battery was detected at the start, but BMS data arrived during the check.",
+  "Vout pumped up":"Without a battery the output charged up beyond what the check can drive.",
+  "Vout does not follow the duty: a battery?":"The output voltage did not follow the duty: a battery may be connected after all.",
+  "Vout not proven":"Without a battery the output voltage could not be confirmed.",
+  "mode changed":"The operating mode was changed during the check.",
+  "hs-short latched":"A high-side short was latched during the check.",
+  "BF still on":"The backflow switch did not turn off within 1 s.",
+  "start refused":"The converter refused to start.",
+  "ramp timed out":"The duty ramp did not reach its target within 5 s.",
+  "take-over timed out":"The converter did not stop for the test within 10 s.",
+  "converter did not stop":"The converter did not stop within 2 s after the check.",
+  "Vout implausible":"The output voltage is implausible (no battery, or Vbat_max unknown).",
+  "Vin too low (needs >= 1.2 Vout and Vout + 3 V)":"The input voltage is too low: the check needs at least 1.2 × Vout and Vout + 3 V.",
+  "mode restore timed out":"The previous operating mode was not confirmed back within 2 s.",
+};
+const BF_CHECK = { blocks:"the switch-off check", conducts:"the switch-on check" };
+// Verdict lines of a backflow switch run (bfTestPrint), the last one per phase → summary with one plain line per
+// phase (`phases`) and the reason (`notes`); a phase that never measured (ABORTED, all zero) is "not reached".
 function parseBflow(lines){
-  const ph=new Map(); let why=null, failLog=null;
+  const ph=new Map(), whys=[], sg=v=>v.replace(/^-/, "−"); let failLog=null;
   for (const raw of lines){
     const l=tstMsgOf(tstLine(raw)); let m;
-    if ((m=l.match(/\bselftest bflow (blocks|conducts): (PASS|FAIL|ABORTED) I=(\S+) A \(min (\S+)\) Vin=(\S+) Vout=(\S+) D=(\S+) dV=(\S+)( \(reverse current\))?/)))
-      ph.set(m[1], { phase:m[1], v:m[2], d:`I=${m[3]} A (min ${m[4]}) Vin=${m[5]} Vout=${m[6]} D=${m[7]} dV=${m[8]}${m[9]||""}` });
+    if ((m=l.match(/\bselftest bflow (blocks|conducts): (PASS|FAIL|ABORTED) I=(\S+) A \(min (\S+)\) Vin=(\S+) Vout=(\S+) D=(\S+) dV=(\S+)( \(reverse current\))?/))){
+      const [i, mn, vi, vo, d]=[3, 4, 5, 6, 7].map(k=>+m[k]), rev=!!m[9], name=m[1][0].toUpperCase()+m[1].slice(1);
+      const at=`at D ${fmtN(d, 3)}, Vin ${fmtN(vi, 1)} V`, zero=![i, mn, vi, vo, d].some(x=>x!==0);
+      const t = m[2]==="PASS" ? (rev ? `passed (${sg(fmtN(i, 2))} A reverse current)` : `passed (${sg(fmtN(i, 2))} A ${at})`)
+        : m[2]==="FAIL" ? `FAILED: ${m[1]==="blocks" ? `reverse current ${sg(fmtN(rev ? i : mn, 2))} A through the open switch`
+                                                     : `no reverse current (min ${sg(fmtN(mn, 2))} A) through the closed switch`} ${at}, Vout ${fmtN(vo, 1)} V`
+        : zero ? "not reached" : `stopped (${sg(fmtN(i, 2))} A ${at})`;
+      ph.set(m[1], { phase:m[1], v:m[2], zero:m[2]==="ABORTED" && zero, d:`${name}: ${t}` });
+    }
     else if ((m=l.match(/\bselftest bflow toggle \(([^)]*)\): (PASS|FAIL) (I|D Vin-Vout) on (\S+), off (\S+) ([AV]), min step (\S+) V/)))
-      ph.set("toggle", { phase:"toggle ("+m[1]+")", v:m[2], d:`${m[3]} on ${m[4]} ${m[6]}, off ${m[5]} ${m[6]}, min step ${m[7]} V` });
-    else if (/\bselftest bflow toggle: ABORTED\b/.test(l)) ph.set("toggle", { phase:"toggle", v:"ABORTED", d:"" });
-    else if ((m=l.match(/\bselftest bflow: (.+)$/)) && !/^(?:started\b|aborting\b|running\b|daily run\b)/.test(m[1])) why=m[1];
+      ph.set("toggle", { phase:"toggle ("+m[1]+")", v:m[2],
+        d:`Toggle (${m[1]}): ${m[2]==="PASS" ? "passed" : "FAILED"} (${m[3]} on ${sg(m[4])} ${m[6]}, off ${sg(m[5])} ${m[6]}, min step ${sg(m[7])} V)` });
+    else if (/\bselftest bflow toggle: ABORTED\b/.test(l)) ph.set("toggle", { phase:"toggle", v:"ABORTED", d:"Toggle: stopped" });
+    else if ((m=l.match(/\bselftest bflow: (.+)$/)) && !/^(?:started\b|aborting\b|running\b|daily run\b)/.test(m[1]) && !whys.includes(m[1])) whys.push(m[1]);
     else if (/\bbackflow switch FAILED\b/.test(l)) failLog=l;
   }
   const p=[...ph.values()];
-  if (!p.length && !why) return null;
-  const fail=p.find(x=>x.v==="FAIL"), details=p.map(x=>`${x.phase}: ${x.v}${x.d ? " "+x.d : ""}`);
-  if (why && why!=="mode restore timed out") details.push("reason: "+why);
-  else if (why) details.push(why);
-  if (fail) return { cls:"fail", text:`Backflow switch FAIL in ${fail.phase.replace(/ \(.*/,"")}: every start is blocked until the latch is cleared`, details };
-  if (p.length && p.every(x=>x.v==="PASS") && (!why || why==="mode restore timed out"))
-    return { cls:"pass", text:`Backflow switch PASS (${p.map(x=>x.phase).join(", ")})`, details };
-  return { cls:"warn", text:`No verdict: ${why && why!=="mode restore timed out" ? why : "aborted"}`, details, failLog };
+  if (!p.length && !whys.length) return null;
+  const stop=p.find(x=>x.v==="ABORTED"), fail=p.find(x=>x.v==="FAIL"), phases=p.map(x=>x.d);
+  const real=whys.find(x=>x!=="mode restore timed out");
+  const notes=whys.map(w=>BF_WHY[w] ? BF_WHY[w].replace("{c}", BF_CHECK[stop && stop.phase] || "the check") : "Reason: "+w);
+  const r={ phases, notes, details:[...phases, ...notes] };
+  if (fail) return { ...r, cls:"fail", text:`Backflow switch FAIL in ${fail.phase.replace(/ \(.*/,"")}: every start is blocked until the latch is cleared` };
+  if (p.length && p.every(x=>x.v==="PASS") && !real)
+    return { ...r, cls:"pass", text:`Backflow switch PASS (${p.map(x=>x.phase).join(", ")})` };
+  const head = real==="aborted" ? "aborted" : stop ? `${BF_CHECK[stop.phase] ? BF_CHECK[stop.phase].slice(4) : "toggle check"} ${stop.zero ? "not reached" : "stopped"}`
+    : ph.has("blocks") && !ph.has("conducts") ? "switch-on check not reached" : !p.length ? "no check ran" : real;
+  return { ...r, cls:"warn", text:"No verdict: "+head, failLog };
 }
 
 // `measure-coil` output → summary.
@@ -4216,7 +4260,7 @@ function tstSummary(id, lines, extra){
     case "selftest": {
       const s=parseSelftest(lines); if (!s) return null;
       const bf=parseBflow(lines);
-      const details=[ "high-side short: "+(s.hs||"?"), "backflow switch: "+(s.bf||"?"), ...(bf && !s.running ? bf.details.map(x=>"last run "+x) : []) ];
+      const details=[ "high-side short: "+(s.hs||"?"), "backflow switch: "+(s.bf||"?"), ...(bf && !s.running ? [...bf.phases.map(x=>"last run "+x[0].toLowerCase()+x.slice(1)), ...bf.notes] : []) ];
       if (s.running) details.push("backflow switch test running");
       const text = s.hsLatched && s.bfLatched ? "High-side short and backflow switch failure latched: starts blocked"
                  : s.hsLatched ? "High-side short latched: starts blocked" : s.bfLatched ? "Backflow switch failure latched: starts blocked"
