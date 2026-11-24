@@ -756,6 +756,8 @@ const char *bleCommand(const char *sub, const char *arg) {
             ++k;
         }
         if (!k) return "no such bond";
+        // removing a peer IRK preempts GAP, which ends advertising (tele_adv's reconciler restarts its own)
+        if (!teleAdvEnabled() && !bleConsoleConnected() && !ble_gap_adv_active()) bleConsoleResumeAdv();
         n = 0;
         ble_store_util_bonded_peers(a, &n, CONFIG_BT_NIMBLE_MAX_BONDS);
     } else if (*sub && strcmp(sub, "bonds")) {
