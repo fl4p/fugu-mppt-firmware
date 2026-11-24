@@ -42,11 +42,15 @@ This board has no such sensor, so the firmware uses the sensor-less approach bel
 
 ### CCM / DCM decision
 
-The converter is in DCM whenever half the ripple current exceeds the dc output current:
+The converter enters DCM when half the ripple current exceeds the dc output current:
 
 $$
 \frac{\Delta I_L}{2} > I_o
 $$
+
+It leaves DCM only once $\Delta I_L \le 1.8 \cdot I_o$ (hysteresis). Below $I_o$ = 0.1 A it is
+always in DCM, and in forced PWM never. See [Implementation](#implementation-srcbuckh) for the
+full rule.
 
 For a buck:
 
@@ -181,8 +185,8 @@ $$
 Near `D = M` the off-time after the window is short, and at high `M` the drain is slow (9 $\delta$
 at `M = 0.9`). Reverse current left at the next HS turn-on lowers the next peak, moves the next
 crossing earlier and makes the next window later still. The converter then settles in a
-forced-CCM-like state with a negative mean output current. With a stiff source and battery the
-board models showed this from a ratio reading about 1.5 % off.
+forced-CCM-like state with a negative mean output current. With a stiff source and battery, a
+ratio reading about 1.5 % off is enough.
 
 The firmware therefore ends the DCM window early enough that the drain of a late-conduction budget
 $t_{late}$ finishes before the next HS turn-on:
@@ -218,8 +222,8 @@ At low `M` it binds only in the last percent of HS counts below `D = M`; above `
 most of the DCM range, and above about 0.93 the LS minimum pulse is longer than the limit. Where
 the limit would leave less than the LS minimum pulse, the minimum pulse is issued.
 
-In the board models the limit removed every point with a negative mean output current up to a
-combined ratio reading error of about 4 %.
+The limit keeps the mean output current positive up to a combined ratio reading error of about
+4 %.
 
 The limit also lowers the stiff-source DCM gain near `D = M`: the body diode carries the tail of the
 falling current, whose extra $V_f$ ends it sooner, so the mean output current at the same HS count
@@ -310,8 +314,8 @@ is not a good estimate.
 The firmware runs the same LS sweep itself (`src/rect_cal.h`). It lowers HS to `0.55·M` of the
 period and holds it there. That point draws well below the panel's MPP current, so `V_i` sits on
 the flat, voltage-source part of the PV curve near `V_oc`. At the MPPT operating point itself the
-panel limits the power, the LS window hardly changes the output current, and in simulation the
-peak landed up to ~200 counts late, toward a longer LS.
+panel limits the power, the LS window hardly changes the output current, and the located peak
+lands late, toward a longer LS.
 
 **Starting a run.** `rect-cal` starts from a DCM operating point at 0.3–4 A. `rect-cal force`
 starts from any MPPT operating point above the calibration HS, including CCM at full power. Both
@@ -344,7 +348,8 @@ point, the drop stands. If it is back up, the drop is measured again: a second l
 it (a ring dip keeps the lower of both), otherwise it was an outlier, its point is replaced and the
 coarse sweep continues. After a confirmed drop the run measures 10 more points spread evenly over
 the four coarse intervals before the drop, never later than it, which places points about every
-20–30 counts where the bend starts. The sweep also stops when the average current turns negative. The LS never exceeds the ideal window by more than 2.5 µs, nor 90% of the off-time
+20–30 counts where the bend starts. The sweep also stops when a step's averaged output current
+falls below −0.05 A. The LS never exceeds the ideal window by more than 2.5 µs, nor 90% of the off-time
 volt-second limit `(1 − V_o/V_i)·T` (see *Switch-node ringing* below); a run whose cap leaves less
 than half of that 2.5 µs beyond the ideal window fails with `LS headroom`.
 
@@ -409,8 +414,7 @@ independent of the run. A window whose voltage scaling factor `g(V_i0, V_o0)/g(V
 outside 0.8–1.25 fails the run (`V shift`): the voltages may move the modelled current by at most a
 25 % rise or a 20 % drop against the settling window.
 
-In simulation these checks reject `V_o` dips of 0.3 % and more during the steps past the crossing and
-learn a linear `V_o` drift within a few counts.
+These checks reject `V_o` dips of 0.3 % and more during the steps past the crossing.
 
 **Sense path.** Before the zero crossing the LS window can only raise `I_out` by the body-diode
 loss it recovers, a few mA (0.3% of the current or less between 0.5× and 1× ideal), and reverse
@@ -435,18 +439,15 @@ fixed reverse current after the zero crossing, about 0.35 A at `V_i` = 78 V, `V_
 `Z_0` = 126 Ω (80 µH, 5 nF), which is 170 counts of 6.25 ns. The coil current left over from the
 ring when HS turns on shifts the next switching period. This tilts the early side by a few mA and,
 past the bend, makes the curve non-monotonic: the loss reaches a minimum about 250 counts past the
-crossing, recovers, and turns into a gain around 1.2× ideal. The converter model with this node
-(`C` = 5 nF, `Q` = 40, and an LS that conducts 35–70 counts longer than commanded) reproduces three
-field sweeps on an 80 µH board within 3–18 mA rms, including both tails; the model and its
-parameters are described in [vconv.conf](../reference/config/vconv.md#switch-node-ring).
+crossing, recovers, and turns into a gain around 1.2× ideal. The converter model with this node is
+described in [vconv.conf](../reference/config/vconv.md#switch-node-ring).
 
 HS also turns on into the ring. The coil current it finds there, up to about `±V_o/Z_0` depending on
 the ring phase, adds to the peak current and moves the zero crossing by that current times `L/V_o`,
 up to `±√(LC)`. The window `(V_i/V_o − 1)·HS` does not contain it. The phase follows the off-time
 after the crossing, `T − HS·V_i/V_o`, so the shift differs at every operating point and no constant
-offset can follow it. In the board models fitted to a SPICE half-bridge bench (76 µH with a 233 kHz
-ring and 51 µH with 320 kHz, at the run's calibration point over `V_i` = 40–78 V) the crossing lies
-between −0.43 and +0.75 µs from the ideal window. Holding the LS past the crossing changes the ring
+offset can follow it. At the run's calibration point the crossing lies up to about 0.4 µs before
+and 0.75 µs after the ideal window. Holding the LS past the crossing changes the ring
 current HS turns on into: with a negative ring current the output current bends up at the crossing;
 with a positive one it stays flat past the crossing and bends down only at the clamp onset.
 
@@ -454,11 +455,9 @@ Two consequences follow for the run:
 
 - A downward bend fit alone finds the steep loss, between the zero crossing and the clamp onset,
   and misses an upward bend at the crossing (see *Locating the zero crossing*). Points past the
-  loss minimum pull the fit far early (the full field sweep does not fit at all; truncated two
-  points past the bend it lands within the expected range), which is why the sweep stops one step
-  after the first clear drop and the fit ends at the floor of the first dip. On the ringing model
-  of a full-sun run the run learns 25–30 counts before the ideal window against a zero crossing at
-  −35 counts, and the applied offset (after the margin) lands 10–15 counts before the crossing.
+  loss minimum pull the fit far early, which is why the sweep stops one step after the first clear
+  drop and the fit ends at the floor of the first dip. After the margin, the applied offset lands
+  before the crossing.
 - An LS longer than the off-time `(1 − V_o/V_i)·T` leaves reverse current in the inductor when
   HS turns on. The converter then runs as a synchronous buck backward from the battery, and the
   reverse current grows by several amperes within a few periods until the reverse-current guard
@@ -486,11 +485,9 @@ whatever coil current HS turned on into (to second order) and however long HS re
 the measured current places the actual zero crossing `zc` without knowing the ring phase: the run
 uses the mean current of its steps at 0.8–1× ideal (below the crossing), the PWM period and the
 coil inductance of the converter model, `0.95·L0`. Since `zc ∝ √L`, an inductance error of `ε`
-moves `zc` by `ε/2` of the window. In the board models `zc` follows the plant's crossing at the
-calibration point within a spread of 10–20 ns: 40–180 ns early with the model inductance equal to
-the plant's (the ring returns about `C·V_o` per period from the output to the node, which the run
-cannot subtract without the node capacitance), and 25–250 ns late with a model inductance 4% above
-the plant's.
+moves `zc` by `ε/2` of the window. With the model inductance equal to the plant's, `zc` reads
+somewhat early: the ring returns about `C·V_o` per period from the output to the node, which the run
+cannot subtract without the node capacitance. A model inductance above the plant's moves `zc` late.
 
 The run then fits a line with a quadratic bend from `x_0` on,
 `y = c_0 + c_1·d + c_2·min(0, d)² + c_3·max(0, d)²` with `d = x − x_0`, and searches `x_0` over the
@@ -509,9 +506,8 @@ quadratic, and with it `x_0`, early. Once two consecutive points lie at least 10
 highest point and a later one rises 10 mA above the lowest point since, the fit uses the points up
 to that lowest one, the floor of the first dip. An upward bend at the crossing comes before any
 dip and stays in. A dip followed by a recovery smaller than 10 mA is fitted in full. Ending at the
-floor leaves few points past the bend: on a knee followed within 60 counts by a dip floor and a
-partial recovery of 4–8 mA, the fit lands between 210 counts before and 17 counts after the knee
-(ending after the recovery instead, 17 to 240 counts before it).
+floor leaves few points past the bend, so the fit can land after the knee when a dip floor and a
+partial recovery follow it closely.
 
 `zc − ideal` contains the ring current at HS turn-on, which no constant offset can follow, but also
 the extra charge of an HS that conducts longer than commanded and half of a voltage sensing error
@@ -525,8 +521,8 @@ ideal, `|zc − ideal| > 2.5 µs` (`charge model`: `L0` or the current reading f
 (`no knee`: the bend at the last point under 10 mA or under 4× the residual RMS) or
 `|x_0 − max(zc, ideal)| > 2.5 µs` (`implausible`). Otherwise the applied offset is
 `learned − max(125 ns, 0.3·|learned|)`, or `learned − max(250 ns, 0.3·|learned|)` when the fit
-ended at a dip floor, at most +125 ns. With the larger floor the partial-recovery case above
-applies at least 23 counts (6.25 ns each) before the knee. The margin grows with the offset,
+ended at a dip floor, at most +125 ns. With the larger floor, the offset applied in that
+partial-recovery case stays before the knee. The margin grows with the offset,
 because a large offset comes from large unmodelled delays; a fixed fraction of `learned` would move
 toward a longer LS when `learned` is negative. The result takes effect at once.
 
@@ -537,15 +533,14 @@ Near `D = M` the 2% ratio margin of the diode-emulation window (about `0.02·T` 
 is all that keeps the LS from filling the off-time, and a `V_o` reading 1.5–2% low (or `V_i` as much
 high) uses it up. A positive offset added on top then either reaches the complementary limit
 `T − HS − 1`, where the LS turns off only when HS turns on and the converter runs backward from the
-battery in forced CCM, or leaves a reverse current that has not drained when HS turns on. In the
-board models +125 ns with `V_o` read 1.7 % low already did both.
+battery in forced CCM, or leaves a reverse current that has not drained when HS turns on. An
+offset of +125 ns with `V_o` read 1.7 % low is enough for both.
 
 The firmware therefore applies a positive offset only as far as it leaves the LS off for `T/32`
 (0.8 µs at 39 kHz) plus the drain time `offset·M/(1 − M)` before the next HS turn-on, not at all
 where the window without it already ends later, and not at all above `M = 0.8` (worst-case ratio),
-where the drain takes more than four times the offset. In the board models no part of this rule was
-enough alone, and together they kept any offset up to +250 ns from turning a positive mean output
-current negative with readings up to 2.5 % off. The window without an offset has its own drain
+where the drain takes more than four times the offset. Together, the three parts keep any offset
+up to +250 ns from turning a positive mean output current negative with readings up to 2.5 % off. The window without an offset has its own drain
 limit (see *Reverse-current drain near `D = M`*); it applies on top of the offset rule.
 
 The run applies a late result up to +125 ns, and only from a calibration point below `V_i = 2·V_o`

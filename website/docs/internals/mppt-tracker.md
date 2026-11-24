@@ -41,11 +41,13 @@ stateDiagram-v2
     Sweep --> ReturnPass: limiter or max duty, 2+ maxima
     Sweep --> FadeToMPP: limiter or max duty, otherwise
     Sweep --> Backoff: best power < 0.2 % of p_max
-    ReturnPass --> Fast: landed on the best probe / 30 s timeout
+    ReturnPass --> Fast: landed on the best probe / limiter, no landing
+    ReturnPass --> FadeToMPP: 30 s timeout, fade to the captured duty, no landing
     FadeToMPP --> Landing: target duty reached
+    FadeToMPP --> Fast: stopped by a limiter, no landing / duty reached after a timeout
     Landing --> Fast: power settled (trim, verdict)
-    Fast --> Slow: P > 2 W, no new MPP for 30 s, last takeover > 30 s ago and reversed since
-    Slow --> Fast: new MPP / MPP reset / 45 s without reversal / limiter
+    Fast --> Slow: P > 2 W, no new MPP for 30 s, last takeover > 30 s ago and reversed since, last reversal < 45 s ago
+    Slow --> Fast: new MPP / MPP reset / 45 s without reversal / limiter / P ≤ 0.5 W
     Fast --> Sweep: flagged-sweep or Vout-cap re-sweep
     Backoff --> Sweep: next start / Vout cap lifted
 ```
@@ -113,7 +115,7 @@ The pass never goes above the highest recorded maximum, so it does not return to
 during the pass ends it without a verdict, as it stops a fade; at the bottom of the sweep the loop may still lower the
 duty while the limiter reports CV. A pass not done after 30 s ends with a fade to the captured duty. P&O then starts
 afresh at the landing point. The probes rank the maxima under the light of the moment, a few seconds after the sweep,
-so a cloud edge during the sweep no longer decides which maximum the converter settles on. The log shows each probe
+so a cloud edge during the sweep does not decide which maximum the converter settles on. The log shows each probe
 and the landing:
 
 ```
@@ -205,11 +207,13 @@ landing check is its only verdict.
 
 ```mermaid
 flowchart TD
-    S["Sweep ends"] --> L{"Limiter in the<br/>landing?"}
-    L -- yes --> NV["No verdict, counts as clean"]
-    L -- no --> B{"MPP ≥ 5 %<br/>of p_max?"}
-    B -- no --> NV
-    B -- yes --> D{"Within<br/>sweep_verify?"}
+    S["Sweep ends"] --> B{"MPP ≥ 5 %<br/>of p_max?"}
+    B -- no --> DIM["No verdict, teaches nothing"]
+    B -- yes --> Z{"sweep_verify = 0?"}
+    Z -- yes --> NV["No verdict, counts as clean,<br/>maxima teach"]
+    Z -- no --> L{"Limiter in the<br/>landing?"}
+    L -- yes --> NV
+    L -- no --> D{"Within<br/>sweep_verify?"}
     D -- yes --> V["Verified: P&O from the landing,<br/>maxima teach the substring count"]
     D -- no --> F["Flagged: teaches nothing"]
     F --> N{"Substring count"}
@@ -222,9 +226,10 @@ flowchart TD
     M -- no --> P
 ```
 
-A sweep whose fade or return pass a limiter stops, or that lands in a limit, gets no verdict and counts as clean. A
-sweep whose MPP is below 5 % of `limits.conf::p_max` gets no verdict either: in low light the captured MPP is the
-largest of noisy samples, biased high by tens of percent, and such a sweep teaches nothing anyway. The log shows one
+A sweep whose fade or return pass a limiter stops, or that lands in a limit, gets no verdict and counts as clean;
+its maxima still teach. So does every bright sweep with `sweep_verify=0`. A sweep whose MPP is below 5 % of
+`limits.conf::p_max` gets no verdict either and teaches nothing: in low light the captured MPP is the largest of
+noisy samples, biased high by tens of percent. The log shows one
 line per decision:
 
 ```
@@ -261,9 +266,9 @@ mean with the last reference power. These rules set the direction:
 
 In low light the power change across one 5 % leg near the MPP is about 1 % of the power, below the
 thresholds and close to the current-sensor noise. The tracker then oscillates within the 5 % band around
-where it is. Both rules above keep that oscillation free of a bias toward the battery voltage: with a band
-measured from each leg's start (5 % down, then 5 % of the lower voltage up), every cycle ended 0.25 % lower,
-and the re-reversals after a turn walked Vin down in the same way.
+where it is. Both rules above keep that oscillation free of a bias toward the battery voltage. A band
+measured from each leg's start (5 % down, then 5 % of the lower voltage up) would end every cycle 0.25 % lower,
+and judging the power right after a turn would walk Vin down in the same way.
 
 ### Settle window
 
@@ -333,8 +338,8 @@ all of these hold:
   hand-back, which includes the end of the fade after a sweep and the start-up.
 - The last reversal is less than 45 s ago.
 
-Slow mode ends on a new MPP record (a 0.5 % gain, or the first period after a reset), on a takeover, and 45 s
-after the last reversal. Moving one way for that long means the MPP has moved.
+Slow mode ends on a new MPP record (a 0.5 % gain, or the first period after a reset), on a takeover, when power
+falls to 0.5 W or below, and 45 s after the last reversal. Moving one way for that long means the MPP has moved.
 
 The MPP record reset is evaluated before the entry, so the tracker does not enter slow mode in the same period in
 which the record is about to be reset. The 5-minute record reset also ends slow mode: the record is at least 30 s
@@ -358,8 +363,7 @@ duty Vin can step down by several volts within a fraction of a second.
 
 When such a step comes while the tracker steers Vin up, a 5 % Vin rule that counted moves in either direction
 would reverse it toward lower Vin. Repeated, that leaves the tracker on the local maximum, far below the MPP, until
-the next sweep. The 5 % rule therefore counts only a move in the steered direction. The trap depends on the
-low-side timing (`rect_offset_ns`), not on the duty resolution.
+the next sweep. The 5 % rule therefore counts only a move in the steered direction.
 
 A power drop that coincides with such a step could reverse the tracker the same way. As a guard, a power drop does
 not reverse while Vin is more than 1 % against the steering. The 1 % margin keeps reversals on light changes that
@@ -371,7 +375,7 @@ not move with the light, and only the power drops.
 Both exceptions start 3 s after a limiter hand-back. The fade back to the sweep's MPP, or the limiter step before
 the hand-back, still moves Vin when P&O takes over, so the Vin at the hand-back is no reference. Vin can overshoot
 it by more than 1 %, and the direction at the hand-back is that of the last fade step. Blocking reversals there
-held the tracker off the MPP.
+would hold the tracker off the MPP.
 
 In normal tracking a leg crosses the MPP, so Vin is past the last reversal point when the power drops, and neither
 exception changes anything. They do not help a tracker that sits on a flat P-V curve far below the MPP while Vin
@@ -390,8 +394,8 @@ $$
 $\theta_\text{eff}$ is larger at low power and smaller at high power. Below about 62 W in fast mode and 328 W in
 slow mode the relative term is the smaller one.
 
-In steady light the operating point wanders in a band below the MPP set by the threshold. With the held reference
-the loss lies between $\theta/3$ and $2\theta/3$; for the relative thresholds alone:
+In steady light the operating point wanders in a band below the MPP set by the threshold. The resulting threshold
+loss is $\theta/3$ to $2\theta/3$ of the power; for the relative thresholds alone:
 
 | Mode | $\theta$ | $\theta / 3$ |
 |------|----------|--------------|
@@ -488,7 +492,7 @@ verified sweeps`. With $n = 1$ the scan stays idle and a flagged single-maximum 
 [re-swept](#sweep-verdict). A later sweep that shows shading still teaches a count of 2..6, which replaces it.
 
 The count is kept in `tracker.conf::pv_substrings` (1 = single peak). It is written once when it grows, as soon as a flash write is
-safe (converter off, or below 5 W), and before a console restart. Setting it to 0 (`set-config`) makes the
+safe (flash auto-suspend active, converter off, or below 5 W), and before a console restart. Setting it to 0 (`set-config`) makes the
 converter learn it again after the next restart; until then the running count stays in use. A count learned
 earlier in the same boot and not yet saved can still be written over the 0, so set it while the converter is off
 and restart right after. It is not meant to be set by hand otherwise.
@@ -515,14 +519,15 @@ Two unshaded cases can fake a count, both on the grid of 6:
 * A cloud edge during a sweep fakes a lower maximum on the grid.
 * A start transient between $0.9$ and $0.93\,V_{oc}$ with at least 60 % of the MPP power, followed by a hot-module
   MPP at or below $0.75\,V_{oc}$, looks like a shaded full string over its MPP. The transient is near-constant
-  power (about 100 W on the boards measured), so this needs low light and hot modules together.
+  power, so at higher light it stays below 60 % of the MPP; the case needs low light and hot modules together.
 
 The scan then runs on an unshaded string, probes, and stays; on a string of 6 substrings the count is right anyway.
 
 ### Schedule and cost
 
-A scan starts every `scan_interval` seconds (default 300) after the last scan or sweep, and 60 s after a scan
-whose best probe came within 6 % of the reference: under clouds the ratio between two maxima changes, and a
+A scan starts every `scan_interval` seconds (default 300) after the last scan or sweep. With `scan_interval`
+above 60, it also starts 60 s after a scan that stayed (also one rejected as "light changed") but whose best probe
+came within 6 % of the reference: under clouds the ratio between two maxima changes, and a
 probe taken in a cloud can miss a maximum that wins in the sun. With `scan_trigger=1` a scan also starts when,
 for 15 s without interruption, $V_{in}$ is more than half a substring share away from the voltage after the
 last scan, or the power is below 70 % or above 140 % of the power then. The power must also have stayed within
@@ -547,8 +552,8 @@ taken.
 
 ## When the tracker does not sweep
 
-The tracker skips every automatic sweep (periodic, low-light power-doubled, and the re-sweeps after a flagged sweep
-or a lifted Vout cap) under these conditions:
+The tracker skips every scheduled automatic sweep (periodic, low-light power-doubled, and the re-sweeps after a
+flagged sweep or a lifted Vout cap) under these conditions:
 
 | Condition                                             | Why                                                           |
 |-------------------------------------------------------|---------------------------------------------------------------|
@@ -560,6 +565,9 @@ or a lifted Vout cap) under these conditions:
 | A flash operation is pending                          | The sweep start runs from flash                               |
 
 The periodic sweep and a scheduled re-sweep wait: they start once the condition clears.
+
+A no-MPP backoff of a sweep that the Vout cap cut ends when the cap rises more than 0.2 V above both that cap and
+Vout. The sweep then starts at once and checks only for PSU / PV-sim mode, not the conditions above.
 
 When a BMS cell-voltage topic is configured, the sweep at start-up and after a shutdown also waits for the BMS. It
 is skipped while termination is active and the BMS data is fresh, and it waits up to 12 s for the first termination

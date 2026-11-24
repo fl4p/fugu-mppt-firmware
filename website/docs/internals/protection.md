@@ -11,13 +11,13 @@ hold a value at its limit, while a protection trip turns the half-bridge off.
 
 ## Check scheduling
 
-The real-time loop calls two functions on every control step while the converter is switching, in MPPT, PSU and
-manual PWM modes:
+The real-time loop calls two functions on every new sample while the converter is switching, in MPPT, PSU and
+manual PWM modes. The control step that follows runs only on a new Vout sample:
 
 - `mppt.protect()` checks the fast electrical faults on the latest sample.
 - `mppt.protectLf()` checks supply voltage, battery detection, temperature and the wire-fault latch.
 
-Both run in the same step, so `protectLf()` also runs after `protect()` has tripped. Both are skipped while the
+Both run on the same sample, so `protectLf()` also runs after `protect()` has tripped. Both are skipped while the
 converter is off or while the sensors calibrate; calibration holds the converter off. While it is off, the
 [start conditions](#start-conditions) decide whether it may start again.
 
@@ -38,7 +38,7 @@ running. A repeated trip does not extend a running backoff unless it asks for a 
 A failed check also makes the loop call `stopAndBackoff(4)`:
 
 - It holds the next start for at least 4 s (100 ms in PSU mode). This timer is not reported as a start-block reason.
-- If the check did not stop the converter itself, it stops it with a 4 s backoff logged as
+- If the converter is still on or a sweep is running, it calls `shutdownDcdc` with a 4 s backoff, logged as
   `backoff 4s [stopAndBackoff]`.
 
 The converter restarts once both timers have expired and the [start conditions](#start-conditions) pass, so a 5 s or
@@ -84,7 +84,7 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `Vout-OV` | Vout sample > the [OV threshold](#output-over-voltage-threshold) | 5 s |
 | `Iin-OC` | Iin sample > 1.3 × Iin max | 5 s |
 | `Iout-OC` | Iout sample > 1.5 × Iout max, median > 1.25 × Iout max, or average > 1.15 × Iout max | 30 s |
-| `revI-highAvg` | The last two samples of the physical current sensor below −1 A while the average Iout is above 10 A. Not in forced PWM | 5 s |
+| `revI-highAvg` | The last two samples of the physical current sensor below −1 A while the average Iout is above 10 A. Not in forced PWM or during `selftest bflow` | 5 s |
 | `revI-ewm` | Average current of the physical current sensor below −1 A | 5 s |
 | `Vout>Vin-avg` | Buck: average Vout > 1.25 × (average Vin + 1 V) | 5 s |
 | `Vout>2Vin` | Buck: Vout sample > 2 × (Vin + 0.5 V) | 5 s |
@@ -95,7 +95,7 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `minpulse-M` | Buck in DCM: Vout/Vin above the low-side minimum-pulse stop ratio, or reverse current with Vout/Vin above the start ratio, for 4 fresh Vout samples (at once if DCM is entered above the stop ratio). See [Diode Emulation](diode-emulation.md#ls-minimum-pulse-near-unity-ratio) | 5 s |
 | `Vr-sensor-fail` | Duty cycle well above what Vout and Iout imply while the current stays below 1 % of Iout max: a sensor or half-bridge fault. `reverse_current_paranoia` only; not in PSU mode while Vout is between half the setpoint and the setpoint | 5 s |
 | `supply-UV` | Board supply, max(Vin, Vout) − 0.3 V, below 9 V. Skipped in manual PWM | 5 s |
-| — | Not PSU mode, no battery voltage known (`charger.conf::vout_max`, `vset` or an earlier detection), and none can be detected from Vout. Starts a new sensor calibration; no `backoff` line is logged | 4 s |
+| — | Not PSU mode, no battery voltage known (`charger.conf::vout_max`, `vset` or an earlier detection), and none can be detected from Vout. Starts a new sensor calibration. No `backoff` line outside a sweep; during a sweep the sweep ends with `backoff 4s [stopAndBackoff] mid-sweep` | 4 s |
 | `temp-stale` | A fitted NTC or MCU temperature sensor is open, shorted or silent: 3 readings in a row outside −40…150 °C (about 9 s), or no valid reading for 90 s. A shorted NTC trips `temp` instead if the ADC saturates below the supply rail. An unfitted NTC never trips | 5 s, then until a valid reading |
 | `temp` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown` | 5 s |
 | `wire-trip` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
@@ -110,6 +110,7 @@ These stops come from outside `protect()` and `protectLf()`:
 | `calib` | Sensor calibration is running. No `backoff` line | none |
 | `stop` | A switch to manual PWM at duty 0 that stops at once, without a ramp: `ota <url>`, coil measurement, backflow switch test. No `backoff` line | none |
 | `stopAndBackoff` | An OTA push over BLE stops the converter before it halts the sampler | 5 s, start held 10 s |
+| `calib-fail` | Sensor calibration fails. The converter is already off, so a `backoff` line appears only when a sweep was calibrating: the sweep ends with `backoff 4s [calib-fail] mid-sweep` | Start held 4 s (100 ms in PSU mode) |
 
 Two latches act outside the checks as well. Neither logs a `backoff` line, and both hold until `selftest clear`:
 
@@ -130,8 +131,8 @@ The converter keeps switching in both cases.
 
 While `selftest bflow` runs, both reductions and the `highD-bflowOpen` check are suspended, because the test drives
 reverse current on purpose. The test stops the converter itself when a sample falls below its trip threshold, −0.3 A
-with the backflow switch off or −0.5 A with it on. All other trips stay active, including `revI-ewm` and
-`highI-bflowOpen`. See
+with the backflow switch off or −0.5 A with it on. `revI-highAvg` is suspended as well. All other trips stay active,
+including `revI-ewm` and `highI-bflowOpen`. See
 [Backflow switch test](#backflow-switch-test).
 
 ### High-side short check
@@ -251,8 +252,8 @@ Limits of the checks:
 
 - Without a learnt zero, a sensor offset above the 0.3 A threshold reads as a short when Vin is near Vout (dawn, dusk).
   A board that boots at such a time can latch falsely, without the clamp. The zero is learnt during the first night.
-- Below 9 V and with a per-period ramp, circuit simulation puts the clamp's peak current at about a third of the
-  low-side pulse rating; the per-sample staircase was not simulated.
+- Below 9 V and with a per-period ramp, the clamp's peak current is about a third of the low-side pulse rating
+  (circuit simulation).
 - The 9 V limit relies on the Vin reading. A divider whose reading floors near 9 V in the dark never arms the clamp.
 
 ### Backflow switch test
@@ -269,7 +270,7 @@ and step the duty down until D × Vin is 1 V below Vout. Each step waits a quart
 
 The thresholds are trip levels, not bounds: one duty count moves the current by up to about 1 A on a low-resistance
 path. The blocks phase engages forced PWM at once and steps down faster while the current exceeds 2 A, because the
-switch's body diode carries the forward current. It also engages at 4.5 A without waiting for CCM, to stay clear of
+switch's body diode carries the forward current. It also engages at 4.5 A or at the duty cap without waiting for CCM; the 4.5 A limit stays clear of
 the 6 A `highI-bflowOpen` trip. The conducts phase engages only in CCM, after 150 ms for the switch's gate supply: in
 DCM, D × Vin is below Vout and forced PWM would pull reverse current at once. Without CCM at the duty cap it aborts.
 
@@ -415,7 +416,7 @@ watchdogs run in the low-frequency loop on core 0.
 | ADC reset | A requested ADC reset | Stop during the reset; restart 6 s after it (30 s if the reset failed) |
 | No sample | No sample at all 20 s after boot | Disable the converter, switching or not, and log `Never got a sample! Please check ADC`. After 15 min: restart the system |
 | Loop latency | While switching: Vout sample rate below half its nominal rate for 3 consecutive 3 s windows. Always on, unless Vout is a virtual sensor | Stop with a 4 s backoff (100 ms in PSU mode) |
-| Calibration failure | Sensor calibration fails | Hold the start for 4 s (100 ms in PSU mode) |
+| Calibration failure | Sensor calibration fails | `stopAndBackoff(4, "calib-fail")`: hold the start for 4 s (100 ms in PSU mode). During a sweep, end the sweep and log `backoff 4s [calib-fail] mid-sweep` |
 | Stuck output | Average Iout within ±0.3 A despite input headroom (buck: average Vin more than 8 V above average Vout; boost: more than 2 V above Vin min), outside manual PWM and a no-MPP backoff. In PSU mode Vout must also be more than 2 V below the setpoint; otherwise the charger must not be holding the charge (for example terminated, in a CV hold or too cold) | After 30 s: release the CV-floor latch, which also clears the backoff. After 2 h: restart the system |
 
 The latency watchdog ignores manual PWM, the first 2 s after a calibration, and the first samples after boot. A single

@@ -193,3 +193,11 @@ The published page used to say: a scan takes 1.5 to 4 s and costs 10 to 150 J at
 number of probes (the power given up at the probes plus the travel between them). A scan that moves to a better
 maximum pays this back within seconds. The code bounds each probe at 1.5 s travel + at most 1 s settle + 100 ms
 averaging, and the scan at 30 s (`src/peak_scan.h`).
+
+## Moved from the published page (2026-11-24)
+
+- Plant moving against the step: the page said "The trap depends on the low-side timing
+  (`rect_offset_ns`), not on the duty resolution." No measurement on record supports either half;
+  removed from the page until one does.
+- Unshaded fake count: the near-constant-power start transient between 0.9 and 0.93 `V_oc` was about
+  100 W on the boards measured.

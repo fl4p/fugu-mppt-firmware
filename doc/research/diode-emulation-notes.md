@@ -133,3 +133,31 @@ readings that use up the 2% margin, 0.30–0.35 A (offset 0: 0.25–0.28 A) and 
 
 On a bench ESP32-S3 the `coil.conf` save, including the rename, took about 0.4 s (about 0.05 s for
 an in-place rewrite).
+
+## Moved from the published page (2026-11-24)
+
+Model and fit results that the page now states only as an outcome.
+
+- Reverse-current drain near `D = M`: with a stiff source and battery the board models showed the
+  forced-CCM-like state from a ratio reading about 1.5 % off. The drain limit removed every point
+  with a negative mean output current up to a combined ratio reading error of about 4 %.
+- Self-calibration at the MPPT operating point: in simulation the peak landed up to ~200 counts
+  late, toward a longer LS.
+- Reference checks: in simulation they reject `V_o` dips of 0.3 % and more during the steps past
+  the crossing and learn a linear `V_o` drift within a few counts.
+- Switch-node ring model: `C` = 5 nF, `Q` = 40 and an LS that conducts 35–70 counts longer than
+  commanded reproduce three field sweeps on an 80 µH board within 3–18 mA rms, including both tails.
+- Crossing vs ideal window: in the board models fitted to a SPICE half-bridge bench (76 µH with a
+  233 kHz ring and 51 µH with 320 kHz, at the run's calibration point over `V_i` = 40–78 V) the
+  crossing lies between −0.43 and +0.75 µs from the ideal window.
+- Bend fit past the loss minimum: the full field sweep does not fit at all; truncated two points
+  past the bend it lands within the expected range. On the ringing model of a full-sun run the run
+  learns 25–30 counts before the ideal window against a zero crossing at −35 counts, and the applied
+  offset (after the margin) lands 10–15 counts before the crossing.
+- `zc` accuracy: in the board models `zc` follows the plant's crossing at the calibration point
+  within a spread of 10–20 ns: 40–180 ns early with the model inductance equal to the plant's, and
+  25–250 ns late with a model inductance 4 % above the plant's.
+- Dip-floor truncation: on a knee followed within 60 counts by a dip floor and a partial recovery of
+  4–8 mA, the fit lands between 210 counts before and 17 counts after the knee (ending after the
+  recovery instead, 17 to 240 counts before it). With the 250 ns margin floor the applied offset
+  lands at least 23 counts (6.25 ns each) before the knee.

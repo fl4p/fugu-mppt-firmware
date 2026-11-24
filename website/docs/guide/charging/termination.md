@@ -17,8 +17,9 @@ trickle charge into a full pack.
 The model places the cell at `cv_float` (the "float" voltage) at zero current and
 at `cv_eoc` (the absorption voltage) when the charging current equals the
 tail-current threshold. Between those two operating points, a straight line in
-the (current, voltage) plane defines the termination boundary. Above the line,
-the cell is "still charging". Below it, the cell is "done".
+the (current, voltage) plane defines the termination boundary. A cell voltage
+above the line at the present current means the cell is "done". Below it, the
+cell is "still charging".
 
 The line can be restated as an apparent series resistance:
 
@@ -50,9 +51,9 @@ drop below it at once and end the charge early.
 
 ## The `tail_c_rate` parameter
 
-`tail_c_rate` is the C-rate at which the cell is considered "fully charged",
-that is, the tail current expressed as a fraction of capacity. You can set it in
-`charger.conf:tail_c_rate`. It defaults to `0.05` (LFP).
+`tail_c_rate` is the current, as a fraction of capacity, at which the
+termination line reaches `cv_eoc`: the tail current at the absorption voltage.
+You can set it in `charger.conf:tail_c_rate`. It defaults to `0.05` (LFP).
 
 The following table lists typical values per chemistry:
 
@@ -62,9 +63,12 @@ The following table lists typical values per chemistry:
 | Sanyo/Panasonic NCR18650GA (67 mA / 3500 mAh, [spec sheet copy at a reseller](https://www.orbtronic.com/content/Datasheet-specs-Sanyo-Panasonic-NCR18650GA-3500mah.pdf)) | `~0.02` |
 | EVE INR18650                         | `0.033`       |
 
-For LFP, the Nordkyn article gives 0.033C for older and 0.05C for newer cells.
-The EVE INR18650 value has no cited source; check it against the cell's
-datasheet.
+The values apply at the firmware's `cv_eoc`. For LFP, the Nordkyn article's
+tail currents of 0.033C (older cells) and 0.05C (newer cells) are given at
+3.65 V; its own table puts the tail at 3.5 V at 0.015C and 0.023C. The default
+0.05C at 3.5 V therefore terminates deliberately earlier than the Nordkyn line
+(see [Related parameters](#related-parameters)). The EVE INR18650 value has no
+cited source; check it against the cell's datasheet.
 
 A larger `tail_c_rate` is safer. It lowers `r` and flattens the termination
 line, so `v_term` is lower at any current below the `cv_eoc` clamp and

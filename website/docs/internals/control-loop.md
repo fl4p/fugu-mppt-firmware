@@ -23,10 +23,12 @@ flowchart TD
   wait([New Vout sample]) --> calib{ADC<br/>calibrating?}
   calib -- yes --> hold[Hold the<br/>converter off]
   calib -- no --> running{Switching, sweeping<br/>or manual PWM?}
-  running -- yes --> protect{Protection: Vin/Vout OV,<br/>Iin/Iout OC, reverse<br/>current, supply UV,<br/>temperature, ...}
+  running -- yes --> enabled{Converter<br/>switching?}
+  enabled -- yes --> protect{Protection: Vin/Vout OV,<br/>Iin/Iout OC, reverse<br/>current, supply UV,<br/>temperature, ...}
   running -- no --> start[Start the converter<br/>with a sweep when<br/>start conditions allow]
   protect -- violation --> backoff[Disable converter,<br/>back off]
   protect -- ok --> manual{Manual<br/>PWM?}
+  enabled -->|"no: skip protection"| manual
   manual -- no --> meter[Energy meter,<br/>thermal power limit]
   manual -- yes --> ramp[Ramp duty toward<br/>the manual target]
   meter --> due{Sweep due? Periodic,<br/>retry or power<br/>doubled}
@@ -35,7 +37,7 @@ flowchart TD
   pd --> lowest{"$$\begin{gathered}\textstyle\min_k u_k \lt 0\ \text{or}\cr \text{duty at max or min?}\end{gathered}$$"}
   lowest -- no --> sweeping{Sweeping?}
   lowest -- yes --> limit[Limiter mode<br/>CV, CC or CP;<br/>a sweep ends here]
-  sweeping -- yes --> sweepStep[Sweep step,<br/>record<br/>the MPP]
+  sweeping -- yes --> sweepStep[Sweep step,<br/>record the MPP;<br/>re-enable a converter<br/>still off after calibration]
   sweeping -- no --> ret{Sweep<br/>return pass?}
   ret -- yes --> retStep[Steer Vin to<br/>the recorded<br/>maximum, probe]
   ret -- no --> target{MPP duty<br/>target set?}
@@ -67,7 +69,7 @@ Besides the MPP tracker, the loop contains five PD controllers, which are PID co
 
 | Controller | Regulates | Purpose |
 |---|---|---|
-| `VinCTRL` | Solar voltage | Keeps Vin above `limits.conf::vin_min` so the source does not collapse; a buck in DCM also keeps Vin above about 1.18 × Vout. The hard supply undervoltage stop (~9 V) is a separate trip |
+| `VinCTRL` | Solar voltage | Keeps Vin above `limits.conf::vin_min` so the source does not collapse; a buck in DCM also keeps Vin above Vout divided by the LS minimum-pulse start ratio (about 1.18 × Vout on typical boards). The hard supply undervoltage stop (~9 V) is a separate trip |
 | `IinCTRL` | Solar current | Protects the hardware |
 | `VoutCTRL` | Battery voltage | Regulates the output when the battery is full or disconnected |
 | `IoutCTRL` | Charge current | Set-point from the charging algorithm, including the BMS current limit, the CV-hold limit and the wire-guard cap |
