@@ -63,10 +63,10 @@ The `fugu1` folders differ as follows:
 - `fugu1_esp32` and `fugu1_esp32s3` differ only in pin numbers (the S3 module remaps I²C, gate driver, LED, fan and
   NTC channel).
 - `fugu_int_adc` replaces the ADS1015 with the ESP32's internal ADC. Wiring is in
-  [Internal ADC](internal-adc.md). The folder only contains `board.conf`, `sensor.conf`, and `limits.conf`. Before
-  provisioning, copy `charger.conf`, `coil.conf`, and `converter.conf` from `fugu1_esp32`. The firmware has no
-  defaults for the following keys, so also add `pwm_freq=39000` and `pwm_driver_logic=InEn` to its `board.conf`, and
-  `esp32adc1_sr=22000` and `esp32adc1_avg=32` to its `sensor.conf`.
+  [Internal ADC](internal-adc.md). Its `charger.conf`, `coil.conf` and `converter.conf` are those of `fugu1_esp32`.
+
+None of the `fugu1` folders sets `charger.conf::vout_max`, because it depends on the pack. Set it before the first
+start, otherwise setup fails and the converter stays off.
 
 ### Solar boost
 
