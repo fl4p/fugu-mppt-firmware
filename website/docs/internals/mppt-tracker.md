@@ -37,20 +37,36 @@ The following state diagram shows the transitions between the phases:
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Sweep: boot / sweep command / 30 min / low-light power x2 / re-sweep
-    Sweep --> ReturnPass: limiter or max duty, bright buck sweep, 2+ maxima
-    Sweep --> FadeToMPP: limiter or max duty, otherwise
-    Sweep --> Backoff: best power < 0.2 % of p_max
-    ReturnPass --> Fast: landed on the best probe / limiter, no landing
-    ReturnPass --> FadeToMPP: 30 s timeout, fade to the captured duty, no landing
-    FadeToMPP --> Landing: target duty reached
-    FadeToMPP --> Fast: stopped by a limiter, no landing / duty reached after a timeout
-    Landing --> Fast: power settled (trim, verdict)
-    Fast --> Slow: P > 2 W, no new MPP for 30 s, last takeover > 30 s ago and reversed since, last reversal < 45 s ago
-    Slow --> Fast: new MPP / MPP reset / 45 s without reversal / limiter / P ≤ 0.5 W
-    Fast --> Sweep: flagged-sweep or Vout-cap re-sweep
-    Backoff --> Sweep: next start / Vout cap lifted
+    [*] --> Sweep: start
+    Sweep --> ReturnPass: 2+ maxima
+    Sweep --> FadeToMPP: sweep end
+    Sweep --> Backoff: low power
+    ReturnPass --> Fast: pass ended
+    ReturnPass --> FadeToMPP: timeout
+    FadeToMPP --> Landing: duty reached
+    FadeToMPP --> Fast: no landing
+    Landing --> Fast: assessed
+    Fast --> Slow: stable
+    Slow --> Fast: change
+    Fast --> Sweep: re-sweep
+    Backoff --> Sweep: retry
 ```
+
+| Transition | Label | Condition |
+|---|---|---|
+| → Sweep | start | Boot, `sweep` command, 30 min, low-light power ×2, or re-sweep |
+| Sweep → ReturnPass | 2+ maxima | Limiter or max duty on a bright buck sweep with 2+ local maxima above 1.05 times the Vin floor, at most 6 recorded (see [Return pass](#return-pass)) |
+| Sweep → FadeToMPP | sweep end | Limiter or max duty, otherwise |
+| Sweep → Backoff | low power | Best power < 0.2 % of `p_max` |
+| ReturnPass → Fast | pass ended | Landed on the best probe, or a limiter stopped it (no landing) |
+| ReturnPass → FadeToMPP | timeout | 30 s timeout; fades to the captured duty, no landing |
+| FadeToMPP → Landing | duty reached | Target duty reached |
+| FadeToMPP → Fast | no landing | Stopped by a limiter, or duty reached after a timeout |
+| Landing → Fast | assessed | Power settled (trim, verdict), or a limiter took over (no verdict) |
+| Fast → Slow | stable | P > 2 W, no new MPP for 30 s, last takeover > 30 s ago and reversed since, last reversal < 45 s ago |
+| Slow → Fast | change | New MPP, MPP reset, 45 s without reversal, limiter, or P ≤ 0.5 W |
+| Fast → Sweep | re-sweep | Flagged sweep or Vout-cap re-sweep |
+| Backoff → Sweep | retry | Next start, or Vout cap lifted |
 
 ## Global sweep
 
