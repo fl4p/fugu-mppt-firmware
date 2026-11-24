@@ -392,6 +392,8 @@ float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &z
 // So iL is the INPUT current in every phase, and only the Rect / HS-body-diode path
 // reaches the output. That asymmetry is the whole difference from the buck model.
 void VirtualConverter::stepOneCycleBoost(float T) {
+    float invL = invL_;
+    if (lK_ != 0.0f) invL /= std::max(0.1f, 1.0f - lK_ * iPk_);
     const float tCtrl = (float) pwm_.pwmCtrl * invPmax_ * T; // LS on
     const float tRect = (float) pwm_.pwmRect * invPmax_ * T; // HS on
     const float tOff = T - tCtrl - tRect;
@@ -400,12 +402,13 @@ void VirtualConverter::stepOneCycleBoost(float T) {
     // diode is reverse-biased here (SW at 0, V_out above it), so nothing reaches
     // the output.
     const float a = iLEnd_;
-    const float b = (tCtrl > 0.0f) ? (a + vIn_ * invL_ * tCtrl) : a;
+    const float b = (tCtrl > 0.0f) ? (a + vIn_ * invL * tCtrl) : a;
+    iPk_ = std::fabs(b);
     const float areaCtrl = trapArea(a, b, tCtrl);
 
     // Phase 2: Rect (HS) on — dI/dt = (Vin - Vout)/L. Synchronous, so it conducts
     // both ways: negative iL here is reverse power flow, which the signed area keeps.
-    const float c = (tRect > 0.0f) ? (b + (vIn_ - vOut_) * invL_ * tRect) : b;
+    const float c = (tRect > 0.0f) ? (b + (vIn_ - vOut_) * invL * tRect) : b;
     const float areaRect = trapArea(b, c, tRect);
 
     // Phase 3: both off. iL>0 → HS body diode to the output. iL<0 → LS body diode
@@ -425,7 +428,7 @@ void VirtualConverter::stepOneCycleBoost(float T) {
     float areaOffOut = 0.0f; // the part that reaches the output
     if (tOff > 0.0f) {
         if (c > 0.0f) {
-            const float slope = (vIn_ - vOut_) * invL_;
+            const float slope = (vIn_ - vOut_) * invL;
             if (slope < 0.0f) {
                 const float tZero = -c / slope;
                 if (tZero < tOff) {
@@ -443,7 +446,7 @@ void VirtualConverter::stepOneCycleBoost(float T) {
             }
             areaOffOut = areaOff;
         } else if (c < 0.0f) {
-            const float slope = vIn_ * invL_; // >0 while Vin>0: rises back toward zero
+            const float slope = vIn_ * invL; // >0 while Vin>0: rises back toward zero
             if (slope > 0.0f) {
                 const float tZero = -c / slope;
                 if (tZero < tOff) {
@@ -460,7 +463,7 @@ void VirtualConverter::stepOneCycleBoost(float T) {
             areaOffOut = 0.0f; // routed to ground, not the output
         } else {
             // Idle coil: passthrough only, and only while V_out < V_in.
-            const float slope = (vIn_ - vOut_) * invL_;
+            const float slope = (vIn_ - vOut_) * invL;
             if (slope > 0.0f) {
                 cEnd = slope * tOff;
                 areaOff = 0.5f * cEnd * tOff;

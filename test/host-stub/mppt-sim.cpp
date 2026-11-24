@@ -23,6 +23,8 @@
 //                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat-lowf: the same at 22 kHz (the sweep after `f=`, not the switch to it)
 //                              # mc-flat-ramp: the same entered by the `dc 0` ramp-down (SIM_MC_RAMP=1)
+//                              # mc-boost-dark: `measure-coil l0` in boost at night (battery in, dark string out); -lowf at 21.5 kHz
+//                              # mc-boost-open: the same with the output unloaded, the 80 V trip
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
@@ -2121,6 +2123,172 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     return res;
 }
 
+// `measure-coil l0` on a boost (sweepL0()'s boost path): BF on, the Iin zero, a low duty lifts Vout above Vin, then the
+// band at the 80 V trip, stopped by the live Vout/Iin; trips (task: Vout 80 V or Iin 8 A, med3; RT: ovset 80 V) stop
+// the PWM at once. Rows map onto the buck relations through coilfit::asBuck(). Fills g_mcIpk, g_mcVmax, g_mcImax.
+static float g_mcVmax = 0, g_mcImax = 0, g_mcIpkPlant = 0, g_mcIpkMean = 0; // g_mcIpkMean: of the fitted rows
+static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &secs, std::string &stop) {
+    const double t0 = tNow();
+    coilfit::Result res;
+    const float ov0 = mppt.getExplicitOvLimit(), hvTrip = std::min(80.f, 0.95f * mppt.limits.Vout_max),
+                iTrip = std::min(8.f, mppt.limits.Iin_max);
+    mppt.setExplicitOvLimit(fminf(ov0, hvTrip));
+    bool tripped = false;
+    g_mcIpk = g_mcVmax = g_mcImax = g_mcIpkPlant = 0;
+    auto wait = [&](double sec) { // run in 10 ms steps with the task's trip check
+        for (const double dl = tNow() + sec; !tripped;) {
+            g_mcVmax = std::max(g_mcVmax, g_vconv.takeVoutMax()), g_mcImax = std::max(g_mcImax, g_vconv.getIinAvg());
+            if (sensors.Vout->med3.get() > hvTrip || sensors.Iin->med3.get() > iTrip) {
+                tripped = true;
+                (void) mppt.requestPsuManual(0, -1, false, true);
+                printf("  measure: TRIP Vout %.2f Iin %.2f\n", sensors.Vout->med3.get(), sensors.Iin->med3.get());
+                break;
+            }
+            if (tNow() >= dl) return true;
+            run(0.01, 0);
+        }
+        return false;
+    };
+    if (!simPsuWait(mppt.requestPsuManual(0, -1, false, true))) printf("  measure: RT transition timed out\n");
+    for (const double dl = tNow() + 10; tNow() < dl;) {
+        if (converter.disabled() && fabsf(sensors.Iin->ewm.avg.get()) < 1.f) break;
+        run(0.01, 0);
+    }
+    const float fsw = (float) converter.realizedFreqHz();
+    const uint16_t pwmMax = converter.pwmMaxDriver();
+    const float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
+    int lo, hi, step;
+    if (!(vin0 > 5 && vin0 < 0.8f * hvTrip && vout0 < hvTrip - 2) ||
+        !coilfit::band(hvTrip, hvTrip - vin0, pwmMax, converter.pwmCtrlMax, steps, lo, hi, step)) {
+        stop = "refused";
+        mppt.setExplicitOvLimit(ov0);
+        return res;
+    }
+    printf("  measure: boost fsw %.0f Hz pwmMax %u band %d..%d step %d Vin %.2f Vout %.2f\n", fsw, pwmMax, lo, hi, step,
+           vin0, vout0);
+    mppt.bflow.enable(true);
+    for (const double dl = tNow() + 3; tNow() < dl && !(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3);)
+        run(0.02, 0);
+    float d[coilfit::kMaxPts], vi[coilfit::kMaxPts], vo[coilfit::kMaxPts], io[coilfit::kMaxPts];
+    uint8_t row[coilfit::kMaxPts];
+    int n = 0, rows = 0;
+    auto zero = [&] {
+        mppt.setManualTarget(0);
+        for (const double dl = tNow() + 10; !converter.disabled() && tNow() < dl;) run(0.01, 0);
+        run(std::max<uint32_t>(dwellMs, 2000) * 1e-3, 0);
+        float c[5];
+        for (float &x: c) x = sensors.Iin->ewm.avg.get(), run(0.05, 0);
+        return med5(c);
+    };
+    const float z0 = zero();
+    mppt.setManualTarget((uint16_t) std::max(2, lo / 3));
+    for (const double dl = tNow() + 5; !(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() + 2) && tNow() < dl &&
+                                       wait(0.02);) {}
+    wait(std::max<uint32_t>(dwellMs, 2000) * 1e-3);
+    if (!(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() + 2)) hi = -1, stop = "Vout not above Vin";
+    for (int H = lo; H <= hi && n < coilfit::kMaxPts; H += step) {
+        const float vin = sensors.Vin->ewm.avg.get(), vout = sensors.Vout->ewm.avg.get();
+        if (!(vout > vin + 2)) { stop = "Vout fell to Vin"; break; }
+        if ((float) H / pwmMax > 0.9f * (1 - vin / vout)) { stop = "near CCM"; break; }
+        mppt.setManualTarget((uint16_t) H);
+        for (const double dl = tNow() + std::max<uint32_t>(dwellMs, 3000) * 1e-3 + H * 4e-3;
+             converter.getCtrlOnPwmCnt() != H && tNow() < dl && wait(0.02);) {}
+        wait(dwellMs * 1e-3);
+        float a[5], b[5], c[5];
+        for (int k = 0; k < 5; ++k)
+            a[k] = sensors.Vin->ewm.avg.get(), b[k] = sensors.Vout->ewm.avg.get(), c[k] = sensors.Iin->ewm.avg.get(), wait(0.05);
+        if (tripped || converter.disabled()) { stop = tripped ? "TRIP" : "converter disabled"; break; }
+        const float D = (float) converter.getCtrlOnPwmCnt() / pwmMax;
+        float bi = med5(a), bo = med5(b);
+        const float vout1 = bo, iin = med5(c);
+        coilfit::asBuck(bi, bo);
+        const bool dcm = converter.inDCM(), ok = iin > 0.02f && bi > bo && bo > 0;
+        if (dcm && ok) d[n] = D, vi[n] = bi, vo[n] = bo, io[n] = iin, row[n] = (uint8_t) rows, ++n;
+        ++rows;
+        const float ipk = coilfit::ipkDcm(D, bi, bo, iin);
+        if (dcm) g_mcIpk = std::max(g_mcIpk, ipk), g_mcIpkPlant = std::max(g_mcIpkPlant, g_vconv.getVin() * D / (fsw * g_vconv.getL()));
+        if (getenv("SIM_V")) printf("  row H %d D %.3f Vin %.2f Vout %.2f Iin %.3f Ipk %.2f %s\n", H, D, med5(a), vout1, iin, ipk, dcm ? "DCM" : "CCM");
+        if (iin > std::min(5.f, 0.75f * iTrip)) { stop = "I"; break; }
+        if (!(ipk <= mppt.limits.Iin_max)) { stop = "Ipk"; break; }
+        if (!dcm) { stop = "CCM"; break; }
+        if (vout1 > hvTrip - 2) { stop = "Vout near the trip"; break; }
+    }
+    if (stop.empty()) stop = "band end";
+    const float z1 = zero();
+    const float zsig = coilfit::zeroCorrect(io, n, z0, z1, row, rows);
+    float iMaxSeen = 0;
+    for (int i = 0; i < n; ++i) iMaxSeen = std::max(iMaxSeen, io[i]);
+    const float floor = std::max(0.15f, 0.2f * iMaxSeen);
+    int nk = 0;
+    for (int i = 0; i < n; ++i)
+        if (io[i] >= floor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
+    g_mcIpkMean = 0;
+    for (int i = 0; i < nk; ++i) g_mcIpkMean += coilfit::ipkDcm(d[i], vi[i], vo[i], io[i]) / (float) nk;
+    res = coilfit::fit(d, vi, vo, io, nk, fsw, zsig);
+    if (std::fabs(z1 - z0) > coilfit::kZeroTol) printf("  measure: zero DISTURBED %+.3f/%+.3f\n", z0, z1);
+    mppt.setExplicitOvLimit(ov0);
+    if (mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
+    secs = tNow() - t0;
+    return res;
+}
+
+// mc-boost-dark: `measure-coil l0` at night on fry in boost (battery 26.6 V on the LV input, a dark PV string as a diode
+//   on the HV output, HV 6.85 V before the start); -lowf: at 21.5 kHz (the `f=21500` pass, booted at that
+//   frequency: no runtime change without MCPWM). SIM_MC_DIODE=i0,vt: the string (5 substrings, knee ~70 V: 7.3e-9,3.7),
+//   SIM_MC_L=50e-6 with SIM_CONF=coil.conf:L0=50e-6: that board's coil, SIM_MC_VINOFS=a,b: Vin reads
+//   a + b Iin [V, V/A] low. SIM_MC_K: plant DC bias
+//   L = L0 (1 - k Ipk) (1/A, default 0.01), SIM_MC_L: plant L0 (default 80e-6). Per pass: L vs the plant's L at the fitted
+//   rows' mean Ipk within 3 %, the slope vs -k (printed), Vout below 80 V, Iin below 8 A, no protection trip.
+// mc-boost-open: the output unloaded (string disconnected): the trip stops it at 80 V.
+static float g_mcVinOfs[2] = {0, 0};
+static int runMcBoost(const std::string &name) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) {
+        printf("== %s %s: %s\n", name.c_str(), c ? "ok" : "FAIL", w);
+        f += !c;
+    };
+    const float k = getenv("SIM_MC_K") ? (float) atof(getenv("SIM_MC_K")) : 0.01f;
+    g_vconv.setLBias(k);
+    const bool open = name == "mc-boost-open";
+    if (open) g_vconv.setOutDiode(0, 0);
+    if (const char *e = getenv("SIM_MC_DIODE")) {
+        float i0 = 0, vt = 0;
+        sscanf(e, "%f,%f", &i0, &vt);
+        g_vconv.setOutDiode(i0, vt);
+    }
+    if (const char *e = getenv("SIM_MC_VINOFS")) {
+        sscanf(e, "%f,%f", &g_mcVinOfs[0], &g_mcVinOfs[1]);
+        g_simSenseHook = [](uint8_t ch, float x) { return ch ? x : x - g_mcVinOfs[0] - g_mcVinOfs[1] * g_vconv.getIinAvg(); };
+    }
+    g_vconv.setVin(26.6f), g_vconv.setVout(6.85f);
+    run(5, 0);
+    printf("== %s: plant L0 %.1f uH, k %.1f %%/A, Vin %.2f Vout %.2f, fsw %.0f Hz, %s\n", name.c_str(), g_vconv.getL() * 1e6f,
+           k * 100, g_vconv.getVin(), g_vconv.getVout(), converter.realizedFreqHz(), modeStr());
+    const size_t trips0 = g_trips.size();
+    double secs = 0;
+    std::string stop;
+    const auto r = simMeasureL0Boost(48, 1000, secs, stop);
+    for (size_t i = trips0; i < g_trips.size(); ++i) printf("==   t=%.3f [%s] %us\n", g_trips[i].t, g_trips[i].who.c_str(), g_trips[i].sec);
+    // the fit's L is at its rows' mean Ipk (L-free, ipkDcm()), where the plant has L0 (1 - k Ipk)
+    const float lPlant = g_vconv.getL() * (1 - k * g_mcIpkMean);
+    printf("== %s: L %.2f uH vs plant %.2f uH at Ipk %.2f A (%+.2f %%), slope %+.2f +-%.2f %%/A vs %+.2f, %d DCM pts, ring %s,"
+           " Ipk up to %.2f A (plant %.2f), Vout max %.2f V, Iin max %.2f A, stop: %s, %.0f s\n", name.c_str(), r.L * 1e6f,
+           lPlant * 1e6f, g_mcIpkMean, (r.L / lPlant - 1) * 100, r.k * 100, r.kse * 100, -k * 100, r.n,
+           r.f > 0 ? "fit" : "none", g_mcIpk, g_mcIpkPlant, g_mcVmax, g_mcImax, stop.c_str(), secs);
+    if (open) { // nothing loads the output: it climbs at the probe duty until the 80 V trip
+        chk(g_trips.size() > trips0 || stop == "TRIP", "tripped");
+        chk(g_mcVmax < 80.5f, "Vout < 80.5 V");
+    } else {
+        chk(std::isfinite(r.L) && r.n >= coilfit::kMinFitPts, "the sweep found its DCM points");
+        chk(std::fabs(r.L / lPlant - 1) < 0.03f, "L within 3 % of the plant");
+        chk(g_mcVmax < 80.f && g_mcImax < 8.f, "Vout < 80 V, Iin < 8 A");
+        chk(g_trips.size() == trips0 && stop != "TRIP", "no trip");
+    }
+    chk(converter.disabled(), "off after the run");
+    printf("== SUMMARY %s: %s (%d failures)\n", name.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
 // mc-flat: `measure-coil l0` takes over from MPPT at ~150 W in CCM with paranoia on (bf-daily-flat's plant):
 //   no protection trip at the take-over (a duty ramp-down at full power trips highD-bflowOpen, whose backoff then
 //   holds the converter off under the sweep), the sweep finds its DCM points with the BF closed (no highD-bflowOpen
@@ -3706,12 +3874,13 @@ static int simMain(int argc, char **argv) {
         setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     if (sc.rfind("wx-", 0) == 0 && sc.size() > 5 && sc.compare(sc.size() - 5, 5, "-flat") == 0)
         setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
-    const bool psuBoost = sc == "psu-boost-dark" || sc == "psu-boost-cold";
-    if (psuBoost) { // fry in boost: MCPWM timing, its ADC rate and filters, INA226 (Vin, Iin) on the LV side, no HV shunt
+    const bool psuBoost = sc == "psu-boost-dark" || sc == "psu-boost-cold", mcBoost = sc.rfind("mc-boost-", 0) == 0;
+    if (psuBoost || mcBoost) { // fry in boost: MCPWM timing, its ADC rate and filters, INA226 (Vin, Iin) on the LV side, no HV shunt
         std::string c = "converter.conf:topo=boost,tracker.conf:target_duty_cycle=0,coil.conf:L0=80e-6,"
                         "sensor.conf:lv_v_ch=0,sensor.conf:hv_v_ch=1,sensor.conf:lv_i_ch=3,sensor.conf:lv_i_factor=-1,"
                         "sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20,"
                         "limits.conf:lv_i_max=32,board.conf:bflow_bat=1";
+        if (sc == "mc-boost-dark-lowf") c += ",board.conf:pwm_freq=21500";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
         setenv("SIM_ADC_HZ", "513", 0);
@@ -3827,7 +3996,13 @@ static int simMain(int argc, char **argv) {
         ov.push_back({"in_bf", "1"});
         if (const char *e = getenv("SIM_BFSTUCK"); e && *e) ov.push_back({"bflow_stuck", e});
     }
+    if (mcBoost) // battery 26.6 V as a stiff source, Vout divider 207.5 kOhm, dark string I = 23 nA (exp(V / 4.45 V) - 1): fit to
+        // the 6-substring string measured at night, 0.18 / 0.39 / 0.97 / 1.5 A at 70 / 74 / 78 / 80 V
+        ov = {{"pv_isc", "200"}, {"pv_voc", "26.6"}, {"pv_k", "0.95"}, {"v_bat", "0"}, {"r_bat", "207.5e3"}, {"plant_c_in", "470e-6"},
+              {"plant_c_out", "1.2e-3"}, {"out_d_i0", "2.3e-8"}, {"out_d_vt", "4.45"}, {"noise_iin", "0.02"}, {"noise_vin", "0.02"},
+              {"noise_vout", "0.05"}};
     boot(ov, p0);
+    if (mcBoost && getenv("SIM_MC_L")) g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), (float) atof(getenv("SIM_MC_L")));
     if (rcal) g_vconv.setDiodeVf(0.7f);
     if (sc == "rcal-sun" && !g_ring) g_vconv.setRing(5e-9f, 40.f);
     if (sc == "rcal-sun") g_vconv.setPv(5.6f, 79.6f, 0.78f);
@@ -3847,6 +4022,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "ring-coil" || sc == "ring-coil-weak") return runRingCoil(name, sc == "ring-coil-weak");
     if (isWx) return runWx(name, wx);
     if (psuBoost) return sc == "psu-boost-cold" ? runPsuBoostCold(name) : runPsuBoostDark(name);
+    if (mcBoost) return runMcBoost(name);
     if (cvHold) return runCvHold(name, sc);
     if (sc.rfind("shade", 0) == 0) g_vconv.setPvShade(0.68f);
 

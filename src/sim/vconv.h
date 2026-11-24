@@ -228,8 +228,8 @@ public:
     void setVout(float v) { vOut_ = vSense_ = v; }
     void setDiodeVf(float v) { diodeVf_ = v; } // body-diode drop (LS and HS) in the dead/off phases
     float ntcV = 0.9f; // NTC sense voltage, ~1.3 °C (25 °C is 1.65 V)
-    // Buck DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). Only the HS/LS/diode slopes use the
-    // biased L; the dead-time swing and its clamp energy, the off-phase ring and the boost branch keep L0.
+    // DC bias: L = L0 * (1 - k*|Ipk|), Ipk the previous cycle's peak (k in 1/A, 0 = off). Only the switch/diode slopes use the
+    // biased L; the buck's dead-time swing and its clamp energy and the off-phase ring keep L0.
     void setLBias(float k) { lK_ = k; }
     // Buck switch-node ring while both switches are off: node capacitance c (F) against the coil,
     // quality factor q; ring frequency 1/(2*pi*sqrt(L*c)). c <= 0 disables it (default).

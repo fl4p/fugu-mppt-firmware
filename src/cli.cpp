@@ -2405,6 +2405,8 @@ static void cmdMeasureCoil(cmd *c) {
     if (dwellMs && dwellMs < 200) dwellMs = 200;
     if (fHz && ls)
         CMD_FAIL_RETURN("measure-coil: f= is for l0 only");
+    if (ls && converter.boost())
+        CMD_FAIL_RETURN("measure-coil: ls is for a buck only");
     if (fHz && !converter.getPeriodTicks())
         CMD_FAIL_RETURN("measure-coil: f= needs the MCPWM gate driver build");
     if (fHz && (fHz < (long) kMeasFswMin || fHz > (long) converter.getPwmFrequency()))

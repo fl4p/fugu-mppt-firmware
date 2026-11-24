@@ -493,10 +493,15 @@ the measurement and sends `mppt` afterwards in every outcome: a result, a failur
 ends with "Resumed MPPT." or, in amber, why MPPT was not resumed. A device already at `dc 0` is measured as it is and
 left there. In PSU/PV mode or at a manual duty the editor stops nothing: the entry shows the firmware's refusal.
 
+On a boost converter both coil entries run backwards, from the battery into the PV string, and need the panels dark:
+run them at night with the string connected. The firmware disables the converter above 80 V or 8 A battery
+current ([boost converters](../lab/coil-inductance.md#boost-converters)).
+
 The coil entries draw their sweep as the rows arrive, with the device output folded below the chart:
 
 - **Coil inductance (L0)** plots the inductance of each DCM row over the coil's peak current,
-  Ipk = (Vin − Vout)·D / (fsw·L) with the row's own L, the formula the firmware's fit uses. Rows below the fit's
+  Ipk = (Vin − Vout)·D / (fsw·L) with the row's own L (Vin·D / (fsw·L) on a boost), the formula the firmware's fit
+  uses. Rows below the fit's
   current floor are grey. The raw rows are small faded dots joined in step order by a faint line: on a board with
   DCM switch-node ringing each duty step catches the ring at another phase, so they swing ±10 % or more in a sawtooth
   that the firmware's ring fit corrects. Once the run ends the chart adds the fit: its current bins as points with

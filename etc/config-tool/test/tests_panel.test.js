@@ -85,6 +85,15 @@ test('parsers: help, selftest, backflow verdicts, coil, rect-cal status, sweep-c
     'measure-coil: Iout zero +0.003/+0.030 A (off, before/after), subtracted; DISTURBED: moved > 0.02 A, L not for coil.conf']);
   assert.equal(c.L, '50.34'); assert.equal(c.disturbed, true); assert.match(c.kind, /median/);
   assert.equal(window.parseCoil(['  converter disabled (protection?); aborting']).bad, 'converter disabled (protection?); aborting');
+  // a boost run: Ipk = Vin·D/(fsw·L), the Iin floor and zero
+  const b = ['measure-coil L0: fsw=39000 pwmMax=4103 band 685..2465 step 37  Vin=26.60 Vout=26.60 M=1.000 boost',
+    '      H      D    Vin   Vout    Iin mode    L_uH', '   1500  0.366  26.58  66.07  0.855  DCM   77.60',
+    'measure-coil: L = 77.25 uH  (median of 9 DCM pts, Iin>=0.46A; ring not resolved: too few points, expect up to +-5%)',
+    'measure-coil: Iin zero +0.001/+0.002 A (off, before/after), subtracted'];
+  const bp = window.parseCoilPlot(b);
+  assert.equal(bp.boost, true); assert.equal(bp.floor, 0.46); assert.equal(bp.L, 77.25);
+  assert.ok(Math.abs(bp.pts[0].x - 26.58 * 0.366 / (39000 * 77.60e-6)) < 1e-9, 'boost Ipk from Vin, not Vin - Vout');
+  assert.equal(window.parseCoil(b).L, '77.25');
 
   const r = window.parseRectStatus([I('rectcal', 'state=failed: not in DCM auto=1 needed=1 drv=ledc offset=-3 ct (-75 ns, uncalibrated) backstop=2 unsaved=0')]);
   assert.equal(r.state, 'failed'); assert.equal(r.why, 'not in DCM'); assert.equal(r.ns, '-75'); assert.equal(r.cal, 'uncalibrated');

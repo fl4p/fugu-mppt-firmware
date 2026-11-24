@@ -4,7 +4,9 @@
 
 // On-device port of etc/measure_coil.py. Spawns a non-RT-core task that drives the converter through
 // a duty (L0) or low-side-timing (rect_offset_ns) sweep and inverts the DCM transfer relation
-// L = (Vin-Vout)*Vin*D^2 / (2*Vout*fsw*Iout). See website/docs/lab/coil-inductance.md.
+// L = (Vin-Vout)*Vin*D^2 / (2*Vout*fsw*Iout). See website/docs/lab/coil-inductance.md. A boost (L0 only) sweeps
+// from its input into the output's load, L = Vin*Vout*D^2 / (2*fsw*Iin*(Vout-Vin)), stopping before Vout reaches 80 V
+// (95 % of limits.conf hv_max) or Iin 5 A (trips at 80 V and 8 A).
 //
 // ls=false -> L0 duty sweep (arg1 = steps, 0 = default); ls=true -> LS-timing sweep (arg1 = hs,
 // 0 = auto), dwellMs 0 = default (L0 1 s, LS 3 s). apply writes the result to coil.conf. fHz > 0: L0 sweep at

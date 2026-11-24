@@ -5,7 +5,8 @@
 #include <cstdint>
 #include <utility>
 
-// Coil inductance from a DCM duty sweep of a buck (etc/measure_coil.py is the reference, same algorithm).
+// Coil inductance from a DCM duty sweep of a buck (etc/measure_coil.py is the reference, same algorithm; a boost
+// through asBuck()).
 // Per point the DCM transfer relation gives 1/L = 2*Vout*fsw*Iout / ((Vin-Vout)*Vin*D^2). The switch
 // node rings after the coil current reaches zero (L against the node capacitance) and the ring phase at
 // HS turn-on moves Iout by +-10..25 %; the phase is the ring frequency times the dead time
@@ -24,6 +25,14 @@ constexpr float kFLo = 80e3f, kFHi = 1.2e6f; // ring frequency search range, Hz
 constexpr int kMaxBins = 5, kMinBinPts = 6;
 constexpr float kOnTimeMin = 50e-9f; // on-time offset bound (s) when the dead time is shorter
 constexpr float kGainTol = 0.01f;    // assumed Iout gain tolerance (shunt), relative
+
+// A boost (vin the LV input, vout the HV output, its input current the coil current) is the buck with input vout and
+// output vout - vin at the same control duty: mirroring the switch node (v -> vout - v) keeps the coil's voltage and
+// current. Maps a boost point in place, so everything below applies unchanged.
+inline void asBuck(float &vin, float &vout) {
+    const float vh = vout;
+    vout -= vin, vin = vh;
+}
 
 // DCM peak coil current from the output average, L-free: Iout = Ipk*D*Vin/(2*Vout) (CCM: >= the real peak)
 inline float ipkDcm(float d, float vin, float vout, float iout) { return 2.0f * iout * vout / (d * vin); }

@@ -3905,7 +3905,7 @@ const TESTS = [
   { id:"coil", group:"Measurements", title:"Coil inductance (L0)", root:"measure-coil", optional:true,
     cmd:()=>"measure-coil l0", confirm:"plain", tag:"drives the half-bridge", save:true, chart:true,
     what:"Measures the inductance of the power coil.",
-    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
+    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; a buck with Vin above Vout + 1 V (sun), or a boost at night (battery in, dark panels out); a build with CONFIG_FUGU_WITH_MEASURE_COIL.", dur:"about 1–1.5 min, no abort",
     risk:"Drives the half-bridge in manual PWM up to 2 A output. The firmware has no abort for it.",
     does:()=>"Charging stops (“dc 0”), then the firmware sweeps the duty in manual PWM (diode emulation, up to 2 A output) for about 1–1.5 min; afterwards MPPT resumes if it was on. There is no abort command. Nothing is written: Save L0 does that afterwards.",
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
@@ -3913,9 +3913,9 @@ const TESTS = [
     cmd:()=>"measure-coil l0", cmd2:()=>"measure-coil l0 f="+tstBiasHz(), next:tstBiasNext,
     confirm:"plain", tag:"drives the half-bridge", chart:true,
     what:"Measures how the coil's inductance falls as its current rises.",
-    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; Vin above Vout + 1 V (sun); a build with CONFIG_FUGU_WITH_MEASURE_COIL, for the second pass firmware with “measure-coil l0 f=” and the MCPWM gate driver.", dur:"about 2–3 min, no abort",
-    risk:"Drives the half-bridge in manual PWM up to 2 A output, the second pass at a lower switching frequency (the coil may whine). The firmware has no abort for it.",
-    does:()=>`Charging stops (“dc 0”), then the firmware sweeps the duty twice in manual PWM (diode emulation, up to 2 A output): at the normal switching frequency, then at ${tstBiasHz()/1000} kHz, which drives a higher peak current through the coil. The normal frequency is restored after the second sweep, and MPPT resumes if it was on. There is no abort command. Nothing is written.`,
+    needs:"MPPT or a converter stopped with “dc 0”, not PSU/PV mode; a buck with Vin above Vout + 1 V (sun), or a boost at night (battery in, dark panels out); a build with CONFIG_FUGU_WITH_MEASURE_COIL, for the second pass firmware with “measure-coil l0 f=” and the MCPWM gate driver.", dur:"about 2–3 min, no abort",
+    risk:"Drives the half-bridge in manual PWM up to 2 A output (a boost: up to 5 A battery current, panels up to 78 V), the second pass at a lower switching frequency (the coil may whine). The firmware has no abort for it.",
+    does:()=>`Charging stops (“dc 0”), then the firmware sweeps the duty twice in manual PWM (diode emulation, up to 2 A output): at the normal switching frequency, then at ${tstBiasHz()/1000} kHz, which drives a higher peak current through the coil. The normal frequency is restored after the second sweep, and MPPT resumes if it was on. There is no abort command. Nothing is written.\n\nA boost converter (converter.conf topo=boost) runs this at night: the battery drives the coil and the dark panel string is the load, so the panel voltage rises with the duty (up to 78 V, a trip stops it at 80 V or 8 A battery current). Run it only after dark, with the panels connected.`,
     end:/\bmeasure-coil: done\b/, timeout:300000, recheck:"uptime" },
 
   { id:"bflow", group:"Self-tests", title:"Backflow switch", root:"selftest", cmd:()=>"selftest bflow", abort:"selftest abort",
@@ -4185,21 +4185,21 @@ function tstAxes(xd, yd, W, H, xu, yu){
 }
 
 // measure-coil output for the chart. L0: one point per DCM row (h: its H), L (µH) over the peak coil current
-// Ipk = (Vin-Vout)·D/(fsw·L) (coil_fit.h with the row's L), grey below the fit's Iout floor; the fit's bins and
+// Ipk = (Vin-Vout)·D/(fsw·L), a boost (header ends in "boost") Vin·D/(fsw·L) (coil_fit.h with the row's L), grey below the fit's Iout floor; the fit's bins and
 // slope; the result, fit "ring"|"median", ring kHz; end: the run printed its last line. LS: Iout over the low-side
 // count, grey in CCM; ideal, auto and peak.
 function parseCoilPlot(lines){
   const p={ ls:false, fsw:0, pts:[], bins:[], slope:null, L:null, fit:"", ring:null, end:false, floor:0, ideal:null, auto:null, peak:null };
   for (const raw of lines){
     const l=tstMsgOf(tstLine(raw)); let m;
-    if ((m=l.match(/\bmeasure-coil L0: fsw=([\d.]+)/))){ Object.assign(p, { ls:false, fsw:+m[1], pts:[] }); }
+    if ((m=l.match(/\bmeasure-coil L0: fsw=([\d.]+)/))){ Object.assign(p, { ls:false, fsw:+m[1], pts:[], boost:/ boost$/.test(l) }); }
     else if ((m=l.match(/\bmeasure-coil LS: .*?ideal_LS=([\d.]+) auto_LS=(\d+)/))) Object.assign(p, { ls:true, ideal:+m[1], auto:+m[2], pts:[] });
     else if (!p.ls && p.fsw && (m=l.match(/^\s+(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(-?[\d.]+)\s+(DCM|CCM)\s+(\S+)$/))){
       const [D, vi, vo, io, L]=[+m[2], +m[3], +m[4], +m[5], +m[7]];
-      if (m[6]==="DCM" && L>0) p.pts.push({ x:(vi-vo)*D/(p.fsw*L*1e-6), y:L, io, h:+m[1] });
+      if (m[6]==="DCM" && L>0) p.pts.push({ x:(p.boost ? vi : vi-vo)*D/(p.fsw*L*1e-6), y:L, io, h:+m[1] });
     }
     else if (p.ls && (m=l.match(/^\s+(\d+)\s+(-?[\d.]+)\s+([\d.]+)\s+([\d.]+)\s+(DCM|CCM)$/))) p.pts.push({ x:+m[1], y:+m[2], g:m[5]==="CCM" });
-    else if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH\s+\((ring fit|median)?.*?Iout>=([\d.]+)A(?:.*?\bring (\d+) kHz)?/))){
+    else if ((m=l.match(/\bmeasure-coil: L = ([\d.]+) uH\s+\((ring fit|median)?.*?I(?:out|in)>=([\d.]+)A(?:.*?\bring (\d+) kHz)?/))){
       Object.assign(p, { L:+m[1], fit:(m[2]||"").split(" ")[0], floor:+m[3], ring: m[4] ? +m[4] : null, end:true }); }
     else if (/\bmeasure-coil: (?:done\b|only \d)/.test(l)) p.end=true;
     else if ((m=l.match(/\bL\(Ipk\), \+-noise\/offsets:(.*)$/)))
@@ -4281,7 +4281,7 @@ function coilBiasModel(pts, lx){
     return null; };
   return m;
 }
-// the model of the passes with a result, up to the flux of their largest fitted row (λ = Ipk·L = (Vin-Vout)·D/fsw, ring-free)
+// the model of the passes with a result, up to the flux of their largest fitted row (λ = Ipk·L, ring-free)
 const coilBiasFit = ps => { const r=ps.filter(q=>coilFitPts(q).length);
   return coilBiasModel(r.flatMap(coilFitPts), Math.max(0, ...r.flatMap(q=>q.pts.filter(o=>!o.g).map(o=>o.x*o.y)))); };
 // coilbias: the switching frequency of the second pass, the lowest the firmware takes: 20 kHz, or more where

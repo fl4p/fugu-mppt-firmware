@@ -31,6 +31,29 @@ struct MeasArgs {
 
 static std::atomic<bool> s_measureBusy{false};
 static MeasArgs s_measArgs{};
+// boost: output (HV) and input (coil) current trips of the run, 0 = none; s_tripped: one fired
+static constexpr float kBoostVoutMax = 80, kBoostIinMax = 8;
+static float s_hvTrip = 0, s_iTrip = 0;
+static bool s_tripped = false;
+
+// the coil current: the output's in a buck, the input's in a boost
+static const Sensor *coilI() { return converter.boost() ? sensors.Iin : sensors.Iout; }
+
+// boost trip check, then sleep ~ms; false: tripped (PWM stopped by the RT loop at once)
+static bool waitMs(uint32_t ms) {
+    for (const time_ms dl = wallClockMs() + ms;;) {
+        if (!s_tripped && s_hvTrip > 0 &&
+            (sensors.Vout->med3.get() > s_hvTrip || coilI()->med3.get() > s_iTrip)) {
+            s_tripped = true;
+            (void) mppt.requestPsuManual(0, -1, false, true);
+            UART_LOG("measure-coil: TRIP Vout %.2f (max %.1f) Iin %.2f A (max %.1f), stopped", sensors.Vout->med3.get(),
+                     s_hvTrip, coilI()->med3.get(), s_iTrip);
+        }
+        if (s_tripped) return false;
+        if (wallClockMs() >= dl) return true;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
 
 static bool waitPsuCommand(uint32_t ticket, uint32_t timeoutMs = 1000) {
     const auto deadline = wallClockMs() + timeoutMs;
@@ -60,20 +83,19 @@ static float medianN(float *a, int n) {
 static void settleAndRead(uint16_t H, uint32_t dwellMs, Reading &out) {
     mppt.setManualTarget(H);
     time_ms deadline = wallClockMs() + max<uint32_t>(dwellMs, 3000) + (uint32_t) H * 4;
-    while (converter.getCtrlOnPwmCnt() != H && wallClockMs() < deadline)
-        vTaskDelay(pdMS_TO_TICKS(20));
-    vTaskDelay(pdMS_TO_TICKS(dwellMs));
+    while (converter.getCtrlOnPwmCnt() != H && wallClockMs() < deadline && waitMs(20)) {}
+    waitMs(dwellMs);
     float vi[5], vo[5], io[5];
     for (int k = 0; k < 5; ++k) {
         vi[k] = sensors.Vin->ewm.avg.get();
         vo[k] = sensors.Vout->ewm.avg.get();
-        io[k] = sensors.Iout->ewm.avg.get();
-        vTaskDelay(pdMS_TO_TICKS(50));
+        io[k] = coilI()->ewm.avg.get();
+        waitMs(50);
     }
     out = {medianN(vi, 5), medianN(vo, 5), medianN(io, 5), converter.getCtrlOnPwmCnt(), converter.inDCM()};
 }
 
-// Iout with the converter off: ramp down, settle, median of 5 EWM reads (NAN: still on)
+// coil current with the converter off: ramp down, settle, median of 5 EWM reads (NAN: still on)
 static float readZero(uint32_t dwellMs) {
     mppt.setManualTarget(0);
     const time_ms deadline = wallClockMs() + 10000;
@@ -83,7 +105,7 @@ static float readZero(uint32_t dwellMs) {
     vTaskDelay(pdMS_TO_TICKS(dwellMs));
     float io[5];
     for (int k = 0; k < 5; ++k) {
-        io[k] = sensors.Iout->ewm.avg.get();
+        io[k] = coilI()->ewm.avg.get();
         vTaskDelay(pdMS_TO_TICKS(50));
     }
     return medianN(io, 5);
@@ -124,56 +146,93 @@ static bool setFsw(uint32_t hz) {
     return !e;
 }
 
-// returns the inductance to persist (NAN: none)
+// returns the inductance to persist (NAN: none). Boost: the LV input (battery) drives the HV output, whose load sets the
+// operating point (a dark PV string at night); rows map onto the buck relations through coilfit::asBuck().
 static float sweepL0(const MeasArgs &a) {
+    const bool boost = converter.boost();
     float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
-    if (vin0 <= vout0 + 1.0f) { UART_LOG("measure-coil: need Vin>Vout+1 (Vin=%.2f Vout=%.2f)", vin0, vout0); return NAN; }
+    // boost: the band is the buck one at the output trip, the live Vout ends it (no fixed voltage target)
+    if (boost ? !(vin0 > 5.0f && vin0 < 0.8f * s_hvTrip && vout0 < s_hvTrip - 2.0f) : vin0 <= vout0 + 1.0f) {
+        UART_LOG(boost ? "measure-coil: need 5<Vin<%.1f, Vout<%.1f (Vin=%.2f Vout=%.2f)" : "measure-coil: need Vin>Vout+1 "
+                 "(Vin=%.2f Vout=%.2f)", boost ? 0.8f * s_hvTrip : vin0, boost ? s_hvTrip - 2.0f : vout0, vin0, vout0);
+        return NAN;
+    }
     if (a.fHz && !setFsw(a.fHz)) return NAN;
     // after the frequency change: pwmMax, pwmCtrlMax and the CCM/DCM basis fL follow it
     const float fsw = (float) converter.realizedFreqHz();
     const uint16_t pwmMax = converter.pwmMaxDriver();
-    const float iMaxLim = min(2.0f, mppt.limits.Iout_max), ipkMax = mppt.limits.Iout_max;
+    // boost: under the 6 A trip without sync rect (protect(): highI-noSyncRect)
+    const float iMaxLim = boost ? min(5.0f, 0.75f * s_iTrip) : min(2.0f, mppt.limits.Iout_max);
+    const float ipkMax = boost ? mppt.limits.Iin_max : mppt.limits.Iout_max;
     int steps = a.arg1 > 0 ? min(a.arg1, MEAS_MAX_PTS) : 48;
     int h_lo, h_hi, step;
-    if (!coilfit::band(vin0, vout0, pwmMax, converter.pwmCtrlMax, steps, h_lo, h_hi, step)) {
+    float bvi = boost ? s_hvTrip : vin0, bvo = boost ? s_hvTrip - vin0 : vout0;
+    if (!coilfit::band(bvi, bvo, pwmMax, converter.pwmCtrlMax, steps, h_lo, h_hi, step)) {
         UART_LOG("measure-coil: empty duty band");
         return NAN;
     }
 
-    UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f",
-             fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0);
+    UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f%s",
+             fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0, boost ? " boost" : "");
     const uint32_t zDwell = max<uint32_t>(a.dwellMs, 2000);
+    if (boost) { // the battery feeds the coil through the backflow switch; the output charges to it through the HS diode
+        mppt.bflow.enable(true);
+        for (const time_ms dl = wallClockMs() + 3000; wallClockMs() < dl && !(sensors.Vout->ewm.avg.get() >
+                 sensors.Vin->ewm.avg.get() - 3.0f);) vTaskDelay(pdMS_TO_TICKS(20));
+        vout0 = sensors.Vout->ewm.avg.get();
+        if (!(vout0 > sensors.Vin->ewm.avg.get() - 3.0f)) {
+            UART_LOG("measure-coil: Vout %.2f did not follow Vin %.2f with the backflow switch on", vout0,
+                     sensors.Vin->ewm.avg.get());
+            return NAN;
+        }
+    }
     const float z0 = readZero(zDwell);
-    if (z0 != z0) { UART_LOG("measure-coil: converter did not stop for the Iout zero"); return NAN; }
-    UART_LOG("      H      D    Vin   Vout   Iout mode    L_uH");
+    if (z0 != z0) { UART_LOG("measure-coil: converter did not stop for the current zero"); return NAN; }
+    if (boost) { // a low duty lifts Vout above Vin first: below it the coil does not reset and the duty must not climb
+        mppt.setManualTarget((uint16_t) max(2, h_lo / 3));
+        for (const time_ms dl = wallClockMs() + 5000; !(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() + 2.0f)
+                 && wallClockMs() < dl && waitMs(20);) {}
+        waitMs(max<uint32_t>(a.dwellMs, 2000)); // settled: the near-CCM test below judges the next duty by this Vout
+        if (!(sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() + 2.0f)) {
+            UART_LOG("measure-coil: Vout %.2f not above Vin %.2f + 2 at duty %d; stopping", sensors.Vout->ewm.avg.get(),
+                     sensors.Vin->ewm.avg.get(), max(2, h_lo / 3));
+            h_hi = -1;
+        }
+    }
+    const char *iName = boost ? "Iin" : "Iout";
+    UART_LOG("      H      D    Vin   Vout   %4s mode    L_uH", iName);
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
     uint8_t row[MEAS_MAX_PTS]; // sweep position of each point, for the zero interpolation
     int n = 0, rows = 0;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
-        // BF closed once forward current flows (output node above the battery, as MPPT closes it): open, its body
-        // diode carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L
-        if (!(sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 1.0f)) {
-            UART_LOG("  Vin no longer above Vout+1; stopping");
+        const float vin = sensors.Vin->ewm.avg.get(), vout = sensors.Vout->ewm.avg.get();
+        if (boost ? !(vout > vin + 2.0f) : !(vin > vout + 1.0f)) {
+            UART_LOG(boost ? "  Vout no longer above Vin+2; stopping" : "  Vin no longer above Vout+1; stopping");
             break;
         }
-        if (sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true);
+        // DCM ends at D = 1 - Vin/Vout, which moves with the load: stop a step short of 0.9 x it
+        if (boost && (float) H / pwmMax > 0.9f * (1 - vin / vout)) { UART_LOG("  near CCM; stopping"); break; }
+        // buck: BF closed once forward current flows (output node above the battery, as MPPT closes it): open, its body
+        // diode carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L
+        if (!boost && sensors.Iout->ewm.avg.get() > 0.1f) mppt.bflow.enable(true);
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
-        if (converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
-        float D = (float) r.H / pwmMax;
-        float L = (r.iout <= 0.02f || r.vin <= r.vout) ? NAN
-                  : (r.vin - r.vout) * r.vin * D * D / (2.0f * r.vout * fsw * r.iout);
+        if (s_tripped || converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
+        float D = (float) r.H / pwmMax, bi = r.vin, bo = r.vout;
+        if (boost) coilfit::asBuck(bi, bo);
+        float L = (r.iout <= 0.02f || bi <= bo || bo <= 0) ? NAN : (bi - bo) * bi * D * D / (2.0f * bo * fsw * r.iout);
         UART_LOG("  %5u %6.3f %6.2f %6.2f %6.3f  %3s %7.2f", r.H, D, r.vin, r.vout, r.iout,
                  r.dcm ? "DCM" : "CCM", L * 1e6f);
         if (r.dcm && L == L) {
-            d[n] = D, vi[n] = r.vin, vo[n] = r.vout, io[n] = r.iout, row[n] = (uint8_t) rows;
+            d[n] = D, vi[n] = bi, vo[n] = bo, io[n] = r.iout, row[n] = (uint8_t) rows;
             ++n;
         }
         ++rows;
-        if (r.iout > iMaxLim) { UART_LOG("  Iout %.2f > %.2f; stopping", r.iout, iMaxLim); break; }
-        const float ipk = coilfit::ipkDcm(D, r.vin, r.vout, r.iout);
+        if (r.iout > iMaxLim) { UART_LOG("  %s %.2f > %.2f; stopping", iName, r.iout, iMaxLim); break; }
+        const float ipk = coilfit::ipkDcm(D, bi, bo, r.iout);
         if (!(ipk <= ipkMax)) { UART_LOG("  Ipk %.2f > %.2f; stopping", ipk, ipkMax); break; }
         if (!r.dcm) { UART_LOG("  entered CCM; stopping"); break; }
+        if (boost && r.vout > s_hvTrip - 2.0f) { UART_LOG("  Vout %.2f near %.1f; stopping", r.vout, s_hvTrip); break; }
     }
     const float z1 = readZero(zDwell);
     const bool disturbed = !(fabsf(z1 - z0) <= coilfit::kZeroTol); // also: z1 unread
@@ -188,14 +247,14 @@ static float sweepL0(const MeasArgs &a) {
     const float ton = max(coilfit::kOnTimeMin, max(converter.getDeadTimeHlNs(), converter.getDeadTimeLhNs()) * 1e-9f);
     const auto f = coilfit::fit(d, vi, vo, io, nk, fsw, zsig, ton);
     if (f.f > 0)
-        UART_LOG("measure-coil: L = %.2f uH  (ring fit, %d DCM pts, Iout>=%.2fA, +-%.1f%% noise +-%.1f%% syst; ring %.0f kHz"
-                 " = %.1f nF node C, ripple +-%.0f%%, %.1f periods; median of points %.2f uH)", f.L * 1e6f, f.n, ifloor,
+        UART_LOG("measure-coil: L = %.2f uH  (ring fit, %d DCM pts, %s>=%.2fA, +-%.1f%% noise +-%.1f%% syst; ring %.0f kHz"
+                 " = %.1f nF node C, ripple +-%.0f%%, %.1f periods; median of points %.2f uH)", f.L * 1e6f, f.n, iName, ifloor,
                  f.se * 100.0f, f.sys * 100.0f, f.f * 1e-3f, 1e9f / (39.478418f * f.f * f.f * f.L), f.amp * 100.0f,
                  f.periods, f.Lmed * 1e6f);
     else
-        UART_LOG("measure-coil: L = %.2f uH  (median of %d DCM pts, Iout>=%.2fA; ring not resolved: %s, expect up to +-5%%)",
-                 f.L * 1e6f, f.n, ifloor, f.n < coilfit::kMinFitPts ? "too few points" : "no periodic term");
-    UART_LOG("measure-coil: Iout zero %+.3f/%+.3f A (off, before/after), subtracted%s", z0, z1,
+        UART_LOG("measure-coil: L = %.2f uH  (median of %d DCM pts, %s>=%.2fA; ring not resolved: %s, expect up to +-5%%)",
+                 f.L * 1e6f, f.n, iName, ifloor, f.n < coilfit::kMinFitPts ? "too few points" : "no periodic term");
+    UART_LOG("measure-coil: %s zero %+.3f/%+.3f A (off, before/after), subtracted%s", iName, z0, z1,
              disturbed ? "; DISTURBED: moved > 0.02 A, L not for coil.conf" : "");
     logSplit(f);
     if (disturbed) return NAN;
@@ -291,17 +350,23 @@ static void measureCoilTask(void *arg) {
     if (!a.dwellMs) a.dwellMs = a.ls ? 3000 : 1000; // L0: 48 x ~1.3 s, about a minute
     const uint32_t fNom = converter.getPwmFrequency();
     float l0 = NAN;
+    const bool boost = converter.boost();
+    const float ov0 = mppt.getExplicitOvLimit();
+    s_tripped = false;
+    s_iTrip = min(kBoostIinMax, mppt.limits.Iin_max);
+    s_hvTrip = boost ? min(kBoostVoutMax, 0.95f * mppt.limits.Vout_max) : 0;
+    if (boost) mppt.setExplicitOvLimit(fminf(ov0, s_hvTrip)); // the RT loop's per-sample Vout-OV trip
     // started from `dc 0` only (console); manual mode keeps MPPT, its sweeps and starts off until `mppt`
     const auto enterTicket = mppt.requestPsuManual(0, -1, false, true);
     const bool entered = waitPsuCommand(enterTicket);
     for (const time_ms dl = wallClockMs() + 10000; entered && wallClockMs() < dl;) { // let the filters drain
-        if (converter.disabled() && sensors.Iout && fabsf(sensors.Iout->ewm.avg.get()) < 1.f) break;
+        if (converter.disabled() && coilI() && fabsf(coilI()->ewm.avg.get()) < 1.f) break;
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     if (!entered) {
         UART_LOG("measure-coil: RT transition timed out");
-    } else if (!sensors.Vin || !sensors.Vout || !sensors.Iout) {
-        UART_LOG("measure-coil: missing Vin/Vout/Iout sensor");
+    } else if (!sensors.Vin || !sensors.Vout || !coilI()) {
+        UART_LOG("measure-coil: missing Vin/Vout/I sensor");
     } else {
         if (a.ls) sweepLs(a); else l0 = sweepL0(a);
     }
@@ -312,6 +377,8 @@ static void measureCoilTask(void *arg) {
     while (!converter.disabled() && wallClockMs() < doneDeadline)
         vTaskDelay(pdMS_TO_TICKS(10));
     const bool off = converter.disabled();
+    if (boost) mppt.setExplicitOvLimit(ov0);
+    s_hvTrip = 0;
     if (a.fHz && !(converter.pwmFreqIdle() && converter.getPwmFrequency() == fNom)) {
         bool ok = false;
         for (int i = 0; i < 3 && !ok; ++i) ok = setFsw(fNom);

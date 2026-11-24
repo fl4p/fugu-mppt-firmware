@@ -341,6 +341,64 @@ The ring fit's frequency ceiling, set by the spacing of the points in dead time,
 switching frequency at a given step count: with 48 steps it is about 0.65 MHz at 20 kHz, still above
 the 250–330 kHz rings of §7. More steps raise it.
 
+
+#### Boost converters
+
+With `converter.conf::topo=boost`, `measure-coil l0` runs the sweep backwards through the boost:
+the battery on the low-voltage side is the input, and the PV string on the high-voltage side, dark
+at night, is the load. A dark string is a diode chain: it draws almost nothing below its knee and
+then the current rises steeply. The knee lies near 0.5–0.6 V per cell, so it scales with the number
+of cells in series. One measured string of five substrings drew 0.2 A from the battery at 60 V,
+1.0 A at 66 V and 4.6 A at 71 V. The sweep therefore has no voltage target: it steps the duty and
+stops on the battery current, with fixed voltage and current trips as the hard limits.
+
+A boost with input `Vin` and output `Vout` is the buck with input `Vout` and output `Vout − Vin` at
+the same duty. Mirroring the switch node (`v → Vout − v`) keeps the coil voltage in both intervals,
+and the coil current is the boost's input current `Iin`. Each row is mapped this way and then goes
+through the buck formulas, the `Iin` floor and the ring fit unchanged. In DCM:
+
+```
+Iin = Vin·Vout·D² / (2·L·fsw·(Vout − Vin))
+L   = Vin·Vout·D² / (2·fsw·Iin·(Vout − Vin))
+Ipk = Vin·D / (fsw·L) = 2·Iin·(Vout − Vin) / (D·Vout)
+```
+
+The boost is in DCM while `D < 1 − Vin/Vout`. A diode-like load keeps it there: a higher duty raises
+`Vout` until the load takes the extra power. In CCM the duty sets `Vout = Vin/(1 − D)` directly, so
+on the steep part of the string the current would run away. The sweep stops before a step would
+cross 90 % of that boundary.
+
+The run:
+
+1. The low-side MOSFET stays off for the whole sweep (no synchronous rectification), so the
+   battery reaches the coil only through the closed backflow switch. The command closes it and
+   waits for `Vout` to follow `Vin`.
+2. It reads the `Iin` zero, then raises the duty until `Vout` is 2 V above `Vin`. Below that the
+   coil current does not return to zero in each period, so no row is taken.
+3. It steps through the duty band and ends the sweep at the first row that reaches one of these:
+   - `Iin` 5 A, 75 % of the current trip and below the 6 A protection that applies without
+     synchronous rectification
+   - `Ipk` above the input-current limit
+   - a next step that would come near CCM
+   - `Vout` within 2 V of the voltage trip
+
+Two trips disable the converter at once, whatever the row stops do:
+
+- `Vout` above 80 V, or 95 % of `limits.conf::hv_max` if that is lower. The command lowers the
+  control loop's per-sample over-voltage limit to this value for the run and restores it afterwards.
+- `Iin` above 8 A, or the input-current limit if that is lower, checked every 10 ms by the task.
+
+The command refuses to start unless `Vin` lies between 5 V and 80 % of the voltage trip and `Vout`
+is at least 2 V below it. Run it after dark with the string connected: in daylight the string
+holds its open-circuit voltage, often above the voltage trip, and takes current only beyond it.
+
+The `f=<Hz>` pass works the same way and reaches a higher `Ipk` at the same `Iin`. `ls` runs on a buck
+only.
+
+An error in the `Vin` reading enters `L` with weight `1/Vin + 1/(Vout − Vin)` per volt. A battery
+voltage read 0.4 V low at 26 V into a 70 V string makes `L` about 2.4 % low. A reading error that grows
+with the current also adds a false `L(Ipk)` slope, about −0.2 %/A for an error of 0.09 V/A.
+
 ## 6. Synchronous-rectifier timing and the `Iout` peak
 
 The DCM relation (§1) assumes the ideal triangle: the inductor discharges at exactly `−Vout`,
