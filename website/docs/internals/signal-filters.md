@@ -1,12 +1,34 @@
 ---
 title: "Signal Filters"
 sidebar_position: 5
-description: "ADC noise sources and the filters that reduce them: median filter, residual noise, and the inverter-ripple notch."
+description: "ADC noise sources and the filters that reduce them: filter chain, median filter, residual noise, and the inverter-ripple notch."
 ---
 
 # Signal Filters
 
 *Original hand-written notes: [doc/Signal Filters.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Signal%20Filters.md) and the README section [Signal Filtering](https://github.com/fl4p/fugu-mppt-firmware#signal-filtering).*
+
+## Filter chain
+
+Each new sample of a physical sensor, after scaling and offset calibration, passes through:
+
+```
+sample → notch → 5-sample running median → 2-pass EWMA
+```
+
+1. [Inverter-ripple notch](#inverter-ripple-notch), only on channels fast enough for it.
+2. [Median filter](#median-filter) over the last 5 samples.
+3. [2-pass EWMA](#ewma), an exponential moving average applied twice.
+
+Different consumers read different stages:
+
+| consumer                                         | value read                                                        |
+|--------------------------------------------------|-------------------------------------------------------------------|
+| Hard protection: Vin OV, Vout OV, Iin OC         | latest sample, before the notch                                   |
+| Hard protection: Iout OC                         | trips on any of: sample > 1.5×, median > 1.25×, EWMA > 1.15× the limit |
+| Vin limiter                                      | median                                                            |
+| Vout, Iin and Iout limiters                      | median; EWMA while sweeping                                       |
+| Power limiter, MPPT tracker power                | EWMA voltage × EWMA current of the side with a physical current sensor (output by default) |
 
 ## Noise sources
 
@@ -32,6 +54,26 @@ See also: [Krampmeier/uncertainty](https://github.com/Krampmeier/uncertainty).
 
 A median filter removes spikes. It can filter load bursts.
 
+The firmware uses a running median over 5 samples. By default every sample is replaced by that median.
+
+### Despike
+
+With `sensor.conf::despike` set to a value k > 0 (about 8; lower clips more), the median becomes decision-based. A
+sample passes through unchanged unless both hold:
+
+- it deviates from the median by more than k × the running mean deviation, and
+- it deviates by more than 4 quantisation steps (learned per sensor).
+
+Only such a sample is replaced by the median. Dense, recurring load pulses (for example from an inverter) then reach the
+EWMA, so the average current is not biased low, while isolated glitches are still clipped.
+
+- Default: `despike=0` (off, plain median).
+- The NTC channel always uses the plain median.
+- A warning is logged when clips exceed 0.5 % of the samples in a window.
+- The median stage itself is unchanged; despike only changes what feeds the EWMA.
+
+See [`sensor.conf`](../reference/config/sensor.md).
+
 ## Residual noise
 
 IIR filters have a lower memory footprint and run faster than FIR filters. Their disadvantage is a nonlinear phase
@@ -44,10 +86,13 @@ The following techniques address residual noise:
 * use multipass filters
 * adapt the window length to a given target noise
 
-The following plots show the charger output current, sampled by the INA226 ADC (t_conv=1140µs, avg=1). The charger was
-connected to an LFP battery and a cheap Chinese inverter that produces heavy burst noise. The sinusoidal inverter input
-adds a slight 100 Hz ac component, double the frequency of the 50Hz 220V output. The useful signal has a triangular
-waveform, which comes from the MPPT perturbation.
+The firmware implements the first two as a 2-pass EWMA with a fixed span (see [EWMA](#ewma)). Adapting the window
+length to a target noise is a possible improvement and is not implemented.
+
+The following plots show the charger output current, sampled by the INA226 ADC. In this example measurement the INA226
+was set to t_conv=1140µs, avg=1. The charger was connected to an LFP battery and a cheap Chinese inverter that produces
+heavy burst noise. The sinusoidal inverter input adds a slight 100 Hz ac component, double the frequency of the 50Hz
+220V output. The useful signal has a triangular waveform, which comes from the MPPT perturbation.
 
 The first plot shows the noisy signal (blue), a moving average with N=80 (orange), and a 2-pass moving average with N=40:
 
@@ -65,19 +110,38 @@ The last plot shows a 2-pass IIR filter:
 
 ![2-pass IIR filter](img/noiseIIR2.webp)
 
+Of these, the firmware uses the 2-pass IIR filter.
+
+### EWMA
+
+The averaging stage is an exponentially weighted moving average applied twice in series (2-pass), with
+alpha = 2 / (span + 1).
+
+- The span is the per-channel key `<side>_filt_len` in `sensor.conf` (for example `lv_i_filt_len`), default 10 samples.
+- The NTC channel ignores `ntc_filt_len` and uses a fixed span of 50.
+
+An adaptive noise estimator exists only as a diagnostic (console `anf on`); it does not change the filter.
+
 ## Inverter-ripple notch
 
 An inverter on the DC bus draws ripple at twice the mains frequency (100 Hz for 50 Hz, 120 Hz for 60 Hz), which
 corrupts the MPPT power estimate. Each physical sensor whose own sample rate allows it (f0 < 0.45·fs) gets an IIR
 notch (biquad) at that frequency. Slower channels get none, and the notch settings have no effect on them.
 
+- Gain at the notch frequency: −30 dB (fixed).
+- Quality factor: `notch_q`, default 20 (bandwidth ≈ f0/Q).
+- On a multiplexed ADC, `Vout` is sampled between every other channel, so it runs at a higher rate than the rest. Each
+  notch is tuned to its sensor's actual rate.
+
 By default, the notch tunes itself (`sensor.conf::notch_adaptive=1`):
 
-- A ripple detector watches `Vout` and scans 80–140 Hz over blocks of about 0.75 s.
+- A ripple detector watches `Vout` before its notch, removes DC with a high-pass, and scans 80–140 Hz over blocks of
+  about 0.75 s (fs·0.75, clamped to 128–1500 samples).
 - An estimate is used only if its peak-to-mean ratio (SNR) is at least 15.
-- The notch moves halfway toward each accepted estimate, and only when that step exceeds 0.3 Hz, so one noisy
-  block can't pull it away.
+- The notch moves halfway toward each accepted estimate, and only when that step exceeds 0.3 Hz, which limits how far
+  one noisy block can pull it.
 - Detection and retuning run on the RT core, so filter coefficients never change under a running filter.
+- Retuning updates one sensor per sample and waits while a flash write or erase is in progress.
 
 With `notch_adaptive=0`, the notch stays at `notch_freq` (default 100 Hz). `notch_q` sets the bandwidth. See
 [`sensor.conf`](../reference/config/sensor.md).
