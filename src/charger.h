@@ -973,6 +973,14 @@ public:
         lim = fmaxf(lim, IOUT_LIM_FLOOR);
         ESP_LOGD("charger", "cv hold: ibat %.2f -> %.2f A, ilim %.2f -> %.2f A", ibat, _cvIbat, _cvIlim, lim);
         _cvIlim = lim;
+        static uint32_t floorT = 0; // wallClockTicks() | 1 of the last floor warning, 0 = condition off
+        if (lim > IOUT_LIM_FLOOR || batSt.vcell_high <= params.cv_eoc) floorT = 0;
+        else if (batSt.vcell_high > params.cv_eoc + 0.010f
+                 && (!floorT || wallClockTicks() - floorT >= secToCoarseTicks(600))) {
+            floorT = wallClockTicks() | 1;
+            ESP_LOGW("charger", "cv hold at floor: vcHigh %.3f, ibat %.2f A, iout %.2f A, ilim %.2f A, hold %u s",
+                     batSt.vcell_high, ibat, iout, lim, (unsigned) termCond.cvHoldS());
+        }
     }
 
     // Pack-current target of the hold, the strictest of: cold 0 A; hot the derated ibat_max; partial

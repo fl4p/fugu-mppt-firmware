@@ -581,6 +581,41 @@ static void enterHold(BatteryCharger &c) {
     frames(c, 3.52f, 30.f, 2, true);
 }
 
+// floor diagnostic: warns on entry and every 600 s while the limit sits at the floor with the cell > cv_eoc + 10 mV
+static int floorWarnings(BatteryCharger &c, float vcell, int n) {
+    fflush(stdout);
+    int fd = dup(1);
+    FILE *f = tmpfile();
+    dup2(fileno(f), 1);
+    frames(c, vcell, 30.f, n, true);
+    fflush(stdout);
+    dup2(fd, 1);
+    close(fd);
+    rewind(f);
+    char line[256];
+    int k = 0;
+    while (fgets(line, sizeof line, f)) k += strstr(line, "cv hold at floor") != nullptr;
+    fclose(f);
+    return k;
+}
+
+static void test_hold_floor_warning() {
+    BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    enterHold(c);
+    CHECK(c.termCond.cvHold(), "in hold");
+    floorWarnings(c, 3.49f, 1); // the rate-limit stamp is a static local: clear what earlier tests left
+    int k = floorWarnings(c, 3.52f, 30);
+    CHECK(c.Iout_max() <= 0.25f + 1e-4f && k == 1, "floor + above cv_eoc: %d warning(s), limit %.2f A", k, c.Iout_max());
+    k = floorWarnings(c, 3.52f, 150);
+    CHECK(k == 1, "rate limited to 600 s: %d warning(s) in 600 s", k);
+    k = floorWarnings(c, 3.505f, 10);
+    CHECK(k == 0, "within 10 mV of cv_eoc: %d warning(s)", k);
+    floorWarnings(c, 3.49f, 1);
+    k = floorWarnings(c, 3.52f, 1);
+    CHECK(k == 1, "re-entry after the cell fell to cv_eoc warns at once: %d", k);
+}
+
 static void test_bal_not_due_normal() {
     for (uint32_t maxS: {0u, 5400u}) {
         BatteryCharger c; c.params = balParams(1800, maxS); setWallClockUs(1'000'000ULL);
@@ -1338,6 +1373,7 @@ int main() {
     test_hold_sweep_keeps_limit(false);
     test_hold_pv_limited_recovers();
     test_hold_stale_releases_limit();
+    test_hold_floor_warning();
     test_hold_entry_40a_two_units();
     test_hold_sibling_boots_unlimited();
     test_boot_idle_without_ibat();
