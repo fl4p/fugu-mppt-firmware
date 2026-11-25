@@ -6,6 +6,7 @@ the auto-managed tables in etc/config-tool/conf-editor.html:
     - FILE_KEYS  (which keys the firmware reads per .conf file)
     - TYPE_KEYS  (which `get<Type>()` is used per key)
     - DEFAULTS   (hard-coded second-arg default values)
+    - FILE_DEFAULTS_SCRAPED  (per-file defaults of keys whose default differs between files)
 
 The blocks are bracketed by marker comments:
 
@@ -794,6 +795,7 @@ class Scan:
     file_keys: dict = field(default_factory=dict)
     type_keys: dict = field(default_factory=dict)
     defaults: dict = field(default_factory=dict)     # key -> JS literal, only if every read agrees
+    file_defaults: dict = field(default_factory=dict)  # (conf, key) -> literal, keys left out of defaults
 
     def add(self, conf, key, jtype, dflt, where):
         self.reads.append((conf, key, jtype, dflt, where))
@@ -815,8 +817,18 @@ class Scan:
             if len(vals) == 1 and literal:
                 self.defaults[key] = literal[0]
             elif literal:
-                self.warnings.append(f'default of {key!r} differs between reads, left out of DEFAULTS: ' +
-                                     '; '.join(f'{v} at {", ".join(sorted(set(w)))}' for v, w in vals.items()))
+                per_conf = {}
+                for v, ws in vals.items():
+                    for w in ws:
+                        per_conf.setdefault(w.split(' ', 1)[0], set()).add(v)
+                split = {c: vs for c, vs in per_conf.items() if len(vs) > 1 or vs & {UNKNOWN}}
+                for c, vs in per_conf.items():
+                    lit = vs - {REQUIRED, UNKNOWN}
+                    if c not in split and lit:
+                        self.file_defaults[(c, key)] = lit.pop()
+                if split:
+                    self.warnings.append(f'default of {key!r} has disagreeing or non-literal reads within a file, left out there: ' +
+                                         '; '.join(f'{v} at {", ".join(sorted(set(w)))}' for v, w in vals.items()))
         multi = sorted({k for t, ks in self.type_keys.items() for k in ks
                         if sum(k in v for v in self.type_keys.values()) > 1})
         for k in multi:
@@ -1095,6 +1107,13 @@ def emit_defaults(defaults, file_keys):
     return '\n'.join(lines)
 
 
+def emit_file_defaults(file_defaults):
+    items = [f'{js(c + "|" + k)}:{js(v)}' for (c, k), v in sorted(file_defaults.items())]
+    lines = _wrap('const FILE_DEFAULTS_SCRAPED = {', items, indent='  ')
+    lines[-1] += '};'
+    return '\n'.join(lines)
+
+
 MARKER_RE = re.compile(
     r'(//\s*SCRAPER:BEGIN\s+(?P<name>[A-Z_]+)\s*\n)'
     r'(?P<body>[\s\S]*?)'
@@ -1119,6 +1138,8 @@ def parse_tables(html):
     """(file_keys, type_keys, defaults) parsed back out of the SCRAPER blocks of an html."""
     bodies = {m.group('name'): m.group('body') for m in MARKER_RE.finditer(html)}
     fk, tk, df = {}, {}, {}
+    for m in re.finditer(r'"([^"|]+\.conf\|[^"]+)"\s*:\s*("(?:[^"\\]|\\.)*")', bodies.get('FILE_DEFAULTS', '')):
+        df[m.group(1)] = json.loads(m.group(2))
     for m in re.finditer(r'"([^"]+\.conf)"\s*:\s*\[([^\]]*)\]', bodies.get('FILE_KEYS', '')):
         fk[m.group(1)] = set(re.findall(r'"([^"]+)"', m.group(2)))
     for m in re.finditer(r'\b(byte|long|float|string)\s*:\s*new Set\(\[([^\]]*)\]\)', bodies.get('TYPE_KEYS', '')):
@@ -1225,6 +1246,7 @@ def main(argv=None):
         'FILE_KEYS': emit_file_keys(scan.file_keys),
         'TYPE_KEYS': emit_type_keys(scan.type_keys),
         'DEFAULTS':  emit_defaults(defaults, scan.file_keys),
+        'FILE_DEFAULTS': emit_file_defaults(scan.file_defaults),
     }
     html = html_path.read_text(encoding='utf-8')
     new_html, missing = patch_html(html, blocks)

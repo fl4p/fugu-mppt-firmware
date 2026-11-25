@@ -1338,11 +1338,18 @@ const DEFAULTS = {
 // SCRAPER:END DEFAULTS
 const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };
 
-// defaults the flat DEFAULTS table can't hold: per-file values, and a "" read whose effect is a named mode
-const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "extport.conf|mode":"\"off\"", "converter.conf|mode":"\"mppt\"",
-  "converter.conf|c_in":"0.001", "vconv.conf|plant_c_in":"0.00047", "vconv.conf|pv_isc":"8.0", "vconv.conf|pv_voc":"40.0", "vconv.conf|ntc_v":"0.9"};
+// per-file defaults of keys whose default differs between files
+// SCRAPER:BEGIN FILE_DEFAULTS
+const FILE_DEFAULTS_SCRAPED = {"board.conf|adc_freq":"3000","converter.conf|mode":"\"\"",
+  "converter.conf|pv_isc":"0.0","converter.conf|pv_voc":"0.0","extport.conf|mode":"\"off\"",
+  "http.conf|port":"80","tlscon.conf|port":"992","vconv.conf|pv_isc":"8.0",
+  "vconv.conf|pv_voc":"40.0"};
+// SCRAPER:END FILE_DEFAULTS
+// hand-kept defaults the scraper can't derive (non-literal reads, a "" read whose effect is a named mode); win over both
+const FILE_DEFAULTS = {"converter.conf|mode":"\"mppt\"",
+  "converter.conf|c_in":"0.001", "vconv.conf|plant_c_in":"0.00047", "vconv.conf|ntc_v":"0.9"};
 function lookupDefault(file, key){
-  const base = file.split("/").pop(), fd = FILE_DEFAULTS[base+"|"+key];
+  const base = file.split("/").pop(), fk = base+"|"+key, fd = FILE_DEFAULTS[fk] ?? FILE_DEFAULTS_SCRAPED[fk];
   if (fd!==undefined) return fd;
   if (key==="enabled" && SERVICES.includes(base.replace(/\.conf$/,""))) return String(SVC_ON_DEFAULT[base.replace(/\.conf$/,"")]);
   if (key in DEFAULTS) return DEFAULTS[key];

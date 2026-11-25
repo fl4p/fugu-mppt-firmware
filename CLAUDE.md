@@ -207,7 +207,9 @@ page in `website/docs/` or this file describes, update that text in the same com
 front matter and `_category_.json`. `doc/` keeps internal notes, plans and reviews, which are not published.
 Published pages must be **generic**: no device names (fry/flat/flu/fboost/fbuck), IPs, hosts, credentials or
 lab procedures; that material goes to `doc/lab/` (unpublished, but the repo is public, so still no
-credentials). Check with `cd website && npm run build` (fails on broken links, including relative links to
+credentials). Publish a docs change with `etc/docs-publish.sh -m MSG PATH... [--from COPY=PATH]`: it commits onto origin/main
+without touching the shared index, refuses a stale base, builds the site in a clean worktree, pushes and waits for the
+deploy. Check by hand with `cd website && npm run build` (fails on broken links, including relative links to
 missing repo files). Math (`$…$`, `$$…$$`, KaTeX) and ```` ```mermaid ```` blocks render there.
 
 Published pages are **curated documentation, not research notes**. Keep the research record (search log,

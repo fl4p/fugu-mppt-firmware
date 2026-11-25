@@ -2458,8 +2458,8 @@ static void cmdMeasureCoil(cmd *c) {
 // vconv                           dump state
 // vconv pv <isc> <voc> [k]        update PV params
 // vconv bat <vbat>                update battery voltage
-// vconv set <key> <value>         in-memory setter (c_in, c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf, ring_c, ring_q,
-//                                 sun_day_s, sun_night_s, sun_peak, cloud_rate, cloud_depth, cloud_len_s, cloud_edge_s, sun_seed)
+// vconv set <key> <value>         in-memory setter (plant_c_in, plant_c_out, r_bat, l, vbat_ac_amp, vbat_ac_freq, vbat_ac_shape, diode_vf,
+//                                 ring_c, ring_q, bflow_model, bflow_stuck, hs_short, i_unidir, ntc_v, sun_day_s, sun_night_s, sun_peak, cloud_rate, cloud_depth, cloud_len_s, cloud_edge_s, sun_seed)
 // vconv sun                       irradiance state
 static void cmdVconv(cmd *c) {
     Command cc(c);
