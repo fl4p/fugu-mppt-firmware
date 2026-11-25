@@ -23,7 +23,7 @@ class ExtPortService : public Service {
     static constexpr uart_port_t PORT = UART_NUM_1;
     int8_t _tx = -1, _rx = -1;
     uint16_t _pid = 0;
-    uint8_t _refused = 0; // first foreign RX byte + 1 (0 = none)
+    uint16_t _refused = 0; // first foreign RX byte + 1 (0 = none)
     bool _installed = false;
     uint32_t _blocks = 0, _lastMs = 0;
     char _ser[12]{};
