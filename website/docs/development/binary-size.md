@@ -27,6 +27,7 @@ The `WITH_*` names in it are the former environment flags, now `CONFIG_FUGU_WITH
 | + per-file `-Os` on cold libmain TUs                                                        |**1,669,872 B** |    −25 KB | **11 %** |
 | + rtcount `unordered_map` → fixed array (2026-05-30)                                        |              |    −80 KB | 8 %* |
 | + `std::filesystem` → POSIX dirent (2026-05-30)                                             |              |    −62 KB | 12 %* |
+| + `-Os` on 3 more cold TUs, component info logs off (2026-11-25, production config)         |  1,789,488 B |    −12 KB |  4.4 % |
 
 Total saved: 133 KB (2026-05-25) + 142 KB (2026-05-30) = 275 KB (~14 % of the OTA slot).
 
@@ -98,7 +99,8 @@ In the 2026-05-25 round, per-file `-Os` on cold libmain TUs saved ~25 KB with no
 `main/CMakeLists.txt` applies `set_source_files_properties(... COMPILE_OPTIONS "-Os")` to these sources:
 
 - `cli.cpp`, `selftest/bflow_test.cpp`, `sync/bsync.cpp`, `adc/sensor_setup.cpp`, `logging.cpp`, `util.cpp`,
-  `viz/lcd.cpp`, `console.cpp`, `etc/rt.cpp` and `math/float16.cpp`
+  `viz/lcd.cpp`, `console.cpp`, `conf_hash.cpp`, `tele/alert.cpp`, `etc/heap_diag.cpp`, `etc/rt.cpp` and
+  `math/float16.cpp`
 - the enabled network sources (`NETW_SRC`: telemetry, mqtt, `etc/ota` and the optional telnet, TLS console, scope,
   FTP, HTTP conf, Home Assistant and MQTT telemetry files)
 - the BLE sources (`BLE_SRC`: console_ble and the optional BLE telemetry, advertising and Improv files)
@@ -109,6 +111,15 @@ Since then, the top-level `CMakeLists.txt` also compiles the core-0-only compone
 `wpa_supplicant`, `mqtt`, the HTTP/TLS stack, `esp_wifi`, `esp-ota-ble` and others, list `FUGU_OS_COMPONENTS`) and
 arduino-esp32 with `-Os`. arduino-esp32's I2C, Wire, GPIO, misc and peripheral-manager sources, which the RT loop
 calls, stay at `-O2`.
+
+### Component info logs
+
+The top-level `CMakeLists.txt` defines `LOG_LOCAL_LEVEL=ESP_LOG_WARN` for every component except `main` and
+`espcoredump`. Their `ESP_LOGI`/`ESP_LOGD` call sites and format strings compile out (about 6 KB): the IDF boot
+banner (app version, chip revision, segment list) and the info lines of Wi-Fi, lwIP, DHCP and HTTPS OTA.
+Errors and warnings stay, and so does every `ESP_LOGI` of the firmware itself (`main`), which forms the console log.
+`espcoredump` is exempt so that the dump-save lines (`Save core dump to flash...`, the coredump stack margin) still
+appear on a panic. The `log <tag> info` console command cannot raise a capped component above `warn`.
 
 These files keep `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`): `main.cpp` (hosts `loopRT`), `mppt.cpp`
 (`mppt.update` per ADC sample), and `adc/adc_esp32_cont.cpp` (DMA ISR helpers).

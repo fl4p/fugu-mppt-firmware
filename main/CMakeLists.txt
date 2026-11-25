@@ -316,6 +316,9 @@ set(_size_opt_srcs
         ../src/util.cpp
         ../src/viz/lcd.cpp
         ../src/console.cpp
+        ../src/conf_hash.cpp
+        ../src/tele/alert.cpp
+        ../src/etc/heap_diag.cpp
         ../src/etc/rt.cpp
         ../src/math/float16.cpp
 )

@@ -164,3 +164,26 @@ No hardware was touched. Before OTAing any of this to fry/flat:
 - **BT scan off:** check on a bench board that BLE advertising, pairing and bond reconnect still work, and that OTA-BLE, the ESPHome proxy and BLE ADV telemetry work.
 - **Everything else:** these are compile-flag changes on core-0 code. Compare `rt-stats` and InfluxDB `lag` before and after as a sanity check. The RT loop itself should not change.
 - **Silent asserts:** after a crash, check that a coredump still decodes to the right location through `etc/idf-devtools/elf_archive.py decode`.
+
+## 2026-11-25: step 1 of plans/flash-headroom-2026-11-25.md
+
+Landed, measured on `d43277cb` (`fugu-firmware.bin`, IDF 6.0.3, `-j 4`, ccache):
+
+| change | fleet (`sdkconfig.d/fleet`) | default |
+|---|---:|---:|
+| baseline | 1,801,328 | 1,763,296 |
+| `-Os` on `conf_hash.cpp`, `tele/alert.cpp`, `etc/heap_diag.cpp` (`main/CMakeLists.txt`) | -6,000 | |
+| `LOG_LOCAL_LEVEL=ESP_LOG_WARN` on every component except `main` and `espcoredump` (top `CMakeLists.txt`) | -5,840 | |
+| total | **1,789,488 (-11,840, 82,384 B free)** | **1,752,160 (-11,136)** |
+
+- `main.cpp`, `mppt.cpp`, `adc_esp32_cont.cpp` objects are identical apart from the `__TIME__` string. In IRAM only
+  boot-time functions changed (`esp_flash_init_main`, `detect_spi_flash_chip`, `read_mac_wrapper`, `esp_flash_read` +4 B).
+- `espcoredump` is exempt from the log cap: its `Save core dump to flash...` and `Core dump used N bytes on stack`
+  lines are INFO and `etc/e2e-test/test_coredump.py` checks them. Without the exemption the cap took them out too
+  (it saved 880 B more).
+- Held back: `CONFIG_ESP_COREDUMP_LOGS=n` (-6,640 B on top of the above, measured). It removes the same lines
+  `test_coredump.py` parses (dump-save confirmation, coredump stack margin for `ESP_COREDUMP_STACK_SIZE`).
+- No tool in `etc/` (ota_mqtt, fugu_console, mqtt-console-logger) matches any removed IDF info line. The IDF boot
+  banner is printed before the log hook is up, so it only ever reached the UART.
+- `vfs.c` redefines `LOG_LOCAL_LEVEL` to `ESP_LOG_NONE` itself (`CONFIG_VFS_SUPPRESS_SELECT_DEBUG_OUTPUT`); the build
+  prints one "redefined" warning for it.
