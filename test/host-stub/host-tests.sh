@@ -58,7 +58,8 @@ known_fail() {
     rect-cal-test) echo "may:bus square 0.19 % worst case at the -45 ct limit; one more run completes with some libm sin()" ;;
   esac
 }
-# Not listed: scope-test.cpp (endless streaming prototype), converter-test.cpp (does not build) and the tools overshoot-plant, scan-learn-replay,
+# Not listed: scope-test.cpp (endless streaming prototype), converter-test.cpp (does not build), conf-hash-test.cpp (helper built by
+# test/host_py/test_conf_hash.py) and the tools overshoot-plant, scan-learn-replay,
 # vconv-energy-audit, wire-guard-replay, vconv-spice-check (ngspice).
 
 if [ "$1" = --list ]; then

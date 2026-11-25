@@ -21,7 +21,8 @@ For power-stage tests with a programmable supply and load, see [Automated Bench 
 ## Host unit tests
 
 Each `test/host-stub/*-test.cpp` builds into its own executable. `test/host-stub/host-tests.sh` builds and runs all
-of them in parallel (`-j N`, default 4) or the ones named, and exits non-zero if any fails; `--list` prints the names.
+of them except `scope-test` (an endless streaming prototype), `converter-test` (does not build) and
+`conf-hash-test` (a helper that `test/host_py/test_conf_hash.py` builds), in parallel (`-j N`, default 4) or the ones named, and exits non-zero if any fails; `--list` prints the names.
 Known failures are reported as `XFAIL` with their reason. The header comment of each test gives its compile command. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`
 (`esp/`, `freertos/`, `mqtt-stub/`, and the `arduino-shim` submodule). Some tests also compile firmware sources, for
 example `src/sim/vconv.cpp` or `src/usb/vfat.cpp`. The following command builds and runs one test:
