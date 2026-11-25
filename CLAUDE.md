@@ -67,7 +67,9 @@ reboots them into the new image. Confirm versions in the after-table.
 
 **fry/flat image: `etc/fleet-build.sh [rev]`** (default HEAD) builds the production config (`sdkconfig.d/fleet`, IDF 6.0.3)
 in a clean, reused detached worktree `../fugu-fleet-wt` (`build/fleet/`), refuses a dirty worktree and prints the .bin
-path, version and sha256. Never ship a main-checkout build: it carries other sessions' uncommitted edits.
+path, version and sha256. Builds queue on the `lock.sh` lock `fleet-wt` (`FLEET_LOCK_WAIT`, default 1800 s), so two
+sessions never build there at once; the .bin is only stable until the next build, so OTA it right after. Never ship a
+main-checkout build: it carries other sessions' uncommitted edits.
 
 **OTA over the MQTT console (preferred for fry/flat):** `.venv/bin/python3 etc/ota_mqtt.py --name fry,flat --bin
 ../fugu-fleet-wt/build/fleet/fugu-firmware.bin -n`, then without `-n`. Devices go one after the other; a failure stops

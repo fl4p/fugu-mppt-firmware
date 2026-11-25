@@ -3,12 +3,20 @@
 # detached worktree, so no uncommitted edit of the main checkout ships.
 #   etc/fleet-build.sh [git-rev]      default HEAD of the main checkout
 # Env: FLEET_WT  worktree (default <main checkout>/../fugu-fleet-wt), build dir build/fleet inside it.
+#      FLEET_LOCK_WAIT  seconds to queue for lock.sh lock fleet-wt (default 1800); no lock.sh = unlocked.
 # Prints the .bin path, version and sha256; feed it to `etc/ota_mqtt.py --bin <path>`.
 set -eu
 main=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)
 main=$(dirname "$main")
 wt=${FLEET_WT:-$(dirname "$main")/fugu-fleet-wt}
 rev=$(git -C "$main" rev-parse --verify "${1:-HEAD}^{commit}")
+
+# one build at a time in the shared worktree: queue on lock fleet-wt (up to FLEET_LOCK_WAIT s)
+lk=${LOCK_SH:-$HOME/bin/lock.sh}
+if [ -z "${FLEET_BUILD_LOCKED:-}" ] && [ -x "$lk" ]; then
+    FLEET_BUILD_LOCKED=1 AGENT_LOCK_OWNER_PID=$$ exec "$lk" run fleet-wt "fleet-build ${rev:0:8}" --timeout "${FLEET_LOCK_WAIT:-1800}" \
+        -- "$0" "$rev"
+fi
 
 [ -e "$wt/.git" ] || git -C "$main" worktree add -q --detach "$wt" "$rev"
 git -C "$wt" checkout -q -f --detach "$rev"

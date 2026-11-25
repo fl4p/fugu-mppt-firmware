@@ -28,6 +28,7 @@ TESTS=(
   "idle-guard-test|-std=gnu++20 -I src||"
   "integrator-test|-std=gnu++20 -fexceptions -I $H -I src||"
   "izero-test|-std=gnu++20 -O1 -fexceptions $SIM|$H/esp/sim_stubs.cpp|"
+  "lfp-pack-test|-std=gnu++20 -fexceptions -I $H -I $H/arduino-shim -I src||"
   "mailbox-test|-std=gnu++20 -O2 -I src||"
   "mcpwm-timing-test|-std=gnu++17||"
   "minpulse-test|-std=gnu++20 -O2 -fexceptions -DMOCK=1 -I $H -I src|$VC|"
