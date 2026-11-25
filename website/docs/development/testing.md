@@ -49,7 +49,9 @@ The Python tests need no device. Most run directly, for example
 `.venv/bin/python3 test/host_py/test_conf_hash.py -v` or `.venv/bin/python3 etc/test_ota_common.py`; all of them run
 under `.venv/bin/python3 -m pytest <file>`, which the files without a `__main__` block need.
 `test/host_py/` covers the config, coredump and migration helpers; `etc/test_*.py` cover the console client and the
-OTA tools.
+OTA tools. Besides pytest they need only `rich` and `pyserial`, and the `etc/fugu` and `etc/idf-devtools` submodules.
+The `Python tests` GitHub workflow runs both directories on Linux for every push to `main` and every pull request that
+changes `etc/`, `test/host_py/`, `config/` or `src/`.
 
 ## On-target unit tests
 

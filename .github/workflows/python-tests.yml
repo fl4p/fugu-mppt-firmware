@@ -1,0 +1,25 @@
+name: Python tests
+
+on:
+  push:
+    branches: [main]
+    paths: ['etc/**', 'test/host_py/**', 'config/**', 'src/**', '.github/workflows/python-tests.yml']
+  pull_request:
+    paths: ['etc/**', 'test/host_py/**', 'config/**', 'src/**', '.github/workflows/python-tests.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: python-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: git submodule update --init etc/fugu etc/idf-devtools
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install pytest rich pyserial
+      - run: python -m pytest -q -p no:cacheprovider test/host_py etc/test_*.py
