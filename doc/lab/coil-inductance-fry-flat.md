@@ -11,7 +11,7 @@ like a sensor fault. Their hand-wound inductors:
 
 | board  | core                  | turns | `Al`        | nominal `Al·N²`         | measured (median) |
 |--------|-----------------------|-------|-------------|-------------------------|-------------------|
-| `flat` | 2× stacked KS130-060A | 20–21 | 122 nH/N²   | 48.8 – 53.8 µH          | **50.9 µH**       |
+| `flat` | 2× stacked KS130-060A | 20–21 | 122 nH/N²   | 48.8 – 53.8 µH          | **50.9 µH** (backflow switch open; 49.5 µH closed, 2026-11-25) |
 | `fry`  | 2× KDM KS184-125A     | 10    | 562 nH/N²   | ~56 µH (`fisi.py`)      | **79.8 µH** (backflow switch open; 76.5 µH closed, 2026-11-25) |
 
 `flat`'s 50.9 µH lands squarely inside its own computed nominal — which *validates* its sensor and

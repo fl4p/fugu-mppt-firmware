@@ -500,11 +500,11 @@ is zero.
 Global MPPT sweeps on two boards (the boards of §9) show an `Iout` ripple of ±10–25 % in DCM that
 matches this model:
 
-| quantity                                   | board B (≈80 µH) | board A (≈51 µH) |
+| quantity                                   | board B (≈77 µH) | board A (≈49.5 µH) |
 |--------------------------------------------|------------------|------------------|
 | ring frequency, free fit per sweep         | 248–257 kHz      | 324–330 kHz      |
 | `N·Vin/Vout` (6.25 ns counts)              | ≈ 625            | constant to ±1.5 % over `Vin/Vout` 2.5–2.7 |
-| implied node capacitance `C = 1/((2πf)²L)` | ≈ 4.9 nF         | ≈ 4.7 nF         |
+| implied node capacitance `C = 1/((2πf)²L)` | ≈ 5.2 nF         | ≈ 4.8 nF         |
 | fitted `Q`                                 | ≈ 25             | ≈ 15             |
 
 The period scales with `Vout/Vin` as predicted, and the implied `C` is of the order of the
@@ -705,7 +705,7 @@ their hand-wound inductors:
 
 | board  | core                  | turns | `Al`        | nominal `Al·N²`         | measured (median) |
 |--------|-----------------------|-------|-------------|-------------------------|-------------------|
-| A      | 2× stacked KS130-060A | 20–21 | 122 nH/N²   | 48.8 – 53.8 µH          | **50.9 µH**       |
+| A      | 2× stacked KS130-060A | 20–21 | 122 nH/N²   | 48.8 – 53.8 µH          | **50.9 µH**, 49.5 µH corrected |
 | B      | 2× KDM KS184-125A     | 10    | 562 nH/N²   | ~56 µH (documented)     | **79.8 µH**, 76.5 µH corrected |
 
 A full step-1 duty sweep on each (`measure_coil.py --steps 600 --i-max 6`, ~550 DCM points apiece)
@@ -758,29 +758,28 @@ board's median. Points near the CCM boundary are excluded.
 
 The measurements lead to these findings:
 
-- **The 1.57× gap is two different coils.** Board A (KS130, ~20 t) measures 50.9 µH, inside its
+- **The 1.57× gap is two different coils.** Board A (KS130, ~20 t) measures 49.5 µH, inside its
   own computed `Al·N²` of 48.8–53.8 µH, so its sensor and the DCM method are validated against a
   known nameplate. Board B (KS184, nominally 10 t) measures ~77 µH. Its documented `~56 µH` was only
   an unverified figure and is the suspect number: the turns/`Al` look off, since 77 µH needs ~12
   turns at that `Al`. An independent battery-shunt cross-check puts board B's current gain at
   ≈ 1.0, so its sensor is fine too. The gap doesn't come from a measurement error on either board,
   and in particular not from an INA226 reading ~1.5× low.
-- **Each board's measured value is its true inductance, to a few %.** Take board A ≈ 51 µH,
+- **Each board's measured value is its true inductance, to a few %.** Take board A ≈ 49.5 µH,
   board B ≈ 77 µH. The shunt cross-check hints board A under-reports current ~6–7 %, which would inflate
   its `L` by the same factor and put the true value nearer the `N = 20` end (~48 µH). That correction
   is small compared with the 1.5× gap.
 - **The sweeps read high with the backflow switch open.** They left the switch open, so its body
   diode carried the output current and the output node sat one diode drop above the measured `Vout`.
-  That inflates $(V_{in}-V_{out})/V_{out}$ and with it `L`. On one morning, minutes apart on board B:
+  That inflates $(V_{in}-V_{out})/V_{out}$ and with it `L`. On one morning, each board's runs minutes apart:
 
-  | Method | Backflow switch | `L` (ring fit) |
-  |---|---|---|
-  | On-device `measure-coil l0` | closed | 76.5 µH |
-  | Host sweep (`measure_coil.py`) | open | 79.8 µH |
-  | Host sweep (`measure_coil.py`) | closed | 76.8 µH |
+  | Method | Backflow switch | Board A | Board B |
+  |---|---|---|---|
+  | On-device `measure-coil l0` | closed | 49.5 µH | 76.5 µH |
+  | Host sweep (`measure_coil.py`) | open | 51.4 µH | 79.8 µH |
+  | Host sweep (`measure_coil.py`) | closed | 49.3 µH | 76.8 µH |
 
-  The open switch adds 4 % on board B, which matches this sweep's 79.8 µH. Board A's on-device runs
-  give 49.2–51.8 µH, 2–3 % below its 50.9 µH; it was not re-measured with the switch open. Both the
+  The open switch adds about 4 % on both boards, which matches the sweeps' 50.9 and 79.8 µH. Both the
   on-device sweep and `measure_coil.py` (by default) close the switch once forward current flows.
 - **Both means are flat across the whole current range** (≈0.3–3 A). There is no downward trend,
   so this is not core saturation. The point-to-point wiggle of `L` (IQR 11–16 %) is the switch-node ring of
@@ -802,7 +801,7 @@ The measurements don't indicate a sensor recalibration for either board.
 
 ## Open questions
 
-- Confirm board B's ~80 µH with an LCR meter or scoped CCM-ripple measurement (§2), and reconcile it
+- Confirm board B's ~77 µH with an LCR meter or scoped CCM-ripple measurement (§2), and reconcile it
   with the documented 10 turns / `Al` (it implies ~12 effective turns).
 - The shunt cross-check hints board A under-reports current ~6–7 %. If this is real, trim its `Iout`
   calibration, and its `L0` follows.
