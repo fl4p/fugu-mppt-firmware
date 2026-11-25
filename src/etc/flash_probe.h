@@ -57,6 +57,13 @@ struct FlashSusProbe {
 
 // worst RT loop gap [us]: [0] overlapping a flash op, [1] otherwise; cleared by reset-lag
 extern uint32_t g_flashLagUs[2];
+// the op behind g_flashLagUs[0]: uptime, starting task, still running when the loop resumed
+struct FlashLagPeak {
+    uint32_t atS;
+    char task[16];
+    uint8_t running;
+};
+extern FlashLagPeak g_flashLagPeak;
 
 void flashSuspendProbe();
 int flashSusProbeFmt(char *buf, size_t n);

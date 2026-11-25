@@ -7,10 +7,13 @@
 #include <string.h>
 #include "sdkconfig.h"
 #include "esp_attr.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "fugu_flash_chip.h"
 
 static DRAM_ATTR volatile bool s_sus;
 DRAM_ATTR volatile uint32_t fugu_flash_seq;
+DRAM_ATTR char fugu_flash_task[16];
 
 #if CONFIG_SPI_FLASH_OVERRIDE_CHIP_DRIVER_LIST
 
@@ -79,7 +82,13 @@ static DRAM_ATTR esp_err_t (*s_susSetup)(esp_flash_t *);
 
 static esp_err_t wStart(void *arg, uint32_t flags) {
     esp_err_t e = s_orig->start(arg, flags);
-    if (e == ESP_OK) fugu_flash_seq |= 1;
+    if (e == ESP_OK) {
+        fugu_flash_seq |= 1;
+        const char *t = pcTaskGetName(NULL);
+        int i = 0;
+        if (t) for (; i < 15 && t[i]; ++i) fugu_flash_task[i] = t[i];
+        fugu_flash_task[i] = 0;
+    }
     s_opOff = e == ESP_OK && !s_sus;
     if (s_opOff) spi_flash_disable_interrupts_caches_and_other_cpu();
     return e;

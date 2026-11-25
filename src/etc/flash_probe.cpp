@@ -12,6 +12,7 @@ extern uint8_t g_isrCore[2]; // etc/rt.h
 
 static FlashSusProbe s_fsp;
 uint32_t g_flashLagUs[2];
+FlashLagPeak g_flashLagPeak;
 
 #if CONFIG_IDF_TARGET_ESP32S3
 
@@ -342,7 +343,7 @@ void flashSuspendProbe() {
         fsSave();
     }
     fugu_flash_sus_set(s_fsp.autoOut == AsPass);
-    char buf[200];
+    char buf[256];
     flashSusProbeFmt(buf, sizeof(buf));
     ESP_LOGI("flash", "%s", buf);
 }
@@ -371,12 +372,14 @@ int flashSusProbeFmt(char *buf, size_t n) {
     if (r.outcome == FsNA || r.outcome == FsUnprobed)
         return snprintf(buf, n, "flash-suspend: %s", nm);
     return snprintf(buf, n, "flash-suspend: %s tsus=%uus erase=%luus sr1=%02x/%02x sr2=%02x/%02x; auto: %s "
-                            "erase=%ums stall=%uus reads=%u -> %s%s; lag flash/other %lu/%luus; isr core adc/alert %u/%u", nm,
+                            "erase=%ums stall=%uus reads=%u -> %s%s; lag flash/other %lu/%luus (%.15s at %lus%s); isr core adc/alert %u/%u", nm,
                     (unsigned) r.susUs, (unsigned long) r.eraseUs, (unsigned) r.sr1Busy, (unsigned) r.sr1Sus,
                     (unsigned) r.sr2Sus, (unsigned) r.sr2End,
                     r.autoOut < AsAutoCount ? autoNames[r.autoOut] : "?", (unsigned) r.autoEraseMs,
                     (unsigned) r.autoStallUs, (unsigned) r.autoReads,
                     fugu_flash_sus_on() ? "active" : "caches-off", r.cached ? " (cached)" : "",
-                    (unsigned long) g_flashLagUs[0], (unsigned long) g_flashLagUs[1], (unsigned) g_isrCore[0],
+                    (unsigned long) g_flashLagUs[0], (unsigned long) g_flashLagUs[1],
+                    g_flashLagPeak.task[0] ? g_flashLagPeak.task : "-", (unsigned long) g_flashLagPeak.atS,
+                    g_flashLagPeak.running ? ", running" : "", (unsigned) g_isrCore[0],
                     (unsigned) g_isrCore[1]);
 }

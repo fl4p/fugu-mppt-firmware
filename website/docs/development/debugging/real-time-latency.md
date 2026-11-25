@@ -207,8 +207,10 @@ Code or data that still lives in flash costs a slow cache miss while an erase is
 [Kernel critical sections from core 0](#kernel-critical-sections-from-core-0)).
 
 `bootinfo` reports the state in its `flash-suspend:` line: the self-test result, `-> active` or `-> caches-off`, and
-`lag flash/other <a>/<b>us`, the worst loop gap that overlapped a flash operation and the worst one otherwise. `reset-lag`
-clears both gaps.
+`lag flash/other <a>/<b>us (<task> at <s>s[, running])`, the worst loop gap that overlapped a flash operation and the
+worst one otherwise. The bracket names the task that started the flash operation behind the first gap, the uptime
+at which it occurred, and whether that operation was still running when the loop resumed. `reset-lag` clears both
+gaps.
 
 In this firmware, flash operations come from console `get-config` and `set-config`, coulomb-counter and statistics
 persistence (`/littlefs/stats`), configuration saves, NVS, and OTA.

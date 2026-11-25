@@ -593,6 +593,7 @@ static void cmdRectCal(cmd *c) {
 static void cmdResetLag(cmd *c) {
     g_app.maxLoopLag = 0;
     g_flashLagUs[0] = g_flashLagUs[1] = 0;
+    g_flashLagPeak = {};
 #if CAPTURE_LOOP_DT
     g_app.maxLoopDT = 0;
 #endif
@@ -777,7 +778,7 @@ static void cmdBootinfo(cmd *) {
 #else
              "off");
 #endif
-    char fsb[200];
+    char fsb[256];
     flashSusProbeFmt(fsb, sizeof(fsb));
     UART_LOG("%s", fsb);
     char bl[112];

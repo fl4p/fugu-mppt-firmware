@@ -17,6 +17,8 @@ bool fugu_flash_sus_on(void);
 
 // +1 at the start and at the end of each flash op (odd = op running)
 extern volatile uint32_t fugu_flash_seq;
+// name of the task that started the last flash op
+extern char fugu_flash_task[16];
 
 #ifdef __cplusplus
 }

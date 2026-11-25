@@ -927,8 +927,15 @@ static void loopRT(void *arg) {
         {
             static uint32_t fseq = 0;
             const uint32_t sq = fugu_flash_seq;
-            auto &m = g_flashLagUs[(sq != fseq || (sq & 1)) ? 0 : 1];
-            if (lastLoopTime && lag > m) m = lag;
+            const bool fl = sq != fseq || (sq & 1);
+            auto &m = g_flashLagUs[fl ? 0 : 1];
+            if (lastLoopTime && lag > m) {
+                m = lag;
+                if (fl) {
+                    g_flashLagPeak.atS = nowMs / 1000, g_flashLagPeak.running = sq & 1;
+                    memcpy(g_flashLagPeak.task, fugu_flash_task, sizeof(g_flashLagPeak.task));
+                }
+            }
             fseq = sq;
         }
         lastLoopTime = nowUs;
