@@ -325,6 +325,7 @@ python etc/measure_coil.py -p $ESPPORT --steps 12 --i-max 1.5
 | `--apply`, `--apply-margin`       | 12      | With `--ls-sweep`: write `coil.conf` `rect_offset_ns` (and `rect_offset_drv`, the active gate driver, and `rect_offset_cal=1`), keeping a margin in counts |
 | `--restore mppt\|off`             | `mppt`  | State when done                                               |
 | `--ton-ns`                        | dead time, at least 50 ns | Bound of the high-side on-time offset used for the stated error |
+| `--close-bf`, `--no-close-bf`     | close   | Close the backflow switch once forward current flows, as the on-device sweep does. Open, its body diode biases `L` about 4 % high and the high-duty protection trips near 2 A |
 | `--yes`                           |         | Skip the confirmation                                         |
 | `--save PATH`, `--no-save`        | `measure-coil-runs/<UTC time>-<hostname>.log` | Copy the whole output (header, rows, result) to a file; the default folder is at the repo root and not tracked |
 

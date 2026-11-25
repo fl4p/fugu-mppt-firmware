@@ -478,6 +478,9 @@ def safe_command(con, cmd, timeout=4.0):
         return False
 
 
+_BF = {"close": False, "closed": False}
+
+
 def run_sweep(con, tap, hvals, period, fsw, i_max, dwell, label="", plot_every=0):
     """Step the duty over `hvals`, measure L at each, return (rows, last_safe_H).
 
@@ -495,6 +498,8 @@ def run_sweep(con, tap, hvals, period, fsw, i_max, dwell, label="", plot_every=0
             continue
         D = s["H"] / period
         vi, vo, io = s["vin"], s["vout"], s["iout"]
+        if _BF["close"] and not _BF["closed"] and io > 0.1:
+            _BF["closed"] = safe_command(con, "bf 1")  # as the on-device sweep: the open switch's diode biases Vout
         L = (float("nan") if io <= 0.02 or vi <= vo
              else (vi - vo) * vi * D * D / (2.0 * vo * fsw * io))
         rows.append((s["H"], D, vi, vo, io, s["mode"], L, label))
@@ -758,10 +763,14 @@ def main():
                     help="what to do when done (default: re-enable MPPT)")
     ap.add_argument("--ton-ns", type=float,
                     help="bound of the HS on-time offset for the stated error (default: dead time, at least 50 ns)")
+    ap.add_argument("--close-bf", action=argparse.BooleanOptionalAction, default=True,
+                    help="close the backflow switch once forward current flows, as the on-device sweep does "
+                         "(default; open, its body diode biases L ~+4 %% and trips highD-bflowOpen near 2 A)")
     ap.add_argument("--yes", action="store_true", help="skip the 'this moves power' confirmation")
     ap.add_argument("--save", help="write the whole output to this file (default: measure-coil-runs/)")
     ap.add_argument("--no-save", action="store_true", help="don't save the output")
     args = ap.parse_args()
+    _BF["close"] = args.close_bf
 
     con, tap = connect(args)
     try:
@@ -834,6 +843,8 @@ def main():
             z1 = read_zero(con, tap, z_dwell)
         finally:
             safe_command(con, "mppt" if args.restore == "mppt" else "dc 0")
+            if _BF["closed"] and args.restore != "mppt":
+                safe_command(con, "bf 0")
 
         zsig, disturbed = 0.0, z0 is None or z1 is None
         if not disturbed:  # Iout zero read with the converter off before/after the sweep

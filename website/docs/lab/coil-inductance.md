@@ -706,7 +706,7 @@ their hand-wound inductors:
 | board  | core                  | turns | `Al`        | nominal `Al·N²`         | measured (median) |
 |--------|-----------------------|-------|-------------|-------------------------|-------------------|
 | A      | 2× stacked KS130-060A | 20–21 | 122 nH/N²   | 48.8 – 53.8 µH          | **50.9 µH**       |
-| B      | 2× KDM KS184-125A     | 10    | 562 nH/N²   | ~56 µH (documented)     | **79.8 µH**       |
+| B      | 2× KDM KS184-125A     | 10    | 562 nH/N²   | ~56 µH (documented)     | **79.8 µH**, 76.5 µH corrected |
 
 A full step-1 duty sweep on each (`measure_coil.py --steps 600 --i-max 6`, ~550 DCM points apiece)
 gives the real `L` vs `H` (PWM count) shown in the following plots. The dashed line is each
@@ -760,22 +760,28 @@ The measurements lead to these findings:
 
 - **The 1.57× gap is two different coils.** Board A (KS130, ~20 t) measures 50.9 µH, inside its
   own computed `Al·N²` of 48.8–53.8 µH, so its sensor and the DCM method are validated against a
-  known nameplate. Board B (KS184, nominally 10 t) measures ~80 µH. Its documented `~56 µH` was only
-  an unverified figure and is the suspect number: the turns/`Al` look off, since 80 µH needs ~12
+  known nameplate. Board B (KS184, nominally 10 t) measures ~77 µH. Its documented `~56 µH` was only
+  an unverified figure and is the suspect number: the turns/`Al` look off, since 77 µH needs ~12
   turns at that `Al`. An independent battery-shunt cross-check puts board B's current gain at
   ≈ 1.0, so its sensor is fine too. The gap doesn't come from a measurement error on either board,
   and in particular not from an INA226 reading ~1.5× low.
 - **Each board's measured value is its true inductance, to a few %.** Take board A ≈ 51 µH,
-  board B ≈ 80 µH. The shunt cross-check hints board A under-reports current ~6–7 %, which would inflate
+  board B ≈ 77 µH. The shunt cross-check hints board A under-reports current ~6–7 %, which would inflate
   its `L` by the same factor and put the true value nearer the `N = 20` end (~48 µH). That correction
   is small compared with the 1.5× gap.
-- **Later runs read lower on board B.** Six on-device runs in November give 75.8–77.0 µH on board B,
-  4–5 % below the 79.8 µH median of this sweep. Board A's runs give 49.2–51.8 µH, around its 50.9 µH. Within
-  one run the fit and the median of the points agree (board B: 76.18 and 76.35 µH), so the gap lies between
-  the runs, not between the two estimates. This sweep subtracted no `Iout` zero, but November runs without
-  that step read the same as runs with it, and the zero they measured was −0.007 A. A zero offset therefore
-  explains the gap only if the sensor's offset calibration was stale during this sweep. The cause is not
-  established; the sweep's points were not kept.
+- **The sweeps read high with the backflow switch open.** They left the switch open, so its body
+  diode carried the output current and the output node sat one diode drop above the measured `Vout`.
+  That inflates $(V_{in}-V_{out})/V_{out}$ and with it `L`. On one morning, minutes apart on board B:
+
+  | Method | Backflow switch | `L` (ring fit) |
+  |---|---|---|
+  | On-device `measure-coil l0` | closed | 76.5 µH |
+  | Host sweep (`measure_coil.py`) | open | 79.8 µH |
+  | Host sweep (`measure_coil.py`) | closed | 76.8 µH |
+
+  The open switch adds 4 % on board B, which matches this sweep's 79.8 µH. Board A's on-device runs
+  give 49.2–51.8 µH, 2–3 % below its 50.9 µH; it was not re-measured with the switch open. Both the
+  on-device sweep and `measure_coil.py` (by default) close the switch once forward current flows.
 - **Both means are flat across the whole current range** (≈0.3–3 A). There is no downward trend,
   so this is not core saturation. The point-to-point wiggle of `L` (IQR 11–16 %) is the switch-node ring of
   §7 (its period in counts follows `Vout/Vin`), not noise in `L` and not SR timing. A median over a
