@@ -1,5 +1,5 @@
 ---
-title: "Configuration Files"
+title: "Configuration files"
 sidebar_position: 0
 description: "Hardware behavior and runtime options live in flat key=value .conf files on the device's littlefs partition under /littlefs/conf/, rather than being compiled in."
 ---
@@ -50,8 +50,8 @@ You can read and change the configuration in these ways:
 ## Number format
 
 Integer keys (pins, channels, counts, modes) accept `0x` (hex) and `0b` (binary) prefixes, and a
-leading `0` makes the value octal: `010` reads as 8, and `08` or `09` fail to parse, so the file
-fails to load. Write integers without leading zeros. Decimal keys (volts, amps, seconds with a
+leading `0` makes the value octal: `010` reads as 8, and `08` or `09` fail to parse, so reading that
+key fails with an error. Write integers without leading zeros. Decimal keys (volts, amps, seconds with a
 fraction) are read as plain decimals, so a leading zero does not change them.
 
 ## Table conventions
@@ -61,7 +61,7 @@ The tables on the file pages use these conventions:
 - **default** is the value the firmware uses when the key is absent. `—` means the key is
   required and board-specific: there is no built-in default, and the value (usually a divider
   ratio, pin, or limit) must come from the board image.
-- Channel `255` means absent. The firmware replaces a missing current sensor (`iin`/`iout`) with a
+- Channel `255` means absent. The firmware replaces a missing current sensor (`iin` or `iout`) with a
   `VirtualSensor` derived from the other side and a fixed 97 % efficiency.
 
 ## Files
@@ -70,16 +70,16 @@ Each file has its own reference page:
 
 | File | Contents |
 |---|---|
-| [`board.conf`](board.md) | pins, buses, ADC/driver wiring |
+| [`board.conf`](board.md) | pins, buses, ADC and driver wiring |
 | [`sensor.conf`](sensor.md) | channel map, divider ratios, calibration |
 | [`limits.conf`](limits.md) | protection cutouts |
 | [`coil.conf`](coil.md) | inductor |
 | [`converter.conf`](converter.md) | topology |
 | [`charger.conf`](charger.md) | battery termination |
 | [`tracker.conf`](tracker.md) | MPPT |
-| [`mqtt.conf`](mqtt.md) | broker + BMS coupling |
+| [`mqtt.conf`](mqtt.md) | broker and BMS coupling |
 | [`tele.conf`](tele.md) | InfluxDB telemetry |
-| [`wifi.conf`](wifi.md) | Wi-Fi credentials + roaming |
+| [`wifi.conf`](wifi.md) | Wi-Fi credentials and roaming |
 | [`ftp.conf`](ftp.md) | FTP service |
 | [`http.conf`](http.md) | HTTP config-file service (build option) |
 | [`telnet.conf`](telnet.md) | telnet console service |

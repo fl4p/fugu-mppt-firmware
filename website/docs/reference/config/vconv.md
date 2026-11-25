@@ -7,7 +7,7 @@ sidebar_position: 18
 
 `vconv.conf` configures the virtual converter plant ([Simulation](../../development/simulation.md)), which replaces the power stage and ADC with a simulated PV source, battery, and passives. It applies to `CONFIG_FUGU_WITH_VCONV` builds with `sensor.conf` `adc = vconv`. `src/adc/sensor_setup.cpp` and `src/adc/vconv.h` read it. For an example, see [`config/lab/vconv_mock`](../../../../config/lab/vconv_mock/conf/vconv.conf).
 
-The simulation takes the inductor from `coil.conf::L0` (50 µH when unset) and the topology from `converter.conf::topo` (`buck`/`boost`). This file doesn't set either.
+The simulation takes the inductor from `coil.conf::L0` (50 µH when unset) and the topology from `converter.conf::topo` (`buck` or `boost`). This file doesn't set either.
 
 In these builds the sensor map comes from `sensor.vconv.conf` when that file exists, else from `sensor.conf`, so a real board's `sensor.conf` can stay in place. The firmware does not drive the `board.conf` backflow switch pins; `bflow_model` simulates the switch instead.
 
@@ -40,9 +40,9 @@ The file accepts the following keys.
 | `t_sw`          | s    | float | 0       | High-side turn-off current fall time; the loss is paid from the input       |
 | `pwm_clk`       | Hz   | int   | 0       | Gate-driver timing the PWM shim emulates, read at boot: 0 = LEDC (80 MHz, power-of-two period: 2047 counts at 39 kHz), else the MCPWM timer clock (160000000: the MCPWM period of 4103 counts at 39 kHz; the plant runs at the realized frequency in whole Hz, 38995). `rect_offset_ns` and `boot_refresh_ns` are converted at this tick rate |
 | `bflow_model`   |      | int   | 0       | 1 = backflow switch between the output node and the battery: on, it conducts both ways; off, it is a diode (0.7 V) toward the battery. Vout and Iout then read the battery side (terminal voltage, battery current). The firmware's backflow switch drives it (`selftest bflow`); `vconv set bflow_model` at runtime |
-| `bflow_stuck`   |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bflow_model` only) |
+| `bflow_stuck`   |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bflow_model` and `in_bf`) |
 | `in_bf`         |      | int   | 0       | 1 = boost fed from a battery behind its backflow switch (`pv_isc`/`pv_voc` model the battery): C_in charges only up to the switch's gate, and Vin senses the battery side. The switch follows the firmware's backflow switch output and `bflow_stuck` |
-| `in_bf_tau`     | s    | float | 0.005   | Time constant of that gate after turn-on (charge pump into the gate capacitance), so the battery connects as a soft start. The pump runs off the bootstrap supply: the gate rises only while the converter switches and holds while it is idle |
+| `in_bf_tau`     | s    | float | 0.005   | Time constant of that gate after turn-on (charge pump into the gate capacitance), so the battery connects as a soft start. The pump runs off the bootstrap supply: the gate rises only while the converter switches and holds while it is idle. It drops to 0 while the switch is off, and rises without switching when `bflow_stuck=2` |
 | `i_unidir`      |      | int   | 0       | 1 = the Iout channel clips at 0, like a one-direction current amplifier: `selftest bflow` runs its toggle variant and `hs_clamp` is ignored. `vconv set i_unidir` at runtime |
 | `hs_short`      |      | int   | 0       | 1 = buck high side conducts permanently; with the low side on as well, the input capacitor is shorted to ground. 2 = the same, and the low side never turns on. For the [high-side short check](../../internals/protection.md#high-side-short-check) |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_freq`, then 3000)        |
@@ -51,7 +51,7 @@ The file accepts the following keys.
 | `noise_iout`    | A    | float | 0       | Gaussian ADC noise σ on Iout                                                |
 | `noise_iin`     | A    | float | 0       | Gaussian ADC noise σ on Iin (channel 3)                                     |
 | `noise_ntc`     |      | float | 0       | Gaussian ADC noise σ on the NTC channel                                     |
-| `ntc_v`         | V    | float | 0.9     | Constant NTC channel voltage; 0.9 V reads about 1 °C, 1.65 V is 25 °C; `vconv set ntc_v` changes it at runtime |
+| `ntc_v`         | V    | float | 0.9     | Constant NTC channel voltage; 0.9 V reads about 1.3 °C, 1.65 V is 25 °C; `vconv set ntc_v` changes it at runtime |
 | `sun_day_s`     | s    | float | 0       | Length of the simulated day; 0 = off (static PV), minimum 1. See [Sun and clouds](#sun-and-clouds) |
 | `sun_night_s`   | s    | float | day/4   | Length of the night after each day; a negative value = `sun_day_s`/4        |
 | `sun_peak`      |      | float | 1.0     | Clear-sky irradiance at noon, fraction of the `pv_isc`/`pv_voc` conditions (clamped to 0..1) |
@@ -73,10 +73,10 @@ Four keys were renamed so they read as what they configure and stop colliding wi
 | `c_in`    | `plant_c_in`  | the plant's capacitor, not the real board's `converter.conf::c_in` |
 | `c_out`   | `plant_c_out` | the plant's capacitor                                             |
 
-An old key without its new one stops setup and names the replacement. `vconv set` takes the new
-names too. `etc/migrate_side_keys.py` renames them in a config directory (`dir`) and prints the
-two-step console migration for a live board (`live`), as for `bf_model`/`bf_stuck` (now
-`bflow_model`/`bflow_stuck`).
+An old key without its new one stops setup and names the replacement. `vconv set` accepts only
+the new names. `etc/migrate_side_keys.py` renames them in a config directory (`dir`) and prints the
+two-step console migration for a live board (`live`), as for `bf_model` and `bf_stuck` (now
+`bflow_model` and `bflow_stuck`).
 
 ## Sun and clouds
 
@@ -126,7 +126,7 @@ The firmware reads `vconv.conf` once at boot. The console changes part of the pl
 - `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.
 
 The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `r_hs`, `r_ls`, `t_sw`,
-`pwm_clk`, `adc_freq`, `noise_*`, `out_d_i0`, `out_d_vt`, `in_bf`, `in_bf_tau`) need a reboot. See [console](../console.md).
+`pwm_clk`, `adc_freq`, `noise_*`, `out_d_i0`, `out_d_vt`, `in_bf`, `in_bf_tau`) need a reboot. See [Console](../console.md).
 
 ## Switch-node ring
 
@@ -136,7 +136,7 @@ to the output (`Z0 = √(L0/C)`), and the body diodes clamp the node at `−Vf` 
 clamped, the coil current ramps back to zero at the clamp voltage and the ring restarts from rest;
 charge through the high-side body diode returns to the input. The off phase starts from the node
 voltage the last switch left: 0 V after a low-side phase, `Vin` without one. The plant solves each
-ring segment in closed form, so the cost does not depend on the ring frequency.
+ring segment in closed form; only the clamp search steps through half-periods (at most 64 per segment).
 
 Both switch edges are hard: the high side charges the node to `Vin` from the input at turn-on
 (loss `½C(Vin − Vnode)²`), and the low side discharges it to 0 V at its turn-on (loss `½C·Vin²`). A
@@ -154,19 +154,21 @@ late-side tails of rect-cal sweeps. The ring shapes two measurements:
   lifts the node to `Vin`, see [switch-node ringing in the rectifier timing
   calibration](../../internals/rect-cal.md#switch-node-ringing).
 
-The console command `vconv set ring_c <F>` / `vconv set ring_q <Q>` changes them at runtime.
+The console commands `vconv set ring_c <F>` and `vconv set ring_q <Q>` change them at runtime.
 
 ## Switch losses and timing
 
-All keys in this section default to 0 (ideal, lossless switches) and apply to the buck plant only.
+All keys in this section except `ring_ct` (default 1) default to 0 (ideal, lossless switches) and apply to the
+buck plant only.
 
 - **Dead time** (`t_dead`): the gate driver delays each rising edge. After the high side turns off,
   the coil current freewheels through the low-side body diode (node at `−diode_vf`) until the low
-  side turns on; the low-side window shrinks by `t_dead` and its end does not move. A low-side
-  pulse shorter than the dead time is swallowed. When the idle time before the next high-side pulse
+  side turns on; the low-side window shrinks by the larger of `t_dead` and `t_hs_ext` and its end does not move. A low-side
+  pulse no longer than that is swallowed. When the idle time before the next high-side pulse
   is shorter than `t_dead`, that pulse starts late, as in synchronous CCM.
 - **Node energy**: with `ring_c > 0` the high side charges the node from the input at turn-on,
-  `ring_ct·C·(Vin − Vnode)`, for every pulse whatever the node voltage it starts from. At turn-off a
+  `ring_ct·C·(Vin − Vnode)` from whatever node voltage it starts at. After an off phase without a low-side
+  pulse, where the free ring discharged the full node capacitance, the charge is `C·(Vin − Vnode)`. At turn-off a
   positive coil current swings the node down during the dead time along the undamped resonance of
   the coil with `ring_ct·C`, so a small current first gains current while the node is still above
   `Vout`. If the node reaches `−diode_vf` the body diode clamps it; if not, the rest of the node

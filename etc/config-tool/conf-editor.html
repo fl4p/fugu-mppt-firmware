@@ -1040,7 +1040,7 @@ const FILE_META = {
     ntc_v:{unit:"V",desc:"Constant NTC channel voltage; 0.9 V reads about 1 °C, 1.65 V is 25 °C",type:"float"},
     sun_day_s:{unit:"s",desc:"Length of the simulated day; 0 = off (static PV), minimum 1",type:"float"},
     sun_night_s:{unit:"s",desc:"Length of the night after each day; negative = sun_day_s/4",type:"float"},
-    sun_peak:{unit:"",desc:"Clear-sky irradiance at noon, fraction of the isc/voc conditions (clamped to 0..1)",type:"float"},
+    sun_peak:{unit:"",desc:"Clear-sky irradiance at noon, fraction of the pv_isc/pv_voc conditions (clamped to 0..1)",type:"float"},
     cloud_rate:{unit:"1/min",desc:"Mean cloud starts per minute of clear sky; 0 = no clouds",type:"float"},
     cloud_depth:{unit:"",desc:"Maximum irradiance dip of a cloud (clamped to 0..1)",type:"float"},
     cloud_len_s:{unit:"s",desc:"Mean cloud duration (clamped to 1..600)",type:"float"},
@@ -1340,7 +1340,7 @@ const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"
 
 // defaults the flat DEFAULTS table can't hold: per-file values, and a "" read whose effect is a named mode
 const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "extport.conf|mode":"\"off\"", "converter.conf|mode":"\"mppt\"",
-  "converter.conf|c_in":"0.001", "vconv.conf|plant_c_in":"0.00047", "vconv.conf|ntc_v":"0.9"};
+  "converter.conf|c_in":"0.001", "vconv.conf|plant_c_in":"0.00047", "vconv.conf|pv_isc":"8.0", "vconv.conf|pv_voc":"40.0", "vconv.conf|ntc_v":"0.9"};
 function lookupDefault(file, key){
   const base = file.split("/").pop(), fd = FILE_DEFAULTS[base+"|"+key];
   if (fd!==undefined) return fd;
