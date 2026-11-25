@@ -93,6 +93,9 @@ sha256, git sha, dirty paths, result). Around each transfer the NAT gateway's Wi
 (`--gw`, `--gw-tx-dbm`, `--no-gw-boost`); gateway errors only warn, and after a `kill -9` the boost reverts
 on its own. `fugu_console.py --mqtt` (bare = `$MQTT_HOST`)
 takes its credentials from the same file, tunnels through `havan-ts` the same way, and returns from `ota` at `OTA Succeed` or a failure line.
+It fails when the broker sends no CONNACK/SUBACK, raises when the broker does not route a command back to its own
+subscription within 15 s (QoS 0, never retransmitted), waits 10 s for a reply, and resends a read-only command once
+when the device never logged receiving it.
 
 **OTAs release the other radio.** `ota <url>` shuts BLE down for the download (`bleConsoleRelease()`, frees the stack
 and controller memory) and `ota-ble begin` turns Wi-Fi off unless the user already did (`wifiRelease()`, the `wifi off`
@@ -457,7 +460,7 @@ Confirm the device ip address with the `ip` command.
 # Device Data
 
 You have access to live and historic device telemetry and logs.
-Read device log through `ssh havan.local` `tail pv/fugu_console.log -f -n 200`.
+Read device log through `ssh havan-ts tail -f -n 200 pv/fugu_console.log` (`havan.local` fails from agents on this Mac: macOS Local Network privacy).
 havan also runs the MQTT broker, the only BMS feed (batmon) and the telemetry relay. Before rebooting it (or the .231
 router), take `~/bin/lock.sh acquire havan` and announce on the `fugu` channel; if havan goes silent, check
 `~/bin/lock.sh status havan` and the channel first (`~/dev/kb/agent-ops/reboot-a-shared-host-only-under-its-lock.md`).

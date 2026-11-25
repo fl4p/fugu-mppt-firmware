@@ -836,6 +836,9 @@ def discover_devices():
 TIMEOUT_OVERRIDE = {"scan-i2c": 12.0, "ota": 330.0, "curl": 15.0, "ping": 8.0, "tcpconnect": 8.0, "run": 180.0, "rtprof": 60.0}
 
 
+MQTT_REPLY_TIMEOUT = 10.0
+
+
 def _timeout_for(cmd: str, default: float = 4.0) -> float:
     verb = cmd.split(None, 1)[0] if cmd else cmd
     if verb == "sleep":
@@ -1034,7 +1037,9 @@ def dispatch_command(con: Console, cmd: str, elf_path: str | None):
         except (KeyError, FileNotFoundError, ValueError) as e:
             print(f"peek: {e}", file=sys.stderr)
             return
-    timeout = _timeout_for(cmd)
+    mqtt = isinstance(con.transport, MqttTransport)
+    # an MQTT round trip through a busy device can exceed 4 s
+    timeout = _timeout_for(cmd, MQTT_REPLY_TIMEOUT if mqtt else 4.0)
     if is_app_ota(cmd):
         outcome, lines, _ = run_ota(con, cmd, timeout=timeout, echo=print)
         if outcome in ("timeout", "silent"):
@@ -1045,6 +1050,12 @@ def dispatch_command(con: Console, cmd: str, elf_path: str | None):
         return Reply(lines, ok=outcome == "succeeded", rejected=outcome == "failed",
                      timed_out=outcome in ("timeout", "silent"), dropped=outcome == "dropped")
     reply = con.command(cmd, timeout=timeout, echo=print)
+    # the log stream fills reply lines anyway; resend only when the device never logged receipt
+    if (mqtt and reply.timed_out and not reply.dropped
+            and not any(f"command: '{cmd.strip()}'" in ln for ln in reply)
+            and classify(cmd, load_ro_list())[0] == "ro"):
+        print(f"({cmd}: no reply within {timeout:g} s, resending once)", file=sys.stderr)
+        reply = con.command(cmd, timeout=timeout, echo=print)
     if reply.dropped:
         print(f"({cmd}: connection closed before the reply ended)", file=sys.stderr)
     elif reply.timed_out:
