@@ -163,7 +163,8 @@ Each ADC tick advances the simulated clock (`esp_timer_get_time()`) and steps th
 
 The simulator copies `config/lab/vconv_mock/conf` to a temporary directory and reads it through a `/littlefs`
 redirect. It switches `converter.conf` from `mode=psu` to MPPT, and each scenario appends its own keys to `vconv.conf`
-and `limits.conf`.
+and `limits.conf`. The run prints the directory (`# littlefs /tmp/mppt-sim-…`) and removes it at exit, also on
+SIGINT, SIGTERM or SIGHUP; `SIM_KEEP_FS=1` keeps it.
 
 ### Running
 
