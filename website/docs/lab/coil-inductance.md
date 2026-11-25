@@ -337,8 +337,10 @@ The frequency is bounded:
   lockout near 7.9 V. The sag is that large only with no coil current: once current flows, the
   freewheel interval adds refresh time. A lockout holds the high side off, which is safe but
   makes a row read low. 20 kHz is also the upper edge of the audible range.
-- `fsw·L0·0.95` of at least 1 Ω with `coil.conf::L0`, the same ripple bound `pwm-freq` and the boot
-  configuration apply. For a 51 µH coil that is about 20.7 kHz.
+- `fsw·L0·0.95` of at least 0.5 Ω with `coil.conf::L0`. `pwm-freq` and the boot configuration keep
+  their 1 Ω ripple bound, about 21.7 kHz for a 48.6 µH coil. The sweep stays in DCM and stops its
+  rows at the peak-current limit below, so it takes the lower bound. For any coil above about 26 µH
+  the 20 kHz minimum binds first.
 - At most the current frequency.
 
 Each row also stops the sweep once its peak current `2·Iout·Vout/(D·Vin)`, which needs no `L`,

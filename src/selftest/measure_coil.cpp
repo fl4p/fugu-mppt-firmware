@@ -139,7 +139,8 @@ static bool setFsw(uint32_t hz) {
         return converter.pwmFreqIdle();
     };
     uint16_t ticks = 0;
-    const char *e = idle() ? converter.requestPwmFrequency(hz, ticks) : "a frequency change is still being applied";
+    // ripple floor 0.5 ohm: the sweep stays in DCM and stops its rows at the peak-current limit
+    const char *e = idle() ? converter.requestPwmFrequency(hz, ticks, 0.5f) : "a frequency change is still being applied";
     if (!e && !(idle() && converter.getPeriodTicks() == ticks && converter.getPwmFrequency() == hz))
         e = "not confirmed by the RT loop";
     if (e) UART_LOG("measure-coil: fsw %lu Hz: %s", (unsigned long) hz, e);

@@ -879,8 +879,8 @@ public:
     // Console (core 0): queue a switching-frequency change, applied by the RT loop within one
     // control tick (poll pwmFreqIdle()). Returns nullptr when queued, else a static reason.
     // `ticks` reports the resulting timer period. RAM only — board.conf::pwm_freq still owns the
-    // boot value, so a power cycle returns to a known frequency.
-    const char *requestPwmFrequency(uint32_t hz, uint16_t &ticks) {
+    // boot value, so a power cycle returns to a known frequency. fLMin: floor of fsw*L0*0.95 (ohm).
+    const char *requestPwmFrequency(uint32_t hz, uint16_t &ticks, float fLMin = 1.f) {
         const uint32_t res = drvDtResolutionHz();
         const uint16_t period = drvPeriodTicks();
         if (!res || !period) return "needs the MCPWM gate driver build";
@@ -913,7 +913,7 @@ public:
         // out-of-range pwm_freq in the config keeps the board from booting at all, which looks
         // exactly like a bad flash.
         const float fLnew = (float) hz * coilL0 * InductivityDcBias;
-        if (!(fLnew > 1.f && fLnew < 20.f)) return "fsw*L0 out of range for this coil (coil.conf::L0)";
+        if (!(fLnew > fLMin && fLnew < 20.f)) return "fsw*L0 out of range for this coil (coil.conf::L0)";
         // Both dead-bands are fixed tick counts, so a shorter period is what makes them too large.
         // Same ceilings the `dt` command enforces, measured against the NEW period.
         const long hl = drvDtHlTicks(), lh = drvDtLhTicks();

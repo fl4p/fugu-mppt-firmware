@@ -28,6 +28,7 @@
 //                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat-lowf: the same at 22 kHz (the sweep after `f=`, not the switch to it)
 //                              # mc-flat-ramp: the same entered by the `dc 0` ramp-down (SIM_MC_RAMP=1)
+//                              # mc-flat-f20 / mc-boost-dark-f20: a 48.6 uH coil at 20 kHz (f= under the 1 ohm floor)
 //                              # mc-flat-ton: the same with a plant HS on-time offset of -100 ns (vconv.conf t_on_ofs)
 //                              # mc-boost-dark: `measure-coil l0` in boost at night (battery in, dark string out); -lowf at 21.5 kHz,
 //                              #   -ton with a plant LS on-time offset of +100 ns and no coil DC bias
@@ -2098,7 +2099,7 @@ static bool simPsuWait(uint32_t ticket) {
 }
 
 static float med5(float *a) { return coilfit::detail::median(a, 5); }
-static float g_mcIpk = 0; // largest row Ipk of the last simMeasureL0 (L-free DCM estimate)
+static float g_mcIpk = 0, g_mcIpkPl = 0; // largest row Ipk of the last simMeasureL0 (L-free DCM estimate; the plant's)
 
 // sweepL0()'s fit: uncorrected (g_mcRes0), then with the on-time offset (g_mcResT, status g_mcSt); returns the one the
 // firmware reports (uncorrected unless the offset is applicable)
@@ -2139,7 +2140,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     const float fsw = (float) converter.realizedFreqHz();
     const uint16_t pwmMax = converter.pwmMaxDriver();
     const float iMaxLim = std::min(2.0f, mppt.limits.Iout_max), ipkMax = mppt.limits.Iout_max;
-    g_mcIpk = 0;
+    g_mcIpk = g_mcIpkPl = 0;
     printf("  measure: fsw %.0f Hz pwmMax %u pwmCtrlMax %u\n", fsw, pwmMax, converter.pwmCtrlMax);
     const float vin0 = sensors.Vin->ewm.avg.get(), vout0 = sensors.Vout->ewm.avg.get();
     int lo, hi, step;
@@ -2164,7 +2165,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
             const bool dcm = converter.inDCM(), ok = iout > 0.02f && vin > vout;
             if (dcm && ok) d[n] = D, vi[n] = vin, vo[n] = vout, io[n] = iout, ++n, iMaxSeen = std::max(iMaxSeen, iout);
             const float ipk = coilfit::ipkDcm(D, vin, vout, iout);
-            if (dcm) g_mcIpk = std::max(g_mcIpk, ipk);
+            if (dcm) g_mcIpk = std::max(g_mcIpk, ipk), g_mcIpkPl = std::max(g_mcIpkPl, (g_vconv.getVin() - g_vconv.getVout()) * D / (fsw * g_vconv.getL()));
             if (iout > iMaxLim || !(ipk <= ipkMax) || !dcm) {
                 printf("  measure: stop at H %d D %.3f Iout %.2f Ipk %.2f (plant %.2f) %s\n", H, D, iout, ipk,
                        (g_vconv.getVin() - g_vconv.getVout()) * D / (fsw * g_vconv.getL()), dcm ? "DCM" : "CCM");
@@ -2376,6 +2377,8 @@ static int runMcBoost(const std::string &name) {
         chk(g_mcVmax < 80.f && g_mcImax < 8.f, "Vout < 80 V, Iin < 8 A");
         chk(g_trips.size() == trips0 && stop != "TRIP", "no trip");
         mcTonCheck(name, lPlant, chk);
+        if (name == "mc-boost-dark-f20")
+            chk(g_mcIpkPlant <= mppt.limits.Iin_max && g_mcIpk <= mppt.limits.Iin_max, "peak coil current within the limit");
     }
     chk(converter.disabled(), "off after the run");
     printf("== SUMMARY %s: %s (%d failures)\n", name.c_str(), f ? "FAILED" : "OK", f);
@@ -2401,8 +2404,8 @@ static int runMcFlat(const std::string &sc) {
     printf("== %s: PV %.0f W, %s, %s, paranoia %d\n", sc.c_str(), p0, converter.inDCM() ? "DCM" : "CCM", modeStr(),
            (int) mppt.limits.reverse_current_paranoia);
     // at 22 kHz flat's coil is still in DCM at full power
-    chk(p0 > 130.f && (sc == "mc-flat-lowf" || !converter.inDCM()) && !converter.disabled(),
-        sc == "mc-flat-lowf" ? "MPPT at full power" : "MPPT at full power in CCM");
+    const bool lowf = sc == "mc-flat-lowf" || sc == "mc-flat-f20";
+    chk(p0 > 130.f && (lowf || !converter.inDCM()) && !converter.disabled(), lowf ? "MPPT at full power" : "MPPT at full power in CCM");
     const size_t trips0 = g_trips.size();
     const double tEnter = tNow();
     double secs = 0;
@@ -2422,6 +2425,10 @@ static int runMcFlat(const std::string &sc) {
     chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
     chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
     mcTonCheck(sc, g_vconv.getL(), chk);
+    if (sc == "mc-flat-f20") {
+        printf("== %s: plant Ipk up to %.2f A (rows %.2f A), limit %.1f A\n", sc.c_str(), g_mcIpkPl, g_mcIpk, mppt.limits.Iout_max);
+        chk(g_mcIpkPl <= mppt.limits.Iout_max && g_mcIpk <= mppt.limits.Iout_max, "peak coil current within the limit");
+    }
     run(40, 5.0);
     chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
     printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
@@ -4048,6 +4055,15 @@ static int simMain(int argc, char **argv) {
     // -ton: a plant on-time offset (buck HS -100 ns, boost LS +100 ns) on a coil without DC bias
     if (sc == "mc-flat-ton") setenv("SIM_MC_TON", "-100e-9", 0);
     if (sc == "mc-boost-dark-ton") setenv("SIM_MC_TON", "100e-9", 0), setenv("SIM_MC_K", "0", 0);
+    // -f20: the sweep of `measure-coil l0 f=20000` on a 48.6 uH coil (fsw L0 0.95 = 0.92 ohm, under pwm-freq's 1 ohm).
+    // Booted at 20 kHz (no runtime change without MCPWM), so coil.conf L0 is 52.7 uH, the least the boot check takes;
+    // the rows' peak-current stop is L-free.
+    if (sc == "mc-flat-f20" || sc == "mc-boost-dark-f20") {
+        setenv("SIM_MC_L", "48.6e-6", 0), setenv("SIM_PLANT", "flat:L=48.6e-6", 0);
+        std::string c = "coil.conf:L0=52.7e-6,board.conf:pwm_freq=20000";
+        if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
+        setenv("SIM_CONF", c.c_str(), 1);
+    }
     const bool dcd = sc.rfind("dcd-", 0) == 0, dcdFry = dcd && sc.size() > 4 && !sc.compare(sc.size() - 4, 4, "-fry");
     if (dcdFry) setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     const bool flatTake = sc == "bf-daily-flat" || sc.rfind("mc-flat", 0) == 0 || sc.rfind("bf-flat-ccm", 0) == 0 ||
