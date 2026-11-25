@@ -15,6 +15,9 @@
 //                              # e*: battery open at 60 s, back at 180 s: on within 5 s ("== RECONNECT")
 //                              # shade | shade-cv: half-shaded string (two peaks)
 //                              # idle-wake: start refused only by InhibitIdle while Vin rises (armed sweep and not)
+//                              # bat-auto: charger.conf vout_max=auto, 26 V pack: no switching before detection, then 8 cells
+//                              #   (28.8 V) and MPPT; -nobat (output open, divider load: C_out decays from 27 V), -gap (17 V): never detected,
+//                              #   never switching, also not with a manual duty from 60 s
 //                              # psu-boost-dark: fry in boost, battery in, dark PV string out, `psu` 32..80 V (SIM_DWELL)
 //                              # psu-boost-cold: the same, `psu 32` from the night state: string at 6.85 V, battery behind the open backflow switch
 //                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
@@ -269,6 +272,7 @@ static bool g_ringOn = false, g_ringDamped = false; // damped: Q 0.5, ring branc
 // gate-driver timing of the board presets: MCPWM 160 MHz as live (4103 counts at 39 kHz), -ledc / SIM_DRV=ledc: the
 // LEDC timing of the results before 2026-11-19 (2047 counts, rect_offset 0); SIM_DRV=mcpwm also on the ideal plant
 static bool g_drvMcpwm = false, g_liveOffset = true; // rcal* start uncalibrated (no board rect_offset)
+static bool g_batAuto = false; // bat-auto*: charger.conf vout_max=auto (vout_max_fallback dropped), board.conf bflow_bat=1
 static void (*g_tickHook)() = nullptr; // called after every RT iteration of run()
 static void (*g_afterHsHook)() = nullptr; // called in loopRTNewData right after hsShortRt (an ISR landing there)
 static FILE *g_pDump = nullptr; // SIM_PDUMP=<file>: per tick t, Iout ewm, Vout ewm, HS count (float32)
@@ -599,6 +603,13 @@ static void lfWatchdog(time_us nowUs, uint32_t dt, uint32_t sps, uint32_t nSampl
     stopAndBackoff(4);
 }
 
+// vout_max=auto pending (an older tree has no auto)
+template<class P>
+static bool awaitingPack(const P &p) {
+    if constexpr (requires { p.awaitingDetect(); }) return p.awaitingDetect();
+    return false;
+}
+
 static void lfStuckWatchdog() {
     static int64_t stuckSinceUs = 0;
     static bool triedRelease = false;
@@ -611,7 +622,7 @@ static void lfStuckWatchdog() {
                             : sensors.Vin->ewm.avg.get() > sensors.Vout->ewm.avg.get() + 8.0f);
     bool noPower = sensors.Iout && fabsf(sensors.Iout->ewm.avg.get()) < 0.3f;
     const float psuSetpoint = mppt.getPsuSetpoint();
-    bool stuck = headroom && noPower && !g_app.manualPwm() && !mppt.noMppBackoff()
+    bool stuck = headroom && noPower && !g_app.manualPwm() && !mppt.noMppBackoff() && !awaitingPack(mppt.charger.params)
                  && (g_app.psuMode()
                          ? (std::isfinite(psuSetpoint) && !mppt.isPsuLatched() && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)
                          : !mppt.charger.chargeHold());
@@ -636,6 +647,16 @@ static void chargerUpdate(C &c, float vout, float iout, bool authority, bool psu
     else c.update(vout, iout, authority, psu);
 }
 
+// main.cpp's vout_max=auto detection; true while the charger waits for it (an older tree has none)
+template<class M>
+static bool batDetect(M &m) {
+    if constexpr (requires { m.batDetectLf(); }) {
+        m.batDetectLf();
+        return awaitingPack(m.charger.params);
+    }
+    return false;
+}
+
 static void lfControl() {
     mppt.ntc.read();
     mppt.ucTemp.read();
@@ -649,6 +670,7 @@ static void lfControl() {
         const bool voutAuthority = !mppt.converter.disabled()
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
+        if (batDetect(mppt)) return;
         chargerUpdate(mppt.charger, vout, iout, voutAuthority, g_app.psuMode(), mppt.isSweeping());
     }
 }
@@ -727,6 +749,18 @@ static void boot(const std::vector<std::pair<std::string, std::string>> &vconvOv
         fputs(s.c_str(), f);
         fputs("\nmode=mppt\n", f);
         fclose(f);
+    }
+    if (g_batAuto) {
+        std::string p = confDir + "/charger.conf", t;
+        FILE *f = ::fopen(p.c_str(), "r");
+        char buf[256];
+        while (fgets(buf, sizeof buf, f)) if (strncmp(buf, "vout_max", 8)) t += buf;
+        fclose(f);
+        f = ::fopen(p.c_str(), "w");
+        fputs(t.c_str(), f);
+        fputs("\nvout_max=auto\n", f);
+        fclose(f);
+        writeConf(confDir, "board.conf", {{"bflow_bat", "1"}});
     }
     if (!vconvOverrides.empty()) writeConf(confDir, "vconv.conf", vconvOverrides);
     // pin the ADC tick to a board rate (SIM_ADC_HZ, default ~fmetal's 451 Hz) instead of the mock's
@@ -3339,6 +3373,42 @@ static int runBfTest(const std::string &sc) {
     return f != 0;
 }
 
+// vout_max=auto: no switching while the pack is unknown; a 26 V pack is detected as 8 cells (cv_eoc 3.6: 28.8 V)
+static int runBatAuto(const std::string &sc) {
+    static double tDet, tOnEarly;
+    tDet = tOnEarly = -1;
+    g_tickHook = [] {
+        if (tDet < 0 && mppt.charger.params.haveVbatMax()) tDet = tNow();
+        if (tDet < 0 && tOnEarly < 0 && !converter.disabled()) tOnEarly = tNow();
+    };
+    if (sc == "bat-auto-nobat") g_vconv.setBat(0.f, 94e3f); // output open: the Vout divider (47k + 47k) bleeds C_out
+    else if (sc == "bat-auto-gap") g_vconv.setBat(17.f, 0.05f);
+    else g_vconv.setBat(26.f, 0.05f); // below the no-BMS float pin 8 x 3.37 V
+    run(60, 10.0);
+    if (sc != "bat-auto") { // `dc` while pending: manual PWM holds off too
+        g_app.opMode = OpMode::Manual;
+        mppt.setManualTarget((uint16_t) (0.3f * (float) converter.pwmMaxDriver()));
+    }
+    run(30, 10.0);
+    int f = 0;
+    auto chk = [&](bool ok, const char *what) { printf("== %s %s\n", ok ? "PASS" : "FAIL", what); f += !ok; };
+    chk(tOnEarly < 0, sc == "bat-auto" ? "no switching before detection" : "no switching, also with a manual duty");
+    if (sc == "bat-auto") {
+        const auto &p = mppt.charger.params;
+        printf("== detected at %.1f s: %u cells, Vbat_max %.2f V, fallback %.2f V\n", tDet, (unsigned) p.n_cells, p.Vbat_max,
+               p.Vbat_fallback);
+        chk(tDet > 0 && tDet < 30, "detected within 30 s");
+        chk(p.n_cells == 8 && fabsf(p.Vbat_max - 28.8f) < 1e-3f && fabsf(p.Vbat_fallback - 26.96f) < 1e-3f, "8 cells");
+        chk(!converter.disabled() && sensors.Iout->ewm.avg.get() > 1.f, "MPPT charging after detection");
+    } else {
+        chk(tDet < 0 && mppt.charger.params.awaitingDetect(), "never detected");
+        chk(g_nStarts == 0, "never started");
+    }
+    traceLine("final ");
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
 // Start refused only by the idle profile's InhibitIdle while Vin rises, with a sweep armed (st=START,1: fry
 // 2026-11-18, update() returned before any wake) and without (START,0: the start branch): the RT loop must raise
 // the wake, not start, and start once the bit is released.
@@ -4037,6 +4107,7 @@ static int simMain(int argc, char **argv) {
         ov = {{"pv_isc", "200"}, {"pv_voc", "26.6"}, {"pv_k", "0.95"}, {"v_bat", "0"}, {"r_bat", "207.5e3"}, {"plant_c_in", "470e-6"},
               {"plant_c_out", "1.2e-3"}, {"out_d_i0", "2.3e-8"}, {"out_d_vt", "4.45"}, {"noise_iin", "0.02"}, {"noise_vin", "0.02"},
               {"noise_vout", "0.05"}, {"in_bf", "1"}, {"bflow_stuck", sc == "mc-boost-bfopen" ? "1" : "0"}};
+    g_batAuto = sc.rfind("bat-auto", 0) == 0;
     boot(ov, p0);
     if (mcBoost && getenv("SIM_MC_L")) g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), (float) atof(getenv("SIM_MC_L")));
     if (rcal) g_vconv.setDiodeVf(0.7f);
@@ -4073,6 +4144,7 @@ static int simMain(int argc, char **argv) {
     }
 
     if (sc == "idle-wake") return runIdleWake();
+    if (sc.rfind("bat-auto", 0) == 0) return runBatAuto(sc);
     if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
     if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
     if (sc.rfind("mc-flat", 0) == 0) return runMcFlat(sc);

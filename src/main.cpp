@@ -1041,6 +1041,7 @@ static void lfStuckWatchdog() {
     // sustained timer already excludes it.
     const float psuSetpoint = mppt.getPsuSetpoint();
     bool stuck = headroom && noPower && !g_app.manualPwm() && !mppt.noMppBackoff()
+                 && !mppt.charger.params.awaitingDetect()
                  && (g_app.psuMode()
                          ? (std::isfinite(psuSetpoint) && !mppt.isPsuLatched()
                             && sensors.Vout->ewm.avg.get() < psuSetpoint - 2.0f)
@@ -1147,7 +1148,9 @@ static void lfControl() {
         const bool voutAuthority = !mppt.converter.disabled()
                                    && mppt.converter.getCtrlOnPwmCnt() > minAuthorityPwm
                                    && currentShowsAuthority;
-        mppt.charger.update(vout, iout, voutAuthority, g_app.psuMode(), mppt.isSweeping());
+        mppt.batDetectLf();
+        if (!mppt.charger.params.awaitingDetect())
+            mppt.charger.update(vout, iout, voutAuthority, g_app.psuMode(), mppt.isSweeping());
         mppt.charger.updateWire(vout, iout, !mppt.converter.disabled() && !g_app.psuMode()); // PSU: Vout is no pack
         lfWireGuard(iout);
     }

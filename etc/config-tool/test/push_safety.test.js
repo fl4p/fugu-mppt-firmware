@@ -159,6 +159,12 @@ test('valueProblem follows the firmware number parser (src/conf.h)', async () =>
   for (const bad of ['28,8', '1e', '1.2.3', '', 'abc', '1e39', '1e-400'].filter(Boolean))
     assert.notEqual(p('vout_max', bad), '', bad);
   assert.equal(p('broker_uri', '08'), '', 'strings are not checked');
+  // charger.conf vout_max=auto (BatChargerParams::load); only there and only lowercase
+  assert.equal(window.valueProblem('vout_max', ' auto ', 'conf/charger.conf'), '');
+  assert.equal(window.valueProblem('vout_max', 'auto', 'charger.conf'), '');
+  assert.notEqual(window.valueProblem('vout_max', 'Auto', 'conf/charger.conf'), '');
+  assert.notEqual(window.valueProblem('vout_max', 'auto', 'conf/converter.conf'), '');
+  assert.notEqual(p('vout_max', 'auto'), '');
 });
 
 test('a folded group shows a marker for changed rows inside it', async () => {

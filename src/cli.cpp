@@ -1937,6 +1937,9 @@ static void cmdVset(cmd *c) {
     float v;
     if (!argFloat(cc, 0, v))
         CMD_FAIL_RETURN("vset: expected a number");
+    // a pack voltage without its cell count leaves the float fallback unset
+    if (mppt.charger.params.awaitingDetect())
+        CMD_FAIL_RETURN("vset: vout_max=auto, no pack detected yet");
     // 0 is not "no limit": it clamps the OV threshold to ~0 and wedges the converter (issue #58).
     if (v > 0 and v <= 999) {
         mppt.charger.params.Vbat_max = v;
@@ -2214,8 +2217,9 @@ static void cmdStatus(cmd *) {
                             : chg.chargeBlocked() ? "BLOCKED (pack cold)"
                             : chg.partialHold() ? "PARTIAL HOLD (load-following)"
                             : chg.termCond.cvHold() ? hold : "charging");
-    UART_LOG("  Vbat_max=%.2fV Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA",
-             p.Vbat_max, chg.Vout_max(), p.Ibat_lim, chg.Iout_max());
+    UART_LOG("  Vbat_max=%.2fV%s Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA", p.Vbat_max,
+             p.awaitingDetect() ? " (auto, no pack yet)" : p.vbatAuto ? " (auto)" : "", chg.Vout_max(), p.Ibat_lim,
+             chg.Iout_max());
     const float ovLimit = mppt.getExplicitOvLimit();
     if (std::isfinite(ovLimit) && ovLimit > 0)
         UART_LOG("  OV limit=%.2fV (explicit ovset%s)", ovLimit,

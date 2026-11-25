@@ -990,7 +990,7 @@ const META = {
 
 // vout_max means slightly different things per file
 const FILE_META = {
-  "charger.conf":  { vout_max:{unit:"V",desc:"Max pack/output charge-target voltage",type:"float"} },
+  "charger.conf":  { vout_max:{unit:"V",desc:"Max pack/output charge-target voltage, or auto: cells (4, 8 or 16) x cv_eoc, detected from the idle Vout; buck with Vout sensed at the pack only (no backflow switch, or board.conf bflow_bat=1), no vout_max_fallback",type:"float"} },
   "tlscon.conf":   { port:{unit:"",desc:"TCP port of the TLS-PSK console (default 992)",type:"int"} },
   "telnet.conf":   { trusted:{unit:"",desc:"Allow all commands over telnet (0 = read-only commands only)",type:"bool"} },
   "extport.conf":  {
@@ -1703,10 +1703,12 @@ function renderApp(){
   refreshConn();
 }
 
-// Mirrors ConfFile::getX (src/conf.h) on the trimmed value: what it throws on, or reads unexpectedly. "" = fine
-function valueProblem(key, v){
+// Mirrors ConfFile::getX (src/conf.h) on the trimmed value: what it throws on, or reads unexpectedly. "" = fine.
+// file: the conf file's path or name (charger.conf's vout_max also takes "auto")
+function valueProblem(key, v, file){
   v = v.trim();
   if (v==="") return "";
+  if (v==="auto" && key==="vout_max" && /(^|\/)charger\.conf$/.test(file||"")) return "";
   const t = lookupType(key);
   if (t==="float"){
     if (/^[+-]?(inf(inity)?|nan)$/i.test(v)) return "";
@@ -1897,7 +1899,7 @@ function renderPane(){
       origEl.style.display = show ? "" : "none";
       if (show) origEl.textContent = "was: " + (orig===undefined ? "(not set)" : orig==="" ? "(empty)" : orig);
       row.classList.toggle("changed", show);
-      const p = inp.el ? "" : valueProblem(key, inp.value);
+      const p = inp.el ? "" : valueProblem(key, inp.value, path);
       bad.textContent = p; bad.style.display = p ? "" : "none"; row.classList.toggle("invalid", !!p);
     };
     inp.oninput = isExtra
@@ -3226,7 +3228,7 @@ function pendingCommands(){
       if (SERVICES.includes(name) && (key==="enabled" || key==="log_level")) c.when = "reboot";
       if (v===""){ c.del = true; c.str = `del-config ${base} ${key}`; }
       else {
-        c.str = `set-config ${base} ${key} ${cur}`; c.problem = valueProblem(key, cur);
+        c.str = `set-config ${base} ${key} ${cur}`; c.problem = valueProblem(key, cur, base);
         if (svc && key==="enabled" && /^[01]$/.test(v) && !(v==="0" && svc===own)){ c.str = `svc ${v==="1" ? "on" : "off"} ${svc}`; c.when = "now"; c.svc = svc; }
         if (svc && key==="log_level" && ["error","warn","info"].includes(v)){ c.str = `svc log ${svc} ${v}`; c.when = "now"; c.svc = svc; }
       }

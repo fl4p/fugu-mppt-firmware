@@ -6,6 +6,7 @@
 #include <cassert>
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 using std::min;
 using std::max;
 #include "mock.h"
@@ -1364,7 +1365,134 @@ static void test_reseed_rtc_pairing() {
     CHECK(std::fabs(d.batSt.coulombCounter.deficit() - want) < 0.05f, "older build's ref: block dropped, raw scale");
 }
 
+// ---- vout_max=auto (battery.h PackDetect, BatChargerParams::load) ----
+static ConfFile autoConf(float cvEoc = 3.65f, float cvFloat = 3.35f) {
+    ConfFile m;
+    m.set("vout_max", "auto");
+    m.set("cv_eoc", std::to_string(cvEoc));
+    m.set("cv_float", std::to_string(cvFloat));
+    m.set("ibat_max", "30");
+    m.set("bat_c", "100");
+    return m;
+}
+
+// n readings at a fixed voltage, idle, Vin 0 (night), no BMS
+static uint8_t readings(PackDetect &d, float v, int n, float cvEoc = 3.65f, float vin = 0.f, bool idle = true,
+                        float bmsHigh = NAN, float bmsV = NAN, float spread = NAN) {
+    uint8_t r = 0;
+    for (int i = 0; i < n && !r; ++i) r = d.step(v, vin, idle, cvEoc, 60.f, bmsHigh, bmsV, spread);
+    return r;
+}
+
+static void test_auto_windows() {
+    // windows at cv_eoc 3.65: [10, 15.04] [20, 30.08] [40, 60.15]
+    const float in[][2] = {{10.f, 4}, {13.2f, 4}, {15.03f, 4}, {20.f, 8}, {26.4f, 8}, {30.07f, 8}, {40.f, 16}, {52.8f, 16},
+                           {58.4f, 16}};
+    for (auto &c: in) {
+        PackDetect d;
+        CHECK(readings(d, c[0], 2) == 0, "%.2f V: needs 3 readings", c[0]);
+        CHECK(d.step(c[0], 0.f, true, 3.65f, 60.f, NAN, NAN, NAN) == (uint8_t) c[1], "%.2f V -> %d cells", c[0], (int) c[1]);
+    }
+    // gaps, 0 V, NaN, too high, below 4 cells
+    for (float v: {0.f, 2.f, 9.9f, 15.1f, 17.f, 19.9f, 30.2f, 35.f, 39.9f, 60.3f, 75.f, NAN, INFINITY}) {
+        PackDetect d;
+        CHECK(readings(d, v, 20) == 0, "%.2f V must not detect", v);
+        CHECK(d.why && strcmp(d.why, "settling") != 0, "%.2f V: a refusal reason (%s)", v, d.why);
+    }
+    // windows can't overlap or be empty across the accepted cv_eoc range, and load() enforces that range
+    for (float e = 2.43f; e <= 4.85f; e += 0.01f) {
+        CHECK(packWindowsOk(e), "cv_eoc %.2f accepted", e);
+        CHECK(4 * e * (1 + kCellVMargin) < 8 * kCellVLow && 8 * e * (1 + kCellVMargin) < 16 * kCellVLow, "disjoint at %.2f", e);
+    }
+    CHECK(!packWindowsOk(4.86f) && !packWindowsOk(2.42f), "range ends");
+    // monotonic: from deep in a gap toward 0 or toward +inf, never detected
+    for (float v = 15.05f; v < 20.f; v += 0.05f) CHECK(packCells(v, 3.65f) == 0, "gap %.2f", v);
+    for (float v = 60.16f; v < 200.f; v += 0.5f) CHECK(packCells(v, 3.65f) == 0, "high %.2f", v);
+}
+
+static void test_auto_settle_and_guards() {
+    PackDetect d;
+    CHECK(readings(d, 26.4f, 5, 3.65f, 0.f, false) == 0 && !strcmp(d.why, "converter switching"), "switching: no reading");
+    CHECK(readings(d, 26.4f, 5, 3.65f, 26.f) == 0 && !strcmp(d.why, "Vin near Vout"), "Vin ~ Vout (HS conducting)");
+    CHECK(readings(d, 26.4f, 5, 3.65f, NAN) == 0, "Vin NaN: no reading");
+    CHECK(readings(d, 26.4f, 3, 3.65f, 70.f) == 8, "Vin well above Vout: ok");
+    // a decaying output capacitor (no pack): 26.4 V falling 2 % per reading never settles
+    PackDetect e;
+    float v = 29.f;
+    uint8_t r = 0;
+    for (int i = 0; i < 30 && !r; ++i, v *= 0.98f) r = e.step(v, 0.f, true, 3.65f, 60.f, NAN, NAN, NAN);
+    CHECK(r == 0, "decaying cap detected as %u cells", (unsigned) r);
+    // a switching reading between restarts the streak
+    PackDetect f;
+    readings(f, 26.4f, 2);
+    readings(f, 26.4f, 1, 3.65f, 0.f, false);
+    CHECK(readings(f, 26.4f, 2) == 0 && readings(f, 26.4f, 1) == 8, "streak restarts after a switching reading");
+    // board limit: a 16-cell pack on a 48 V output board
+    PackDetect g;
+    for (int i = 0; i < 5; ++i) r = g.step(52.f, 0.f, true, 3.65f, 48.f, NAN, NAN, NAN);
+    CHECK(r == 0 && !strcmp(g.why, "pack above the board's output limit"), "16 cells above lv_max");
+}
+
+static void test_auto_bms() {
+    PackDetect d;
+    CHECK(readings(d, 26.4f, 3, 3.65f, 0.f, true, 3.31f, NAN, 0.02f) == 8, "8 cells, BMS 3.31 V high");
+    PackDetect e; // a 15-cell pack reads inside the 16 window; the BMS pack voltage / highest cell says 15
+    CHECK(readings(e, 49.5f, 10, 3.65f, 0.f, true, 3.31f, 49.6f, 0.02f) == 0 && !strcmp(e.why, "BMS cells disagree"),
+          "15 cells vs 16 window: refused");
+    PackDetect f; // Vout says 8 cells, BMS pack voltage says 16
+    CHECK(readings(f, 26.4f, 10, 3.65f, 0.f, true, 3.30f, 52.8f, 0.01f) == 0, "BMS pack voltage mismatch");
+    PackDetect g; // NaN highest cell = no BMS data: Vout alone
+    CHECK(readings(g, 52.8f, 3, 3.65f, 0.f, true, NAN, 52.f, 0.01f) == 16, "stale BMS ignored");
+    CHECK(bmsCellsAgree(16, 52.8f, 3.45f, 0.15f) && !bmsCellsAgree(16, 52.8f, 3.45f, NAN), "spread widens the bound");
+}
+
+static void test_auto_load() {
+    BatChargerParams p;
+    p.load(autoConf());
+    CHECK(p.vbatAuto && p.awaitingDetect() && !p.haveVbatMax() && p.n_cells == 0, "auto: pending after load");
+    p.setCells(8);
+    CHECK(!p.awaitingDetect() && fabsf(p.Vbat_max - 29.2f) < 1e-4f && fabsf(p.Vbat_fallback - 26.8f) < 1e-4f &&
+          p.n_cells == 8, "setCells(8): %.3f %.3f", p.Vbat_max, p.Vbat_fallback);
+    p.Vbat_max = NAN; // the persistent-OV reset
+    CHECK(p.awaitingDetect(), "OV reset re-arms detection");
+    auto throws = [](const ConfFile &c) { try { BatChargerParams q; q.load(c); } catch (const std::exception &) { return true; } return false; };
+    ConfFile m = autoConf();
+    m.set("vout_max_fallback", "27");
+    CHECK(throws(m), "auto + vout_max_fallback");
+    CHECK(throws(autoConf(4.9f, 3.9f)), "cv_eoc 4.9: windows overlap");
+    CHECK(throws(autoConf(2.4f, 2.3f)), "cv_eoc 2.4: empty window");
+    ConfFile n = autoConf();
+    n.set("vout_max", "Auto");
+    CHECK(throws(n), "only 'auto'");
+    ConfFile o;
+    o.set("ibat_max", "30");
+    CHECK(throws(o), "missing vout_max still fails");
+    BatChargerParams q;
+    ConfFile x = autoConf();
+    x.set("vout_max", "29");
+    q.load(x);
+    CHECK(!q.vbatAuto && q.n_cells == 7 && q.Vbat_max == 29.f && !q.awaitingDetect(), "explicit vout_max unchanged");
+}
+
+// the charger never runs before detection: a pending params set has no Vbat_max, so the start gate
+// (MpptController::startBlockReason "bat-detect") and protectLf hold the converter off
+static void test_auto_no_convert_before_detect() {
+    BatChargerParams p;
+    p.load(autoConf());
+    PackDetect d;
+    for (float v: {0.f, 17.f, 35.f, 70.f}) {
+        for (int i = 0; i < 10; ++i)
+            if (uint8_t n = d.step(v, 0.f, true, p.cv_eoc, 60.f, NAN, NAN, NAN)) p.setCells(n);
+        CHECK(p.awaitingDetect() && !p.haveVbatMax(), "%.0f V: still pending", v);
+    }
+}
+
 int main() {
+    test_auto_windows();
+    test_auto_settle_and_guards();
+    test_auto_bms();
+    test_auto_load();
+    test_auto_no_convert_before_detect();
     test_hold_rise_frame_spacing();
     test_bal_low_line_no_hold_cuts_at_band();
     test_hold_no_entry_after_restart_low_line();

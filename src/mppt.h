@@ -628,6 +628,7 @@ public:
             if (feasibility == PsuSetpointError::OvLimitConflict)
                 return "psu-ov-conflict";
         }
+        if (charger.params.awaitingDetect()) return "bat-detect";
         if (inBackoff()) return "backoff";
         if (charger.wireGuard.tripped()) return "wire-trip";
         if (const char *t = tempStartBlock()) return t;
@@ -651,6 +652,9 @@ public:
 
     [[nodiscard]] bool startCondition() const { return startBlockReason() == nullptr; }
 
+    // core 0, every lfPeriod: vout_max=auto pack detection until it succeeds
+    void batDetectLf();
+
     // RT start gates: startBlockReason(); a start refused only by the idle profile asks it to leave
     const char *startBlockReasonRt() {
         if (_noMpp.armed) noMppBatCheck();
@@ -669,6 +673,11 @@ public:
                      sensors.Vout->last);
             shutdownDcdc("supply-UV");
             rt_defer([](void *m, float, float) { ((MpptController *) m)->meter.commit(); }, this);
+            return false;
+        }
+
+        if (charger.params.awaitingDetect()) { // batDetectLf() measures with the converter off
+            shutdownDcdc("bat-detect");
             return false;
         }
 

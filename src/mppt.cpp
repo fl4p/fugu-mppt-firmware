@@ -497,7 +497,8 @@ void MpptController::updateManual() {
 
     const int16_t rampStep = std::max(1, (int) std::lround((float) converter.pwmMaxDriver() / 512.f));
 
-    if (inBackoff() || charger.wireGuard.tripped() || (converter.disabled() && tempStartBlock())) {
+    if (inBackoff() || charger.wireGuard.tripped() || charger.params.awaitingDetect()
+        || (converter.disabled() && tempStartBlock())) {
         if (!converter.disabled()) converter.disable();
         return;
     }
@@ -643,6 +644,9 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     fan.init(boardConf);
 
     bflow.init(boardConf);
+    // a boost's output follows Vin with no pack; a backflow switch may sit between the Vout sense and the pack
+    assert_throw(!charger.params.vbatAuto || (!converter.boost() && (!bflow || bfBat)),
+                 "vout_max=auto needs a buck with Vout sensed at the pack: no backflow switch, or bflow_bat=1");
     if ((bfBat || hsClampConf) && !hsIdleCheck())
         ESP_LOGW("mppt", "board.conf bflow_bat/hs_clamp ignored: needs a backflow switch, a buck and Iout sensed");
     else if (hsClampConf && !batIBipolar())
@@ -1051,6 +1055,35 @@ __attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t no
     }
     _retryAt = nowMs | 1, _resweepAt = (nowMs + inMs) | 1;
     ESP_LOGI("mppt", "re-sweep in %u s", (unsigned) (inMs / 1000));
+}
+
+void MpptController::batDetectLf() {
+    auto &p = charger.params;
+    if (!p.awaitingDetect()) return;
+    static PackDetect pd;
+    static time_us logUs = 0;
+    static const char *logWhy = nullptr;
+    const auto &bs = charger.batSt;
+    const bool bms = bs.haveValidCellVoltage();
+    const uint32_t now = (uint32_t) wallClockUs(), fresh = BatteryState::VCELL_EXPIRATION_TIME_SEC * 1000000u;
+    const float v = sensors.Vout->ewm.avg.get();
+    uint8_t n = 0;
+    if (charger.hasBmsCellSource() && !bms && wallClockUs() < 30000000) pd.why = "waiting for BMS";
+    else
+        n = pd.step(v, sensors.Vin->ewm.avg.get(), converter.disabled(), p.cv_eoc, limits.Vout_max,
+                    bms ? bs.vcell_high : NAN, bms && now - bs.vpack_t < fresh ? bs.vpack : NAN,
+                    bms && now - bs.cell_delta_t < fresh ? bs.cell_delta : NAN);
+    if (n) {
+        p.setCells(n);
+        ESP_LOGI("charger", "pack detected: %u cells at %.2f V -> vout_max %.2f V, fallback %.2f V%s", (unsigned) n, v,
+                 p.Vbat_max, p.Vbat_fallback, bms ? ", BMS agrees" : "");
+        return;
+    }
+    const time_us t = wallClockUs();
+    if (!logWhy || t - logUs > 60000000 || (pd.why != logWhy && t - logUs > 15000000)) {
+        logWhy = pd.why, logUs = t;
+        ESP_LOGW("charger", "vout_max=auto: no pack yet (Vout %.2f V): %s", v, pd.why);
+    }
 }
 
 // RT, off in a no-MPP backoff: a battery coming back (Vout outside the battery band, then 1..2 s inside it again) ends

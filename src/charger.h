@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "console.h"
+#include "battery.h"
 #include "etc/coulomb_counter.h"
 #include "etc/linear_glide.h"
 #include "out_impedance.h"
@@ -48,6 +49,7 @@ struct BatChargerParams {
     // True when Vbat_max was set explicitly via `vset` (not from config or auto-detect). The
     // persistent-OV auto-detect reset must not discard an explicitly commanded setpoint (issue #59).
     bool vbatMaxExplicit = false;
+    bool vbatAuto = false; // vout_max=auto: Vbat_max stays NAN until setCells()
     // The EOC feedback loop drives the highest cell (BMS, accurate) down to its target by lowering vpack_pin;
     // this is how far below the nominal float floor (Vbat_fallback, expressed in this converter's possibly-
     // offset Vout frame) it may pull. Without it a converter that reads Vout high pins a full pack above EOC
@@ -58,22 +60,40 @@ struct BatChargerParams {
     // as unusable, and treating it as a real ceiling clamps the OV threshold to ~0, which reads
     // every output voltage as an over-voltage and locks the converter out of ever starting.
     [[nodiscard]] bool haveVbatMax() const { return std::isfinite(Vbat_max) && Vbat_max > 0; }
+    [[nodiscard]] bool awaitingDetect() const { return vbatAuto && !haveVbatMax(); }
+
+    // vout_max=auto: Vbat_max goes last, it releases the other core's start gate
+    void setCells(uint8_t n) {
+        n_cells = n;
+        Vbat_fallback = n * cv_min;
+        std::atomic_thread_fence(std::memory_order_release);
+        Vbat_max = n * cv_eoc;
+    }
 
     __attribute__((cold)) void load(const ConfFile &chargerConf) {
-        Vbat_max = chargerConf.getFloat("vout_max", NAN, true);
+        vbatAuto = chargerConf.getString("vout_max", "") == "auto";
+        Vbat_max = vbatAuto ? NAN : chargerConf.getFloat("vout_max", NAN, true);
         cv_eoc = chargerConf.getFloat("cv_eoc", 3.5f);
         cv_min = chargerConf.getFloat("cv_float", 3.325);
         assert_throw(cv_eoc >= cv_min, "cv_eoc must be >= cv_min");
         cv_ceiling = chargerConf.getFloat("cv_ceiling", cv_eoc + 0.05f);
         assert_throw(cv_ceiling >= cv_eoc, "cv_ceiling must be >= cv_eoc");
-        assert_throw(std::isfinite(Vbat_max) && Vbat_max > 0, "vout_max must be a positive finite voltage");
-        n_cells = (uint8_t) floorf(Vbat_max / cv_eoc);
-        assert_throw(n_cells > 0, "vout_max must be >= cv_eoc (could not determine cell count)");
-        float vout_fallback = n_cells * cv_min;
-        Vbat_fallback = chargerConf.getFloat("vout_max_fallback", vout_fallback);
-        assert_throw(std::isfinite(Vbat_fallback) && Vbat_fallback > 0, "vout_max_fallback must be > 0");
-        ESP_LOGI("charger", "N_cells=%u (Vbat_max=%.2f / cv_eoc=%.3f), Vbat_fallback=%.3fV cv_ceiling=%.3fV",
-                 (unsigned) n_cells, Vbat_max, cv_eoc, Vbat_fallback, cv_ceiling);
+        if (vbatAuto) {
+            assert_throw(packWindowsOk(cv_eoc), "vout_max=auto needs cv_eoc in [2.43, 4.85] V");
+            assert_throw(!chargerConf.has("vout_max_fallback"), "vout_max_fallback needs an explicit vout_max");
+            n_cells = 0;
+            Vbat_fallback = NAN;
+            ESP_LOGI("charger", "vout_max=auto: 4, 8 or 16 cells, detected while idle; cv_ceiling=%.3fV", cv_ceiling);
+        } else {
+            assert_throw(std::isfinite(Vbat_max) && Vbat_max > 0, "vout_max must be a positive finite voltage");
+            n_cells = (uint8_t) floorf(Vbat_max / cv_eoc);
+            assert_throw(n_cells > 0, "vout_max must be >= cv_eoc (could not determine cell count)");
+            float vout_fallback = n_cells * cv_min;
+            Vbat_fallback = chargerConf.getFloat("vout_max_fallback", vout_fallback);
+            assert_throw(std::isfinite(Vbat_fallback) && Vbat_fallback > 0, "vout_max_fallback must be > 0");
+            ESP_LOGI("charger", "N_cells=%u (Vbat_max=%.2f / cv_eoc=%.3f), Vbat_fallback=%.3fV cv_ceiling=%.3fV",
+                     (unsigned) n_cells, Vbat_max, cv_eoc, Vbat_fallback, cv_ceiling);
+        }
 
         Ibat_lim = chargerConf.getFloat("ibat_max", 20.f, true); // note: iout = ibat + iload
         Cbat = chargerConf.getFloat("bat_c", NAN, true); // larger->"safer" value, doesn't overcharge small bats
@@ -103,7 +123,8 @@ struct BatChargerParams {
                      "need 0 < cv_hold_band < cv_eoc - cv_float");
         vout_offset_max = chargerConf.getFloat("vout_offset_max", 0.6f);
         assert_throw(vout_offset_max >= 0.f, "vout_offset_max must be >= 0");
-        assert_throw(Vbat_fallback > vout_offset_max, "vout_max_fallback must be > vout_offset_max");
+        if (vbatAuto) assert_throw(4 * cv_min > vout_offset_max, "vout_max=auto needs 4 * cv_float > vout_offset_max");
+        else assert_throw(Vbat_fallback > vout_offset_max, "vout_max_fallback must be > vout_offset_max");
         assert_throw(recharge_dod >= 0.f && recharge_dod < 1.f, "recharge_dod must be in [0, 1)");
         partial_charge = chargerConf.getFloat("partial_charge", 0.f);
         assert_throw(partial_charge >= 0.f && partial_charge < 1.f, "partial_charge must be in [0, 1)");
