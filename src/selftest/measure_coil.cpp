@@ -111,19 +111,20 @@ static float readZero(uint32_t dwellMs) {
     return medianN(io, 5);
 }
 
-static void logSplit(const coilfit::Result &f, bool dl) {
+// tag: "" or " <which fit>", inserted after "L(Ipk)"
+static void logSplit(const coilfit::Result &f, const char *tag) {
     if (f.k != f.k) return;
     char b[240];
-    int o = snprintf(b, sizeof(b), "measure-coil: L(Ipk), +-noise/offsets:");
+    int o = snprintf(b, sizeof(b), "measure-coil: L(Ipk)%s, +-noise/offsets:", tag);
     for (int i = 0; i < f.nb && o < (int) sizeof(b); ++i)
         o += snprintf(b + o, sizeof(b) - o, "%s %.1f-%.1fA %.2fuH+-%.1f/%.1f%%", i ? " |" : "", f.lo[i], f.hi[i],
                       f.Lb[i] * 1e6f, f.seb[i] * 100.0f, f.sysb[i] * 100.0f);
     UART_LOG("%s", b);
     const float w = f.ksys + 2 * f.kse, lo = f.k - w;
     snprintf(b, sizeof(b), lo < 0 ? "drop <= %.1f %%/A" : "no drop resolved", -lo * 100.0f);
-    UART_LOG("measure-coil: L(Ipk) slope %+.2f +-%.2f %%/A over %.1f-%.1f A, Iout/on-time offsets add up to +-%.2f: "
-             "coil %+.2f..%+.2f %%/A, %s%s", f.k * 100.0f, f.kse * 100.0f, f.lo[0], f.hi[f.nb - 1], f.ksys * 100.0f,
-             lo * 100.0f, (f.k + w) * 100.0f, b, dl ? "; at the fitted on-time offset, which assumes slope 0" : "");
+    UART_LOG("measure-coil: L(Ipk)%s slope %+.2f +-%.2f %%/A over %.1f-%.1f A, Iout/on-time offsets add up to +-%.2f: "
+             "coil %+.2f..%+.2f %%/A, %s", tag, f.k * 100.0f, f.kse * 100.0f, f.lo[0], f.hi[f.nb - 1], f.ksys * 100.0f,
+             lo * 100.0f, (f.k + w) * 100.0f, b);
 }
 
 static bool measWriteConf(const char *key, const char *val) {
@@ -222,7 +223,7 @@ static float sweepL0(const MeasArgs &a) {
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
         if (s_tripped || converter.disabled()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
-        float D = (float) r.H / pwmMax, bi = r.vin, bo = r.vout;
+        float D = (float) r.H / converter.periodCounts(), bi = r.vin, bo = r.vout; // period basis, as dcmCurrent()
         if (boost) coilfit::asBuck(bi, bo);
         float L = (r.iout <= 0.02f || bi <= bo || bo <= 0) ? NAN : (bi - bo) * bi * D * D / (2.0f * bo * fsw * r.iout);
         UART_LOG("  %5u %6.3f %6.2f %6.2f %6.3f  %3s %7.2f", r.H, D, r.vin, r.vout, r.iout,
@@ -263,17 +264,20 @@ static float sweepL0(const MeasArgs &a) {
                  " uncorrected %.2f uH)", f.L * 1e6f, st ? "uncorrected" : "on-time corrected", f.n, iName, ifloor,
                  f.n < coilfit::kMinFitPts ? "too few points" : "no periodic term", f0.L * 1e6f);
     static const char *const why[] = {"applied", "", "not applied: duty span under 2x", "not applied: error over 80 ns",
-                                      "outside +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf"};
+                                      "offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf"};
     if (st == 1) UART_LOG("measure-coil: on-time offset not estimated (too few points), L uncorrected");
     else UART_LOG("measure-coil: on-time offset %+.0f ns +-%.0f noise +-%.0f syst (L(Ipk) slope 0 +-%.1f %%/A assumed), "
                   "duty span %.1fx: %s", ft.dl * 1e9f, ft.dlse * 1e9f, ft.dlsys * 1e9f, coilfit::kSlopeTol * 100.0f,
                   ft.dspan, why[st]);
     UART_LOG("measure-coil: %s zero %+.3f/%+.3f A (off, before/after), subtracted%s", iName, z0, z1,
              disturbed ? "; DISTURBED: moved > 0.02 A, L not for coil.conf" : "");
-    logSplit(f, !st);
-    if (disturbed || st == 4) return NAN;
-    UART_LOG("  -> coil.conf L0=%.6e   note: scales with Iout cal & pwmMax%s", f.L, st ? "; on-time offset not corrected" : "");
-    return f.L;
+    if (!st) logSplit(ft, " at the fitted on-time offset (slope 0 assumed)");
+    logSplit(f0, st ? "" : " uncorrected");
+    const float l = coilfit::persistL(f0, ft, st);
+    if (st != 4 && l != l) UART_LOG("measure-coil: L implausible, not for coil.conf");
+    if (disturbed || l != l) return NAN;
+    UART_LOG("  -> coil.conf L0=%.6e   note: scales with Iout cal & period%s", l, st ? "; on-time offset not corrected" : "");
+    return l;
 }
 
 static void sweepLs(const MeasArgs &a) {

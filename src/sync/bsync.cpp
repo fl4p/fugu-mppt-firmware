@@ -7,6 +7,9 @@
 #include <cmath>
 #include <algorithm>
 #include "app_state.h"
+#ifdef WITH_MEASURE_COIL
+#include "selftest/measure_coil.h"
+#endif
 
 extern SynchronousConverter converter;
 
@@ -225,6 +228,13 @@ bool BeaconSyncService::onStart() {
     // nomPeriod_ now would cache the period that is about to be replaced, and the servo would then
     // dither around a stale nominal. requestPwmFrequency() refuses once bsyncOwnsPeriod is set, so
     // this is the other half of that mutual exclusion.
+#ifdef WITH_MEASURE_COIL
+    if (isMeasuring()) {
+        leg_ = nullptr;
+        ESP_LOGE(name(), "measure-coil running");
+        return false;
+    }
+#endif
     if (!converter.pwmFreqIdle()) {
         leg_ = nullptr;
         ESP_LOGE(name(), "a switching-frequency change is pending, retry once it has landed");

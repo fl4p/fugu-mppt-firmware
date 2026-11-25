@@ -30,6 +30,7 @@ constexpr float kOnTimeMin = 50e-9f; // on-time offset bound (s) when the dead t
 constexpr float kGainTol = 0.01f;    // assumed Iout gain tolerance (shunt), relative
 constexpr float kSlopeTol = 0.005f;  // coil L(Ipk) slope tolerance of the on-time estimate, 1/A
 constexpr float kDlMax = 400e-9f;    // plausible on-time offset (s): beyond it the DCM model does not fit
+constexpr float kLMin = 1e-6f, kLMax = 2e-3f; // plausible coil L (H) to persist
 constexpr float kDlTol = 80e-9f;     // on-time offset error (s, noise and systematic) up to which it is applied
 
 // A boost (vin the LV input, vout the HV output, its input current the coil current) is the buck with input vout and
@@ -156,9 +157,13 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
                   float zsig = 0, float ton = kOnTimeMin, float dl = 0, float fr = -1) {
     Result r;
     if (n > kMaxPts) n = kMaxPts;
+    if (!(fsw > 0 && fsw < INFINITY && std::isfinite(dl))) n = 0;
     float y[kMaxPts], t[kMaxPts], s[kMaxPts], x[kMaxPts], w[kMaxPts], u[kMaxPts];
     auto de = [&](int i) { return d[i] + dl * fsw; };
-    auto ok = [&](int i) { return (vin[i] - vout[i]) * vin[i] > 0 && de(i) > 0 && iout[i] > 0 && vout[i] > 0; };
+    auto ok = [&](int i) {
+        return std::isfinite(de(i) * vin[i] * vout[i] * iout[i]) && (vin[i] - vout[i]) * vin[i] > 0 && de(i) > 0 &&
+               iout[i] > 0 && vout[i] > 0;
+    };
     int m = 0;
     float vm = 0, dlo = 1, dhi = 0;
     for (int i = 0; i < n; ++i) {
@@ -199,8 +204,9 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     float best = INFINITY, fBest = fr;
     if (fr >= 0) best = fr > 0 ? 0 : INFINITY;
     else if (span > 0 && dt > 0 && fHi > fLo) {
-        float df = 0.1f / span;
-        for (float f = fLo; f < fHi; f += df) {
+        float df = std::max(0.1f / span, (fHi - fLo) / 1024); // bounded step count
+        for (int j = 0; fLo + (float) j * df < fHi; ++j) {
+            const float f = fLo + (float) j * df;
             const float e = detail::solve(y, t, x, m, f, nh, c);
             if (e < best) best = e, fBest = f;
         }
@@ -303,12 +309,12 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     return r;
 }
 
-// on-time offset of r: 0 applicable; 1 not estimated (too few points), 2 duty span under 2x, 3 error (noise and
-// systematic) over kDlTol, 4 out of range (beyond kDlMax by 2 sigma)
+// on-time offset of r: 0 applicable; 1 not estimated (under kMinFitPts points), 2 duty span under 2x, 3 error (noise
+// and systematic) over kDlTol, 4 FAIL: offset or its error beyond kDlMax, or not computable. Both bounds act alone, so
+// a larger offset or error never turns 4 into a fallback (1-3, which persist the uncorrected L).
 inline int dlStatus(const Result &r) {
     const float u = std::hypot(r.dlse, r.dlsys);
-    if (!(u == u) || !(r.dl == r.dl)) return 1;
-    if (std::fabs(r.dl) > kDlMax + 2 * u) return 4;
+    if (!(std::fabs(r.dl) + 2 * u <= kDlMax)) return r.n < kMinFitPts ? 1 : 4;
     if (r.dspan < 2) return 2;
     return u > kDlTol ? 3 : 0;
 }
@@ -328,6 +334,12 @@ inline Result fitOnTime(const float *d, const float *vin, const float *vout, con
     }
     st = dlStatus(r);
     return r;
+}
+
+// the L to persist from fit r0 (offset 0) and fitOnTime() r, st (NAN: none): r's on applied, r0's on fallback
+inline float persistL(const Result &r0, const Result &r, int st) {
+    const float L = st ? r0.L : r.L;
+    return st != 4 && L > kLMin && L < kLMax ? L : NAN;
 }
 
 }

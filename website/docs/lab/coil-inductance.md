@@ -259,15 +259,16 @@ measure-coil ls [hs]    [dwell_ms] [apply]              # the §6 LS-timing / re
 ```
 
 It reads `Vin`/`Vout`/`Iout` directly from each sensor's `ewm.avg` (the same DC average the host
-medians off the `sensor avg` line), uses `pwmMaxDriver()` for the exact PWM period (no
-`MinDutyCycleLS` reconstruction), and applies the identical formula, `Iout` floor and ring fit
+medians off the `sensor avg` line), takes `D` as the high-side count over the timer period, the
+basis of the converter's own DCM model (no `MinDutyCycleLS` reconstruction), and applies the identical formula, `Iout` floor and ring fit
 (`src/selftest/coil_fit.h`, a single-precision copy of the script's `fit_l0()`; a host test checks
 that both agree to 0.1 %). The `l0` defaults are 48 steps and a 1 s dwell, about one minute in
 total: the device reads the averages directly and needs no console polling. `ls` keeps a 3 s
 dwell. `apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect_offset_drv` and
 `rect_offset_cal=1`, or 2 when the offset was clamped to +125 ns (live at once). Either is written
 to flash only after the converter has been disabled, because a flash write stalls the control loop.
-`L0` is not written when the run is marked `DISTURBED` or the on-time offset is out of range. Like the
+`L0` is not written when the run is marked `DISTURBED`, the on-time offset fails, or `L` is not a
+finite value between 1 µH and 2 mH. Like the
 script, it reports the physical inductance. Unlike the script, it also fits the
 [on-time offset](#on-time-offset) and corrects `L` for it. A median-only version of the command agreed with the script to within ~2 % on board A
 of §9.
@@ -282,7 +283,8 @@ For a tight result, use many small steps. Otherwise the i-max abort leaves only 
 band sampled, and the ring fit falls back to the median.
 
 After the result line the command prints the on-time offset, the `Iout` zero and the peak-current
-dependence:
+dependence. With the offset applied, the bins and slope come twice, at the fitted offset and from the
+uncorrected fit (tagged `uncorrected`):
 
 ```
 measure-coil: L = <L> uH on-time corrected (ring fit, 33 DCM pts, Iout>=0.44A, +-0.4% noise +-1.6% syst; ring 247 kHz ...; uncorrected <L> uH)
@@ -292,11 +294,14 @@ measure-coil: L(Ipk), +-noise/offsets: 2.2-3.1A 75.71uH+-0.7/5.4% | 3.1-4.0A 77.
 measure-coil: L(Ipk) slope +0.76 +-0.53 %/A over 2.2-4.8 A, Iout/on-time offsets add up to +-1.73: coil -2.04..+3.56 %/A, drop <= 2.0 %/A
 ```
 
+The first two `L(Ipk)` lines read `L(Ipk) at the fitted on-time offset (slope 0 assumed)` when the
+offset is applied, followed by the same two lines as `L(Ipk) uncorrected`.
+
 The result line names the value it reports, `on-time corrected` or `uncorrected`, and ends with the
 uncorrected `L` for comparison. The on-time line gives the fitted offset, its noise and systematic
 errors (one standard deviation) and the duty span of the points. `<state>` is `applied`, or why the
-uncorrected `L` is reported instead (see [On-time offset](#on-time-offset)); an offset beyond
-±400 ns fails the run and `apply` does not write `L0`.
+uncorrected `L` is reported instead (see [On-time offset](#on-time-offset)); an offset not shown
+within ±400 ns fails the run and `apply` does not write `L0`.
 
 The `Iout zero` line gives the current read with the converter off before and after the sweep. If
 it moved by more than 0.02 A, the line ends with `DISTURBED`, and `apply` does not write `L0`. The
@@ -324,7 +329,7 @@ the frequency gives about 1.4 times the peak current. The firmware changes the f
 converter off, through the same path as `pwm-freq` (`pwmMax`, the duty band, the CCM/DCM decision
 and the dead-time in counts all follow), and restores the previous frequency once the converter is
 off again, also after an abort or an error. The sweep header prints the frequency it ran at
-(`fsw=`), and every row's duty `D` refers to that frequency's `pwmMax`. `f=` needs the MCPWM gate
+(`fsw=`), and every row's duty `D` refers to that frequency's timer period. `f=` needs the MCPWM gate
 driver (the ESP32-S3 default) and is refused for `ls`.
 
 The frequency is bounded:
@@ -347,9 +352,8 @@ Each row also stops the sweep once its peak current `2·Iout·Vout/(D·Vin)`, wh
 exceeds the configured output-current limit (`limits.conf`), the current the coil and switches
 carry in normal operation.
 
-Runs at different frequencies give comparable `L(Ipk)` bins, with one caveat. The duty basis is
-`pwmMax`, the period less the wrap-side dead-time. A non-zero wrap-side dead-time biases `L` high by
-about twice its share of the period, and that share halves at half the frequency.
+Runs at different frequencies give comparable `L(Ipk)` bins. The duty basis is the full timer
+period, so the wrap-side dead-time reserved out of `pwmMax` does not bias `L`.
 
 The ring fit's frequency ceiling, set by the spacing of the points in dead time, scales with the
 switching frequency at a given step count: with 48 steps it is about 0.65 MHz at 20 kHz, still above
@@ -686,12 +690,15 @@ fit at the corrected duties gives `L`, the bins and the slope. The estimate has 
 The corrected result's systematic error of `L` uses the offset's error in place of the on-time bound.
 The uncorrected `L` is reported instead when:
 
-- the band has fewer than 16 points, or the ring fit failed (no estimate);
+- the band has fewer than 16 points (no estimate);
 - the duty span of the points, highest over lowest, is under 2;
 - the offset's error, noise and systematic in quadrature, exceeds 80 ns.
 
-An offset beyond ±400 ns, by more than twice its error, is outside what gate drive and switching
-explain. The run then fails: the DCM model does not describe the data, and `L0` is not written.
+An offset beyond ±400 ns is outside what gate drive and switching explain. The run fails, and `L0`
+is not written, unless the offset plus twice its error is within ±400 ns, or when the estimate is
+not computable from 16 or more points: the DCM model then does not describe the data, or the data
+cannot show that it does. A larger offset or a larger error therefore never turns a failed run into
+a written fallback.
 
 On the converter model with the ring (24 sweeps per case, stiff source, zero-corrected):
 

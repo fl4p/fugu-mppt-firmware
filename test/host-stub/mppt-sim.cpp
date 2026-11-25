@@ -2112,6 +2112,7 @@ static coilfit::Result mcFit(const float *d, const float *vi, const float *vo, c
     printf("  measure: uncorrected L %.2f uH slope %+.2f %%/A | on-time %+.0f +-%.0f noise +-%.0f syst ns, span %.2f, status %d"
            " | corrected L %.2f uH +-%.1f/%.1f %% slope %+.2f %%/A | ring %.0f kHz %.1f periods\n", a.L * 1e6f, a.k * 100, b.dl * 1e9f, b.dlse * 1e9f,
            b.dlsys * 1e9f, b.dspan, g_mcSt, b.L * 1e6f, b.se * 100, b.sys * 100, b.k * 100, a.f * 1e-3f, a.periods);
+    if (coilfit::persistL(a, b, g_mcSt) != coilfit::persistL(a, b, g_mcSt)) printf("  measure: L not persisted\n");
     return g_mcSt ? a : b;
 }
 // -ton scenarios: the plant's on-time offset (vconv.conf t_on_ofs) against the estimate; L vs lPlant
@@ -2161,7 +2162,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
                 run(0.05, 0);
             }
             if (converter.disabled()) { printf("  measure: converter disabled; aborting\n"); break; }
-            const float vin = med5(a), vout = med5(b), iout = med5(c), D = (float) converter.getCtrlOnPwmCnt() / pwmMax;
+            const float vin = med5(a), vout = med5(b), iout = med5(c), D = (float) converter.getCtrlOnPwmCnt() / converter.periodCounts();
             const bool dcm = converter.inDCM(), ok = iout > 0.02f && vin > vout;
             if (dcm && ok) d[n] = D, vi[n] = vin, vo[n] = vout, io[n] = iout, ++n, iMaxSeen = std::max(iMaxSeen, iout);
             const float ipk = coilfit::ipkDcm(D, vin, vout, iout);
@@ -2282,7 +2283,7 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
         for (int k = 0; k < 5; ++k)
             a[k] = sensors.Vin->ewm.avg.get(), b[k] = sensors.Vout->ewm.avg.get(), c[k] = sensors.Iin->ewm.avg.get(), wait(0.05);
         if (tripped || converter.disabled()) { stop = tripped ? "TRIP" : "converter disabled"; break; }
-        const float D = (float) converter.getCtrlOnPwmCnt() / pwmMax;
+        const float D = (float) converter.getCtrlOnPwmCnt() / converter.periodCounts();
         float bi = med5(a), bo = med5(b);
         const float vout1 = bo, iin = med5(c);
         coilfit::asBuck(bi, bo);

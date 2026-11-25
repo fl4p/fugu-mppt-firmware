@@ -287,7 +287,7 @@ static int testOnTime(int trials) {
     for (const auto &c: cases) {
         std::mt19937 rng(555);
         std::vector<float> e0, e1, ed, zd;
-        int applied = 0, n = 0, st[5] = {};
+        int applied = 0, kept = 0, n = 0, st[5] = {};
         for (int t = 0; t < trials; ++t) {
             const Rnd b(rng);
             Opt o;
@@ -301,7 +301,7 @@ static int testOnTime(int trials) {
             const auto r0 = coilfit::fit(d, vi, vo, io, m, (float) kFsw, z.sig);
             int s = 0;
             const auto r1 = coilfit::fitOnTime(d, vi, vo, io, m, (float) kFsw, z.sig, r0, s);
-            ++n, ++st[s];
+            ++n, ++st[s], kept += coilfit::persistL(r0, r1, s) == coilfit::persistL(r0, r1, s);
             // the plant's L at the points' mean Ipk (k: L = L0 (1 - k Ipk) per cycle)
             float ipk = 0;
             for (int i = 0; i < m; ++i) ipk += coilfit::ipkDcm(d[i], vi[i], vo[i], io[i]) / (float) m;
@@ -318,13 +318,55 @@ static int testOnTime(int trials) {
                "rms z %.2f\n", c.hoff * 6.25f, -c.k * 100, c.isc < 5 ? "soft" : "stiff", n, 100 * meanOf(e0),
                100 * rmsOf(e0), applied, st[2], st[3], st[4], 100 * meanOf(e1), 100 * rmsOf(e1), meanOf(ed), rmsOf(ed),
                rmsOf(zd));
-        if (c.hoff * 6.25e-9f > coilfit::kDlMax) { // out of range: reported (status 4), never applied
-            if (applied || 3 * st[4] < 2 * n) ++fail, printf("  FAIL: out-of-range offset applied or not reported\n");
+        if (c.hoff * 6.25e-9f > coilfit::kDlMax) { // out of range: reported (status 4), nothing persisted
+            if (kept || 3 * st[4] < 2 * n) ++fail, printf("  FAIL: out-of-range offset: %d persisted\n", kept);
         } else if (c.k == 0 && c.isc > 5 && !(3 * applied >= 2 * n && std::fabs(meanOf(e1)) < 0.5f && rmsOf(e1) < 1.f &&
                                        rmsOf(zd) < 1.5f && st[4] == 0))
             ++fail, printf("  FAIL\n");
     }
     return fail;
+}
+
+// deterministic (as the review probe): 48.6 uH, 80/26.6 V, 39 kHz, 48 points at D 0.075..0.215, offset dl, relative
+// Iout residual a*sin(2.134 i). Beyond kDlMax nothing may be persisted at any residual (a larger offset or error must
+// not turn a refusal into a write); non-finite inputs must end and persist nothing implausible.
+static int testOnTimeTail() {
+    const float L = 48.6e-6f, fsw = 39000, vi0 = 80, vo0 = 26.6f;
+    float d[48], vi[48], vo[48], io[48];
+    auto gen = [&](float dl, float a) {
+        for (int i = 0; i < 48; ++i) {
+            d[i] = 0.075f + (float) i * 0.14f / 47, vi[i] = vi0, vo[i] = vo0;
+            const float de = d[i] + dl * fsw;
+            io[i] = (vi0 - vo0) * vi0 * de * de / (2 * vo0 * fsw * L) * (1 + a * std::sin((float) i * 2.134f));
+        }
+    };
+    int fail = 0, nk = 0, nt = 0;
+    for (float dl: {-3000e-9f, -1000e-9f, -600e-9f, -450e-9f, 450e-9f, 600e-9f, 1000e-9f, 3000e-9f})
+        for (float a: {0.f, 0.01f, 0.05f, 0.15f, 0.25f, 0.4f, 0.8f, 2.f}) {
+            gen(dl, a);
+            const auto r0 = coilfit::fit(d, vi, vo, io, 48, fsw, 0.002f);
+            int st;
+            const auto r = coilfit::fitOnTime(d, vi, vo, io, 48, fsw, 0.002f, r0, st);
+            const float l = coilfit::persistL(r0, r, st);
+            ++nt;
+            if (l == l) ++nk, printf("  FAIL: offset %+.0f ns, residual %.0f %%: status %d, %.2f uH persisted\n",
+                                     dl * 1e9f, a * 100, st, l * 1e6f);
+        }
+    fail += nk > 0;
+    int nf = 0;
+    for (int k = 0; k < 6; ++k) { // one bad value per case; fsw inf in the last
+        gen(-100e-9f, 0.01f);
+        float *v[] = {vi, vo, io, d, vi, io};
+        v[k][7] = k < 3 ? INFINITY : k == 3 ? NAN : -INFINITY;
+        const float f = k == 5 ? INFINITY : fsw;
+        const auto r0 = coilfit::fit(d, vi, vo, io, 48, f, 0.002f);
+        int st;
+        const auto r = coilfit::fitOnTime(d, vi, vo, io, 48, f, 0.002f, r0, st);
+        const float l = coilfit::persistL(r0, r, st);
+        if (l == l && !(std::fabs(l / L - 1) < 0.05f)) ++nf, printf("  FAIL: non-finite case %d persisted %g\n", k, l);
+    }
+    printf("on-time tail: %d/%d offset/residual cases persisted, non-finite inputs: %d bad\n", nk, nt, nf);
+    return fail + (nf > 0);
 }
 
 static int fitFile(const char *path) {
@@ -413,6 +455,7 @@ int main(int argc, char **argv) {
     fail += testDisturbed(trials);
     fail += testOffsets(argc > 3 ? atoi(argv[3]) : 16);
     fail += testOnTime(argc > 3 ? atoi(argv[3]) : 16);
+    fail += testOnTimeTail();
     printf("coil-fit-test: %s\n", fail ? "FAIL" : "PASS");
     return fail ? 1 : 0;
 }
