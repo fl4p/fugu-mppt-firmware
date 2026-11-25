@@ -83,14 +83,33 @@ the reason at most every 15 s, and every 60 s while it stays the same.
 
 Until a pack is detected, the converter stays off: MPPT and PSU starts are blocked (`bat-detect`), manual PWM is
 held off and the charger is idle. `vset` is refused and `status` shows `Vbat_max=nanV (auto, no pack yet)`.
-Detection runs once per boot. A persistent output over-voltage clears `vout_max` as it does for a configured value,
-and detection then runs again.
+A persistent output over-voltage clears `vout_max` as it does for a configured value, and detection then runs again.
+
+### Pack change
+
+After detection the firmware keeps checking Vout while the converter is off. When three readings in a row, 3 s
+apart, fall outside the detected pack's band, it logs `pack left the 8-cell band (Vout 13.47 V, below its band),
+detecting again`, clears `vout_max`, the fallback and the charge-voltage pin, and detection starts over. Until it
+succeeds the converter stays off, as after boot.
+
+For a pack of $n$ cells the band is $n \times \min(2.5\ \text{V}, \max(2\ \text{V}, cv_{eoc} \times 1.03 / 2 +
+50\ \text{mV})) \le V_{out} < 2n \times 2.5\ \text{V}$, which holds the whole detection window. It is wider than the detection window, which prevents a change from flapping:
+
+- A deep-discharged pack down to 2.0 V per cell (with `cv_eoc` up to 3.78 V), or a load sag shorter than the three readings, keeps the
+  count.
+- A 4, 8 or 16 cell pack of another count lies outside the band, empty or full, for any accepted `cv_eoc`. So does a
+  removed pack once the output capacitors have discharged.
+- Readings taken while the converter switches don't count and restart the three readings, so a sag under load never
+  clears the count.
+- A missing Vout reading counts as outside.
+
+A pack below 2.0 V per cell (2.21 V with `cv_eoc` = 4.2 V, at most 2.5 V) counts as removed. It is not charged until it reads inside a
+window again.
 
 ### Limits
 
 - Only 4, 8 and 16 cells. A pack of 12 to 15 cells reads inside the 16-cell window, and one of 5 to 7 cells inside the
   8-cell window. Without a BMS that contradicts it, such a pack is charged as 16 or 8 cells and overcharged. Set
   `vout_max` explicitly for any other cell count.
-- A pack swapped for a smaller one while the board stays powered keeps the detected count until the next reboot.
 - A non-lithium pack, such as a 12 V lead-acid battery, reads inside the 4-cell window and is charged with `cv_eoc`
   per cell.
