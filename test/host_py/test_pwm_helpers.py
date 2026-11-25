@@ -154,7 +154,7 @@ class TestPhaseSignalCheck(unittest.TestCase):
         try:
             class FakeCon:
                 def command(self, cmd, timeout=2.0):
-                    class R: text = ""
+                    class R: text = ""; ok = True
                     return R()
             class FakeScope: pass
             class FakePc: pass
@@ -229,7 +229,7 @@ class TestPhase1Synthetic(unittest.TestCase):
             def __init__(self): self.calls = []
             def command(self, cmd, timeout=2.0):
                 self.calls.append(cmd)
-                class R: text = ""
+                class R: text = ""; ok = True
                 return R()
             def close(self): pass
 
@@ -466,7 +466,7 @@ class TestPhase3Synthetic(unittest.TestCase):
 
         class _Con:
             def command(self, cmd, timeout=2.0):
-                class R: text = ""
+                class R: text = ""; ok = True
                 return R()
 
         orig = m.capture
@@ -579,7 +579,7 @@ class TestPhase4Synthetic(unittest.TestCase):
 
         class _Con:
             def command(self, cmd, timeout=2.0):
-                class R: text = ""
+                class R: text = ""; ok = True
                 return R()
 
         board = self._make_board(-1)
@@ -593,7 +593,7 @@ class TestPhase4Synthetic(unittest.TestCase):
 
         class _Con:
             def command(self, cmd, timeout=2.0):
-                class R: text = ""
+                class R: text = ""; ok = True
                 return R()
 
         freq = 40000
@@ -625,7 +625,7 @@ class TestPhase4Synthetic(unittest.TestCase):
 
         class _Con:
             def command(self, cmd, timeout=2.0):
-                class R: text = ""
+                class R: text = ""; ok = True
                 return R()
 
         freq = 40000
