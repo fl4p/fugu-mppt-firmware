@@ -60,6 +60,7 @@ The host tools in `etc/` include:
 | `etc/scope.py` | Launcher for the adcscope client, see [Measurements](../lab/measurements.md#adc-noise) |
 | `etc/measure_coil.py`, `etc/pico_*.py`, `etc/mcpwm_gate_verify.py` | Bench measurements |
 | `etc/matrix_build.sh` | Build the common feature and target variants, see [Build](build.md) |
+| `etc/size-variants.sh` | Build config variants and compare image size and layout, see [Binary size](binary-size.md#measuring-variants) |
 | `etc/filter-studies/` | Filter-design studies |
 | `etc/patches/` | Patches for upstream code |
 | `etc/mqtt-console-logger/` | Logger that stores the console output of all devices from MQTT |

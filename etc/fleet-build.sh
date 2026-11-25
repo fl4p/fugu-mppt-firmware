@@ -53,5 +53,6 @@ echo "fleet-build: commit $rev"
 echo "bin     $bin"
 echo "version $ver"
 echo "sha256  $sha"
+python3 "$wt/etc/idf-devtools/image_layout.py" "$wt/build/fleet" | sed 's/^/layout  /'
 case $ver in *dirty*) echo "fleet-build: version is -dirty, the build modified tracked files:" >&2
     git -C "$wt" status --porcelain --ignore-submodules=none >&2; exit 1 ;; esac

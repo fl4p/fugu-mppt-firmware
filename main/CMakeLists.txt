@@ -363,10 +363,10 @@ component_compile_options(
 # OTA rewrite. -fno-merge-constants leaves the literals in ordinary per-function .rodata.*
 # sections, which linker.lf can and does place last.
 #
-# Cost: +14,352 B, ALL of it in .flash.rodata -- which leaves only ~2 KB below the 64 KB
-# MMU page boundary that pins the IROM file offset. Crossing it churns nearly every IROM
-# sector and eats ~64 KB of partition headroom. See
-# doc/2026-09-08-image-layout-stability-for-ota.md before letting rodata grow.
+# Cost: +14,352 B, ALL of it in .flash.rodata. The DROM length pins the IROM file offset to a
+# 64 KB MMU page; crossing a page edge either way churns nearly every IROM sector.
+# etc/idf-devtools/image_layout.py <build dir> prints both margins (CI checks the fleet build);
+# see doc/2026-09-08-image-layout-stability-for-ota.md.
 #
 # The flag is broader than its name: GCC's -fmerge-constants covers identical string AND
 # floating-point constants across translation units, so this also disables pooling within
@@ -382,4 +382,9 @@ endif ()
 # IRAM-resident (rt_iram_extra.lf)
 if (RT_IRAM_LF AND CONFIG_FUGU_GPIO_ISR_IRAM)
     target_compile_definitions(${COMPONENT_LIB} PRIVATE FUGU_GPIO_ISR_IRAM=1)
+endif ()
+# Extra compile options for this component only, for size and speed experiments:
+#   idf.py -B build/x -DFUGU_MAIN_COPTS="-O2;-DLOG_LOCAL_LEVEL=3" build
+if (FUGU_MAIN_COPTS)
+    target_compile_options(${COMPONENT_LIB} PRIVATE ${FUGU_MAIN_COPTS})
 endif ()

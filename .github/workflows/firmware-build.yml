@@ -28,6 +28,9 @@ jobs:
           - name: fleet
             target: esp32s3
             defaults: sdkconfig.defaults;sdkconfig.d/fleet
+            # IROM header offset pinned: a move churns every IROM sector of a differential OTA.
+            # When a change moves it on purpose, update the offset here.
+            layout: --expect-irom 0x60018 --min-free 32768
           - name: esp32
             target: esp32
             defaults: sdkconfig.defaults
@@ -41,7 +44,7 @@ jobs:
       - name: Submodules
         run: |
           git config --global --add safe.directory '*'
-          git submodule update --init --recursive components
+          git submodule update --init --recursive components etc/idf-devtools
       - uses: actions/cache@v4
         with:
           path: managed_components
@@ -56,3 +59,10 @@ jobs:
         run: |
           . "$IDF_PATH/export.sh" > /dev/null
           idf.py -B build/ci -DSDKCONFIG=build/ci/sdkconfig size | tail -15
+      - name: Layout
+        shell: bash
+        run: |
+          rc=0; python3 etc/idf-devtools/image_layout.py build/ci --min-slack 4096 || rc=$?
+          [ $rc -eq 1 ] && echo "::warning::DROM is within 4 KB of a 64 KB page edge: the next rodata change may move IROM a page"
+          [ $rc -le 1 ] || exit $rc
+          if [ -n "${{ matrix.layout }}" ]; then python3 etc/idf-devtools/image_layout.py build/ci ${{ matrix.layout }}; fi

@@ -184,11 +184,14 @@ pulls in.
 
 These options need verification before they are applied.
 
-- Global `CONFIG_COMPILER_OPTIMIZATION_SIZE=y` with per-file `-O2` overrides on the RT path: potentially
-  `~100–150 KB`. The current per-file approach only affects libmain. Flipping the global default recompiles all of
-  IDF, arduino-esp32, lwip and mbedtls at `-Os` too. Before doing this, measure `rtcount` numbers before and after, and
-  override `-O2` on `main.cpp / mppt.cpp / adc/adc_esp32_cont.cpp` plus any IDF code on the sample-to-PWM path (likely
-  `esp_adc/esp_adc_continuous.c`, parts of `freertos`, the ADC continuous ISR).
+- Global `CONFIG_COMPILER_OPTIMIZATION_SIZE=y`. On the production config (2026-11-25) it saves 88 KB, of which 58 KB
+  comes from libmain and 30 KB from the components still at `-O2` (measured with `-DFUGU_MAIN_COPTS=-O2`). Those
+  components include the RT-path code that the `-Os` component list leaves out on purpose: `freertos`, the ADC and
+  GPIO drivers, the HAL, and arduino-esp32's I2C sources. The safer form adds `-Os` only to core-0-only components
+  still missing from `FUGU_OS_COMPONENTS`, mbedtls being the largest. Before flipping the global default, measure
+  `rtcount` numbers before and after, and override `-O2` on `main.cpp / mppt.cpp / adc/adc_esp32_cont.cpp` plus any
+  IDF code on the sample-to-PWM path (likely `esp_adc/esp_adc_continuous.c`, parts of `freertos`, the ADC continuous
+  ISR).
 - `-fno-asynchronous-unwind-tables`: `~80 KB`. `.eh_frame` is ~22 KB in libmain and ~61 KB in arduino-esp32. With
   `-fexceptions` ON, C++ exception throw/catch does not need async-unwind tables. They serve stack walking at arbitrary
   instructions (signal handlers, gcore-style dumps). Verify that panic backtraces still resolve before merging.
@@ -196,6 +199,60 @@ These options need verification before they are applied.
   `~60–80 KB` (drops `libstdc++.a`'s 66 KB `.rodata` exception unwind tables). The work is mechanical but invasive.
   Every `throw std::runtime_error(...)` in conf / sensor_setup / buck / mppt construction / ADC init would have to
   become a returned bool or `std::optional`. It is worth doing only after the other options are used up.
+
+### Config options
+
+Measured one at a time on the production config (`sdkconfig.d/fleet`, 1,802,032 B, 2026-11-25):
+
+| Option | Saved | Cost |
+|---|---|---|
+| `CONFIG_FUGU_WITH_FTP=n` | 15.9 KB | No FTP access to littlefs |
+| `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y`, libmain `-DLOG_LOCAL_LEVEL=3` | 11.5 KB | IDF info logs gone |
+| `CONFIG_FUGU_WITH_LEDC=n` | 11.4 KB | No fan PWM, no `anaw` |
+| `CONFIG_ESP_ERR_TO_NAME_LOOKUP=n` | 8.4 KB | Error codes print as numbers |
+| `CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL_ERROR=y` | 8.3 KB | arduino-esp32 warnings gone |
+| `CONFIG_FUGU_WITH_SCOPE=n` | 7.9 KB | No ADC scope stream |
+
+A global `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y` without the libmain override saves 41.6 KB but compiles out every
+`ESP_LOGI` of the firmware, so `svc log <name> info` has nothing left to show.
+
+On that config DROM sat 7,300 B above its lower page edge. A cut that removes more rodata than that moves IROM down a
+page, and the next OTA rewrites the whole [image layout](#image-layout) once. Both log-level builds crossed it.
+
+## Measuring variants
+
+`etc/size-variants.sh` builds the base config and each variant into `build/sz/<name>/` and prints the image size, the
+change against the base, the free space in the app partition and the [image layout](#image-layout) margins:
+
+```bash
+etc/size-variants.sh -j 4 noftp:CONFIG_FUGU_WITH_FTP=n \
+    'logsplit:CONFIG_LOG_MAXIMUM_LEVEL_WARN=y,CONFIG_LOG_DEFAULT_LEVEL_WARN=y,COPTS=-DLOG_LOCAL_LEVEL=3'
+```
+
+A variant is `name:ITEM,ITEM...`, each item a `CONFIG_*=value` line for an sdkconfig fragment layered on the base
+(`--base`, default `sdkconfig.defaults;sdkconfig.d/fleet`) or `COPTS=<options>` for libmain only. `COPTS` sets the
+CMake cache variable `FUGU_MAIN_COPTS` (a `;` list), which any build accepts:
+`idf.py -B build/x -DFUGU_MAIN_COPTS="-O2;-DLOG_LOCAL_LEVEL=3" build`. Per-file options in `main/CMakeLists.txt`
+come later on the command line and still win.
+
+## Image layout
+
+The app image keeps rodata (DROM) and code (IROM) in separate flash-mapped segments. esptool places IROM at the first
+file offset after DROM that is congruent to its address modulo the 64 KB MMU page, and fills the gap with RAM
+segments. Once DROM grows past that page edge, IROM moves a whole page up; once DROM shrinks below the previous edge,
+it moves a page down. Either move changes nearly every IROM sector, so the next differential OTA rewrites the whole
+image.
+
+`etc/idf-devtools/image_layout.py <build dir>` prints the IROM offset and how far DROM may still grow or shrink:
+
+```
+build/fleet/fugu-firmware.bin: 1802032 B (0x1b7f30), 69840 B free of 0x1c9000
+  IROM at 0x60018 (page 6): DROM len 0x51c7c may grow 58228 B / shrink 7300 B before IROM moves a page
+```
+
+The firmware-build CI runs it on every build, warns when DROM is within 4 KB of either edge, and fails the production
+build when IROM leaves its pinned offset or less than 32 KB of the partition is free. When a change moves IROM on
+purpose, update `--expect-irom` in `.github/workflows/firmware-build.yml`. `etc/fleet-build.sh` prints the same lines.
 
 ## Finding STL template bloat
 

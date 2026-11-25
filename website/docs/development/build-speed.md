@@ -30,9 +30,9 @@ To set up ccache, install it and raise the cache size:
 brew install ccache
 ccache -M 10G          # arduino+idf objects are large
 ```
-Then export these variables in your shell profile, or before sourcing `./idf-export.sh` (which does not set them):
+`./idf-export.sh` sets `IDF_CCACHE_ENABLE=1` when `ccache` is on the `PATH` (export `IDF_CCACHE_ENABLE=0` before
+sourcing it to opt out). For hits across worktrees, also export these in your shell profile:
 ```sh
-export IDF_CCACHE_ENABLE=1
 export CCACHE_NOHASHDIR=1        # hit across git worktrees / build paths
 export CCACHE_BASEDIR="$PWD"
 ```

@@ -9,6 +9,7 @@
 #   <main checkout>/../../esp/$FUGU_IDF (default layout, resolved via git, so worktrees find it too)
 #   $IDF_PATH                           an IDF sourced earlier (only without FUGU_IDF)
 # FUGU_IDF selects another IDF directory name (default idf6.0.3).
+# Enables ccache for idf.py when installed (IDF_CCACHE_ENABLE=0 to opt out).
 # An ESPPORT already set is kept; otherwise the first USB serial port is picked (pass -p with 2+ boards).
 
 if [ -n "${ZSH_VERSION:-}" ]; then
@@ -40,6 +41,8 @@ else
     export IDF_TARGET=${IDF_TARGET:-esp32s3}
     deactivate 2>/dev/null || true
     . "$_fugu_idf/export.sh"
+    # idf.py uses ccache only when asked; IDF_CCACHE_ENABLE=0 turns it off again
+    command -v ccache >/dev/null 2>&1 && export IDF_CCACHE_ENABLE=${IDF_CCACHE_ENABLE:-1}
 
     # Missing or half-checked-out submodules (an interrupted first update leaves files deleted).
     _fugu_bad=$(git -C "$_fugu_root" config -f .gitmodules --get-regexp '\.path$' 2>/dev/null |

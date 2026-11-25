@@ -163,7 +163,9 @@ manually. After a fresh checkout run `git submodule update --init etc/idf-devtoo
 
 The submodule is also the single home for the generic ESP-IDF host tools: `etc/idf-devtools/flash-diff.sh`
 (incremental `esptool --diff-with` flashing), `rts.py` (serial RTS/DTR reset), `nvs_dump.py` (NVS partition parser),
-and `peek_symbols.py` (symbol→address — `fugu_console.py`'s `peek`/`sym` import it from there). Repo-root
+`peek_symbols.py` (symbol→address — `fugu_console.py`'s `peek`/`sym` import it from there) and `image_layout.py`
+(DROM/IROM 64 KB page margins and app partition free space; CI checks the fleet build, `etc/size-variants.sh`
+compares config variants with it). Repo-root
 `provision.py` is a thin wrapper that execs `etc/idf-devtools/provision.py`.
 
 ## Provisioning (board configs)
