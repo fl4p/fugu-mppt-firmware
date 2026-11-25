@@ -764,3 +764,172 @@ h4 stays at -0.62 (se 0.22); not investigated here.
 * A manual LS count (`rect-cal`, bench) can keep `lsFading()` true: a scan then runs into its 30 s timeout.
 
 Files: `scan-share/results-4-main.txt`, `results-4-fix.txt` (560 lines each), `closed-loop-tables-4.md`.
+
+## h4 heating loss (2026-11-25)
+
+Question: round 3 found h4 at 1.015 vs 0.97 = -1.08 (-0.62 with `fix-ls-hold.patch`), round 2 +0.03. What changed
+besides ac7f3ffa?
+
+Answer: once the LS hold is in, no firmware commit after a754f0b2 changes h4 beyond noise. Round 2's +0.03 and round
+3's -0.62 come from the same 10 realisations falling on different sides of two thresholds. Over 30 pairs, every tree
+with the hold gives -0.41 .. +0.03. The loss is firmware behaviour that predates the study base: if the boot sweep
+learned `kVmp`, the stale Voc puts the probe above the heated global maximum. Two side findings: since 386cc936 the
+sim runs the ring boards with the wrong input capacitance, and a 0.84 `kVmp` fallback makes h4 worse.
+
+### Method
+
+Cell h4 only (`SIM_SHADE=1,0.75,v,1,0.3,600 SIM_VOCDRIFT=-0.12,700,420`, `pv_substrings=6`), 30 paired
+realisations: fry/flat x `SIM_NOISE_OFS` 0 13 29 41 57 (the round 2/3 offsets) 1 2 6 7 8 9 10 15 16 17, variants
+base (0.97) and u1015.
+
+Each tree is `git archive <commit> src test config` with 51994123's `mppt-sim.cpp` overlaid, e7a1376d's probe rule
+patched in where `probeHigh` is missing, and `fix-ls-hold.patch` applied (suffix H; suffix N: without it). Builds
+used `offload build-sim`. Every run was on **pgx93**, under `offload hold` (tags h4bis-*), with the binary run
+directly on the host (`scan-share/h4bis/rjob.sh`). This was needed because the Mac's parallelism guard refuses a
+local `xargs -P` above 4, even for ssh wrappers. Per-run lines are in `scan-share/h4bis/results.txt`; the scripts are
+next to it.
+
+Checks:
+
+* r2N (round 2's tree `/tmp/scanf-tree`, rebuilt) reproduces round 2 byte for byte (h4 u1015 fry 57 98.95 %, flat 0
+  98.78 %, ...).
+* cur (round 3's hold tree) reproduces `results-3-fix.txt` (fry 57 97.50 %).
+* a754N and 6fe89389N are byte-identical to r2N in all 60 outputs. So for h4, e5fa75b1 (the study base) equals
+  a754f0b2, although their lineages differ (a754f0b2 also carries c4805eb8, 8627ff79, dcba51d3 and c9a4be4b).
+
+### Bisect table
+
+All values are h4, 1.015 minus 0.97, in points, as the mean over 30 pairs (se in brackets). Column meanings:
+
+* "10 ofs": the 10 round 2/3 realisations only.
+* "learned / default": pairs whose boot sweep learned `kVmp` (probe share x 6 > 67 V, see below), and the rest.
+* "miss-place": MISS-place probes over 30 runs.
+
+| Tree | u1015 - base | 10 ofs | vs a754H (paired) | learned / default | base | u1015 abs. | miss-place |
+|---|---|---|---|---|---|---|---|
+| r2N (round 2 tree, e5fa75b1) | -0.20 (0.16) | **+0.03** | +0.21 (0.14) | -0.39 (18) / +0.08 (12) | 98.55 | 98.35 | 39 |
+| a754H (a754f0b2 + hold) | -0.41 (0.19) | -0.24 | 0 | -0.93 (9) / -0.19 (21) | 98.47 | 98.06 | 56 |
+| ac7f3ffaN (no hold) | -0.54 (0.24) | -0.82 | -0.13 (0.30) | -0.97 (18) / +0.11 (12) | 98.65 | 98.11 | 65 |
+| ac7f3ffaH | -0.21 (0.11) | -0.02 | +0.20 (0.21) | -0.48 (18) / +0.20 (12) | 98.55 | 98.33 | 29 |
+| ba83c76cH | +0.03 (0.16) | -0.04 | +0.44 (0.28) | -0.10 (18) / +0.22 (12) | 98.46 | 98.48 | 30 |
+| b446N (51994123, no hold) | -0.58 (0.21) | -0.51 | -0.18 (0.26) | -0.91 (18) / -0.10 (12) | 98.59 | 98.00 | 77 |
+| b446H (446b8b71 + hold) | +0.03 (0.16) | -0.04 | +0.44 (0.28) | -0.10 (18) / +0.22 (12) | 98.46 | 98.48 | 30 |
+| cur (8ecb5abe + hold, round 3's tree) | -0.35 (0.10) | **-0.62** | +0.06 (0.18) | -0.56 (17) / -0.08 (13) | 98.51 | 98.16 | 42 |
+| cin (cur, sim Cin fixed) | +0.03 (0.16) | -0.04 | +0.44 (0.28) | -0.10 (18) / +0.22 (12) | 98.46 | 98.48 | 30 |
+
+ba83c76cH, b446H and cin produce identical outputs. From ba83c76c to 8128b271 nothing changes h4, and cin's src
+differs from b446H's only by config renames.
+
+1819121a and 3797fa4f (between ac7f3ffa and ba83c76c) were not run, since the commits on either side are within noise
+of each other. No step is significant; the largest paired step is +0.44 (se 0.28).
+
+The only significant firmware difference is the hold itself: b446N vs cin is -0.61 (se 0.18), from 14 MISS-noise
+landings on the two-probe scans described below.
+
+Other candidates:
+
+* 52063f84 (pack refit, base load) only touches the cv-hold scenarios; it does not change wx-shade-gen.
+* The other session's SIM_KVMP_* knobs are not on main (they exist only in the `/tmp/scanf*` trees); the fallback
+  experiment below stands in for them.
+
+### Mechanism
+
+Two thresholds decide each h4 realisation.
+
+1. **`kVmp` learning at the boot sweep.** The plant's Vmpp/Voc is 68.8 / 80 = 0.860, and the learning window is
+   `r > 0.74 && r < 0.86` (`onSweepMpp`). Noise decides whether the sweep's EWM Vin at the MPP lands just below or
+   above 0.86 Voc.
+   * Learned runs scan with vs0 = kVmp Voc / n = 68.2 / 6 = 11.37 V.
+   * The others keep 0.82: vs0 = 0.82 x 79.9 / 6 = 10.92 V.
+
+   The first PROBE line shows which case a run is in: probes at 35.0 / 46.7 / 58.4 V (learned) or 34.2 / 45.6 /
+   57.0 V (default) at t = 146. Most trees learned in 18 of 30 pairs; a754H learned in 9 of 30.
+2. **m0 at the scan after the shade step.** After the 12 % heating and the 720 s step, the operating point is the
+   5-substring peak at 51.5 V, and G is the 6-substring maximum at 63.8 V (x1.067). The scan computes
+   m0 = round(Vin / vs0) and probes at m shares of sh = (Vin / m0 + vs0) / 2. vs0 comes from the cold sweep, so it is
+   12 % stale.
+
+| kVmp | v0 | m0 | sh | probe (1.015) | vs G | outcome |
+|---|---|---|---|---|---|---|
+| 0.82 | 51.5 | 5 | 10.61 | 6 x: 64.6 V | +1.3 % | HIT (every such scan, all trees) |
+| learned 0.853 | > 51.2 | 5 | 10.84 | 6 x: 66.0 V | +3.4 % | reads x0.97 .. 1.00: **MISS-place** |
+| learned 0.853 | < 51.2 | 4 | 12.12 | 5 x: 61.3 V, 6 x: 73.6 V | -3.9 % | reads x1.030 .. 1.038 against the 3 % margin: HIT |
+| 0.97, learned | > 51.2 | 5 | 10.84 | 6 x 0.97: 63.1 V | -1.1 % | HIT |
+
+With `kVmp` learned, the m0 boundary (4.5 x 11.37 = 51.2 V) sits inside the operating point's dither (v0 50.5 ..
+52.3 V), so every scan is a coin toss. A MISS-place leaves the reference off, and the scan repeats about every 62 s
+until a draw gives m0 = 4. The number of misses is geometric: 1 to 17 per run, costing 0.5-4 points. Example (cin,
+fry, offset 0): at 745 s `1 probe, best x0.970 at 66.2 V` (MISS-place), at 806 s
+`2 probes, best x1.037 at 61.3 V, moving` (HIT).
+
+Without the hold (ac7f3ffaN, b446N and the round 3 matrix), the m0 = 4 scan reads 0.5-0.7 % low because of the
+ac7f3ffa LS drops (`best x1.030 at 61.2 V`, true 1.035). That falls under the margin, so the loop continues
+(MISS-noise, up to 18 scans) and loses up to 4.2 points. This is round 3's -1.08.
+
+Post-step scans on the wrong peak, 30 runs each:
+
+| Tree | 1 probe HIT | 1 probe MISS-place | 2 probes HIT | 2 probes MISS-noise | max scans in one run |
+|---|---|---|---|---|---|
+| r2N | 13 | 37 | 15 | 0 | 18 |
+| ac7f3ffaN | 11 | 62 | 13 | 17 | 18 |
+| ac7f3ffaH | 10 | 25 | 18 | 0 | 6 |
+| b446N | 12 | 74 | 16 | 14 | 18 |
+| cin | 10 | 27 | 18 | 0 | 17 |
+| cin-k82 (no learning) | 28 | 0 | 0 | 0 | 1 |
+
+m0 = 5 is the correct count: 5 substrings conduct at the operating point. The probe overshoots because the cold vs0
+enters the share mean, so half of the 12 % heating error remains. This is round 2's static -12 % regression
+(`G probe dV -1.2 -> +3.4 %`); in closed loop it appears only when `kVmp` was learned.
+
+This is firmware behaviour, not a sim artefact. On hardware it needs the same sequence: a cold clear sweep that
+learns `kVmp`, heating of about 10 % without a new sweep, then a shade that puts G one substring above the operating
+point. The dither around the m0 boundary would be a different size there.
+
+### kVmp experiments (cin tree)
+
+| Variant | base | u1015 | u1015 - base | u1015 min | miss-place |
+|---|---|---|---|---|---|
+| cin (learn in 0.74..0.86, fallback 0.82) | 98.46 | 98.48 | +0.03 (0.16) | 95.37 | 30 |
+| k82: never learn, 0.82 | 98.58 | **98.72** | +0.14 (0.09) | 97.89 | 2 |
+| k84: fallback 0.84 | 98.54 | 98.32 | -0.21 (0.16) | 95.37 | 51 |
+| kL: window to 0.87 (always learns) | 97.91 | 98.31 | +0.39 (0.28) | 95.37 | 32 |
+
+* k84 and kL have 29 and 28 pairs: 4 runs were deleted in flight by a stale-file cleanup.
+* k84's fallback gives vs0 = 11.19 V and an m0 = 5 probe at 65.4 V (+2.5 %), so the default-kVmp runs miss too:
+  -0.21 (se 0.11) paired vs cin.
+* kL's positive delta comes from a worse base (0.97 also misses with a learned `kVmp`, at m0 = 4). Its absolute
+  u1015 harvest is below cin's.
+
+### Side finding: plant input capacitance on current main
+
+Since 386cc936 the vconv plant reads `plant_c_in`, which `config/lab/vconv_mock/conf/vconv.conf` sets to `470e-6`.
+`test/host-stub/plant_boards.h` still writes the board value under the old key `c_in` (1.2 mF for fry and flat), and
+setup ignores it ("vconv.conf: c_in ignored, plant_c_in is set"). Before the rename, the appended duplicate `c_in` won.
+
+So every SIM_RING run on 8128b271 or later used 470 uF, including all of round 3's matrix and hold runs. On h4 this
+alone moved 1.015 by -0.38 (se 0.19): cur vs cin, same firmware. The fix is to write `plant_c_in` in
+`PlantBoard::conf()`. It is applied here only in the cin* bisect trees, not in the repo, and round 3's tables were
+not re-run with it.
+
+### Recommendation
+
+* Do not treat h4 as a firmware regression since round 2. With the hold, 1.015 costs -0.2 .. 0 points on h4 in
+  expectation on every firmware since a754f0b2 (30 pairs), the same as on round 2's firmware (-0.20).
+* Firmware fix for the remaining loss (proposed, not implemented or tested): keep the stale vs0 from lifting a probe
+  above m0. When Vin / m0 is more than about 4 % below vs0 (heating since the sweep), use Vin / m0 alone as the share
+  for probes above m0, or rescale vs0 by (Vin / m0) / vs0. In this case that gives 6 x 1.015 x 10.30 = 62.7 V
+  (-1.7 %, HIT). A shaded operating point sits at or above its m shares, so the rule should trigger on heating, not
+  on shade. Before it lands, check l2 / l4 / l1d (their 1.015 gain depends on sh) and h1-h4.
+* Learning window: the plant's kp sits on the window edge, so learning flips per realisation. Field kp is 0.79-0.85,
+  so mainly the sim's kp 0.86 cells are affected. Widen the window or accept the coin toss.
+* The 0.84 fallback costs h4 -0.21 (se 0.11). That is small against its +1.41 on l2, but it adds to the heating loss
+  until the probe rule above is in.
+* Fix `plant_boards.h` (`c_in` -> `plant_c_in`) and re-run round 3's matrix: every ring-board result since 386cc936
+  used 470 uF.
+
+### Unverified
+
+* Hardware: `kVmp` learning, the m0 dither and the heated overshoot are sim results only.
+* The probe-share fix is a proposal; no run tested it.
+* The Cin artefact's effect on the other 27 round 3 cells was not measured.
+* 1819121a and 3797fa4f were not run with the hold; both ends of their range are within noise.
