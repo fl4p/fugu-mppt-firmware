@@ -131,8 +131,10 @@ the other, and stops at the first failure. Broker and credentials come from `$MQ
 `$MQTT_USER` and `$MQTT_PASS` (filled from `etc/mqtt.env`). For each device it:
 
 1. Locks onto the exact hostname and reads `bootinfo`.
-2. Runs pre-flight checks: image flags, an unconfirmed running image, a `-dirty` image, a calibration, sweep or
-   balance run in progress, and the `--check` commands.
+2. Runs pre-flight checks: image flags, an unconfirmed running image, a `-dirty` image, conf keys the new image
+   fails setup on, a calibration, sweep or balance run in progress, and the `--check` commands. Conf keys that fail
+   setup (a renamed key, a role key) refuse the OTA even with `--yes` and print the `etc/migrate_side_keys.py`
+   fix; a conf file that cannot be read asks first.
 3. Serves the image over HTTP, sends `ota <url>`, and follows the download (retrying a failed one with backoff)
    and the reboot into the new image.
 4. With verification on (the default), waits for `rollback=VALID`, watches the new boot's log for faults, and
