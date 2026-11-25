@@ -96,9 +96,8 @@ The bootloader is built with `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`, so a new
 ```mermaid
 stateDiagram-v2
   [*] --> Pending: OTA written, reboot
-  Pending --> Valid: RT loop healthy (> 20 s uptime, sampler producing samples) and flash write safe
-  Pending --> Rollback: reset before confirmation
-  Pending --> Rollback: setup() hangs > 30 s (boot watchdog restarts)
+  Pending --> Valid: confirmed
+  Pending --> Rollback: reset or setup() hang
   Rollback --> [*]: previous slot boots
   Valid --> [*]
 ```

@@ -40,20 +40,16 @@ The following table shows how to enter and leave each mode and what the mode reg
 
 The topology (`converter.conf::topo=buck|boost`) is independent of the mode.
 
-The console commands move the converter between modes as follows:
+Each console command selects one mode. The table above lists the modes each command works from.
 
 ```mermaid
-stateDiagram-v2
-  MPPT --> Manual: dc N
-  Manual --> MPPT: mppt / sweep
-  MPPT --> PSU: psu V
-  Manual --> PSU: psu V
-  MPPT --> PV: pv isc voc
-  Manual --> PV: pv isc voc
-  PSU --> MPPT: psu off / mppt / sweep
-  PV --> MPPT: psu off / mppt / sweep
-  PSU --> Manual: dc N
-  PV --> Manual: pv off / dc N
+flowchart LR
+  dc(["dc N"]) --> Manual
+  pvoff(["pv off"]) --> Manual
+  mppt(["mppt, sweep"]) --> MPPT
+  psuoff(["psu off"]) --> MPPT
+  psu(["psu V"]) --> PSU
+  pv(["pv isc voc"]) --> PV
 ```
 
 ## MPPT
