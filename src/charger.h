@@ -70,6 +70,14 @@ struct BatChargerParams {
         Vbat_max = n * cv_eoc;
     }
 
+    // vout_max=auto: a different pack, detect again. Vbat_max goes first: it closes the start gate
+    void clearCells() {
+        Vbat_max = NAN;
+        std::atomic_thread_fence(std::memory_order_release);
+        n_cells = 0;
+        Vbat_fallback = NAN;
+    }
+
     __attribute__((cold)) void load(const ConfFile &chargerConf) {
         vbatAuto = chargerConf.getString("vout_max", "") == "auto";
         Vbat_max = vbatAuto ? NAN : chargerConf.getFloat("vout_max", NAN, true);

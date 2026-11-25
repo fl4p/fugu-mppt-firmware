@@ -1059,10 +1059,20 @@ __attribute__((cold, noinline)) void MpptController::scheduleResweep(uint32_t no
 
 void MpptController::batDetectLf() {
     auto &p = charger.params;
-    if (!p.awaitingDetect()) return;
+    if (!p.vbatAuto) return;
     static PackDetect pd;
     static time_us logUs = 0;
     static const char *logWhy = nullptr;
+    if (p.haveVbatMax()) {
+        const float v = sensors.Vout->ewm.avg.get();
+        if (!pd.left(v, converter.disabled(), p.n_cells, p.cv_eoc)) return;
+        ESP_LOGW("charger", "pack left the %u-cell band (Vout %.2f V, %s), detecting again", (unsigned) p.n_cells, v,
+                 pd.why);
+        p.clearCells();
+        charger.releaseVoutPinning("pack change");
+        logWhy = nullptr;
+        return;
+    }
     const auto &bs = charger.batSt;
     const bool bms = bs.haveValidCellVoltage();
     const uint32_t now = (uint32_t) wallClockUs(), fresh = BatteryState::VCELL_EXPIRATION_TIME_SEC * 1000000u;

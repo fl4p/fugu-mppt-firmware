@@ -1487,12 +1487,89 @@ static void test_auto_no_convert_before_detect() {
     }
 }
 
+// re-detection: idle readings that leave the detected pack's band clear it (BatChargerParams::clearCells)
+static bool leaves(PackDetect &d, float v, int n, uint8_t cells, bool idle = true, float cvEoc = 3.65f) {
+    bool r = false;
+    for (int i = 0; i < n && !r; ++i) r = d.left(v, idle, cells, cvEoc);
+    return r;
+}
+
+static void test_auto_redetect() {
+    BatChargerParams p;
+    p.load(autoConf());
+    PackDetect d;
+    p.setCells(readings(d, 26.4f, 3));
+    CHECK(p.n_cells == 8 && p.haveVbatMax(), "8 cells");
+    // 8s -> 4s swap: 13.2 V for 3 idle readings, then detected as 4 cells
+    CHECK(!leaves(d, 13.2f, 2, p.n_cells), "2 readings: still 8");
+    CHECK(d.left(13.2f, true, p.n_cells, p.cv_eoc) && !strcmp(d.why, "below its band"), "3rd reading leaves");
+    p.clearCells();
+    CHECK(p.awaitingDetect() && p.n_cells == 0 && std::isnan(p.Vbat_fallback), "cleared");
+    p.setCells(readings(d, 13.2f, 3));
+    CHECK(p.n_cells == 4 && fabsf(p.Vbat_max - 14.6f) < 1e-4f, "re-detected as 4 cells: %u", (unsigned) p.n_cells);
+    // 4s -> 16s while idle (above 2n * 2.5 V)
+    CHECK(leaves(d, 52.f, 3, p.n_cells) && !strcmp(d.why, "above its band"), "4 -> 16 leaves");
+    p.clearCells();
+    p.setCells(readings(d, 52.f, 3));
+    CHECK(p.n_cells == 16, "re-detected as 16");
+    // pack removed: the output decays to 0, cleared, then nothing is detected
+    CHECK(leaves(d, 3.f, 3, p.n_cells) && !strcmp(d.why, "pack removed"), "removed");
+    p.clearCells();
+    CHECK(readings(d, 0.f, 50) == 0 && p.awaitingDetect(), "no pack: stays pending (start gate closed)");
+    CHECK(leaves(d, NAN, 3, 8), "NaN counts as outside");
+}
+
+static void test_auto_redetect_no_flap() {
+    PackDetect d;
+    // switching readings never count and restart the streak
+    CHECK(!leaves(d, 10.f, 20, 8, false), "sag while switching ignored");
+    CHECK(!leaves(d, 10.f, 2, 8) && !d.left(10.f, false, 8, 3.65f) && !leaves(d, 10.f, 2, 8), "switching restarts");
+    // a brief idle sag (2 readings, < 6 s) and a deep-discharged pack (2.0..2.5 V/cell) stay detected
+    PackDetect e;
+    CHECK(!leaves(e, 15.f, 2, 8) && !e.left(25.f, true, 8, 3.65f) && !leaves(e, 15.f, 2, 8), "brief sag");
+    for (float v: {16.1f, 17.f, 19.9f, 30.1f, 39.9f}) {
+        PackDetect f;
+        CHECK(!leaves(f, v, 30, 8), "%.1f V keeps 8 cells", v);
+    }
+    // the band holds the whole detection window: no detect/leave loop at the cv_eoc range ends
+    for (float e2: {2.43f, 3.65f, 4.2f, 4.85f})
+        for (uint8_t n: {4, 8, 16}) {
+            PackDetect g;
+            CHECK(!leaves(g, n * kCellVLow, 5, n, true, e2) && !leaves(g, n * e2 * (1 + kCellVMargin), 5, n, true, e2),
+                  "window edges of %u cells stay (cv_eoc %.2f)", (unsigned) n, e2);
+        }
+    // the band edges: no 4/8/16 pack of another count sits inside, at cv_eoc 3.65 and 4.2 (NMC)
+    for (float e2: {3.65f, 4.2f, 4.85f}) {
+        for (uint8_t n: {8, 16}) {
+            PackDetect g;
+            CHECK(leaves(g, n / 2 * e2 * (1 + kCellVMargin), 3, n, true, e2), "full %u-cell pack leaves %u (%.2f)",
+                  (unsigned) (n / 2), (unsigned) n, e2);
+        }
+        for (uint8_t n: {4, 8}) {
+            PackDetect g;
+            CHECK(leaves(g, 2 * n * kCellVLow, 3, n, true, e2), "empty %u-cell pack leaves %u", (unsigned) (2 * n), (unsigned) n);
+        }
+    }
+}
+
+// explicit vout_max: never re-detected (MpptController::batDetectLf returns on !vbatAuto); clearCells is auto-only
+static void test_explicit_no_redetect() {
+    BatChargerParams p;
+    ConfFile x = autoConf();
+    x.set("vout_max", "29");
+    p.load(x);
+    CHECK(!p.vbatAuto && !p.awaitingDetect(), "explicit: no detection state");
+}
+
 int main() {
     test_auto_windows();
     test_auto_settle_and_guards();
     test_auto_bms();
     test_auto_load();
     test_auto_no_convert_before_detect();
+    test_auto_redetect();
+    test_auto_redetect_no_flap();
+    test_explicit_no_redetect();
     test_hold_rise_frame_spacing();
     test_bal_low_line_no_hold_cuts_at_band();
     test_hold_no_entry_after_restart_low_line();

@@ -90,6 +90,23 @@ struct PackDetect {
         streak = 0;
         return n;
     }
+
+    // a pack of `cells` was detected: true once 3 idle readings in a row leave its band, then detect again. The band
+    // [n * min(2.5 V, max(2 V, cv_eoc * 1.03 / 2 + 50 mV)), 2n * 2.5 V) holds the detection window and a deep-discharged
+    // pack, no other 4/8/16-cell pack (disjoint windows). A switching reading restarts the count; NaN counts as outside
+    bool left(float v, bool idle, uint8_t cells, float cvEoc) {
+        const float lo = cells * fminf(kCellVLow, fmaxf(2.f, cvEoc * (1 + kCellVMargin) / 2 + .05f)),
+                hi = cells * 2 * kCellVLow;
+        if (!idle || (v >= lo && v < hi)) {
+            streak = 0;
+            return false;
+        }
+        if (++streak < 3) return false;
+        *this = {};
+        why = !std::isfinite(v) ? "no Vout reading" : v >= hi ? "above its band" : v < 4 * kCellVLow ? "pack removed"
+            : "below its band";
+        return true;
+    }
 };
 
 // Battery disconnected under load (buck charger): Iout collapses, Vout jumps by more than dvMin and Vin

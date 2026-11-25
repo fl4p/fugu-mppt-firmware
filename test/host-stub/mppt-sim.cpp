@@ -18,6 +18,8 @@
 //                              # bat-auto: charger.conf vout_max=auto, 26 V pack: no switching before detection, then 8 cells
 //                              #   (28.8 V) and MPPT; -nobat (output open, divider load: C_out decays from 27 V), -gap (17 V): never detected,
 //                              #   never switching, also not with a manual duty from 60 s
+//                              # bat-auto-swap: 8-cell pack charging, removed, a 4-cell pack: re-detected as 4 cells;
+//                              #   bat-swap-explicit: the same with vout_max=29, the count untouched
 //                              # psu-boost-dark: fry in boost, battery in, dark PV string out, `psu` 32..80 V (SIM_DWELL)
 //                              # psu-boost-cold: the same, `psu 32` from the night state: string at 6.85 V, battery behind the open backflow switch
 //                              # hs-short, hs-short-bfclosed, hs-cal, hs-dawn, hs-dawn-nozero: HS-short check
@@ -3374,6 +3376,46 @@ static int runBfTest(const std::string &sc) {
 }
 
 // vout_max=auto: no switching while the pack is unknown; a 26 V pack is detected as 8 cells (cv_eoc 3.6: 28.8 V)
+// pack swap while powered: 8 cells charging, pack removed (divider load) at 40 s, a 13.2 V 4-cell pack at 80 s.
+// bat-auto-swap: the band exit clears the 8-cell count, no switching until 4 cells are detected, then the
+// output never exceeds 4 x 3.6 V x 1.03; bat-swap-explicit (vout_max=29): the count is never touched
+static int runBatSwap(const std::string &sc) {
+    const bool autoMode = sc == "bat-auto-swap";
+    static bool cleared, onCleared;
+    static float voutMax4;
+    cleared = onCleared = false, voutMax4 = 0;
+    g_tickHook = [] {
+        if (mppt.charger.params.vbatAuto && !mppt.charger.params.haveVbatMax()) cleared = true;
+        if (cleared && !mppt.charger.params.haveVbatMax() && !converter.disabled()) onCleared = true;
+        if (mppt.charger.params.n_cells == 4) voutMax4 = std::max(voutMax4, g_vconv.getVout());
+    };
+    g_vconv.setBat(26.f, 0.05f);
+    run(40, 10.0);
+    const auto &p = mppt.charger.params;
+    int f = 0;
+    auto chk = [&](bool ok, const char *what) { printf("== %s %s\n", ok ? "PASS" : "FAIL", what); f += !ok; };
+    chk(p.n_cells == 8 && !converter.disabled(), "8 cells, charging");
+    cleared = false;
+    g_vconv.setBat(0.f, 94e3f);
+    printf("%9.4f >>> pack removed\n", tNow());
+    run(40, 5.0);
+    g_vconv.setBat(13.2f, 0.05f);
+    printf("%9.4f >>> 4-cell pack 13.2 V\n", tNow());
+    run(60, 5.0);
+    if (autoMode) {
+        chk(cleared, "8-cell count cleared after the removal");
+        chk(!onCleared, "no switching while cleared");
+        chk(p.n_cells == 4 && fabsf(p.Vbat_max - 14.4f) < 1e-3f, "re-detected as 4 cells (14.4 V)");
+        chk(voutMax4 > 0 && voutMax4 < 4 * 3.6f * 1.03f, "4-cell pack never above 14.83 V");
+        printf("== 4-cell plant Vout max %.2f V\n", voutMax4);
+    } else {
+        chk(!p.vbatAuto && p.n_cells == 8 && p.Vbat_max == 29.f && !cleared, "explicit vout_max untouched");
+    }
+    traceLine("final ");
+    printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
 static int runBatAuto(const std::string &sc) {
     static double tDet, tOnEarly;
     tDet = tOnEarly = -1;
@@ -4144,6 +4186,7 @@ static int simMain(int argc, char **argv) {
     }
 
     if (sc == "idle-wake") return runIdleWake();
+    if (sc == "bat-auto-swap" || sc == "bat-swap-explicit") return runBatSwap(sc);
     if (sc.rfind("bat-auto", 0) == 0) return runBatAuto(sc);
     if (sc.rfind("hs-", 0) == 0) return runHsShort(sc);
     if (sc.rfind("bf-", 0) == 0) return runBfTest(sc);
