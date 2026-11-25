@@ -3,7 +3,7 @@
 # BIN: sim binary built by `offload build-sim` (default /tmp/scanshare-bin), HOST: offload host (one per comparison),
 # TAG: offload tag, OUTDIR: raw outputs, cached per binary sha256 and host (a run with a PROBES line is not repeated).
 # Variants: base (probes above the operating point at 0.97, the rule before 11-24), D6 (1.03), uNNNN (SIM_SCAN_UP
-# NNNN / 1000, e.g. u1015, the firmware default since round 2). A, C75, D2, D4 used share / HI knobs dropped when D6 landed
+# NNNN / 1000, e.g. u1015, the firmware default since round 2), tNN (SIM_SCAN_HEAT NN / 100, t0: off; base also off). A, C75, D2, D4 used share / HI knobs dropped when D6 landed
 # (doc/research/2026-11-24-scan-share-estimate.md); they now exit with an error.
 set -- $1
 cell=$1 var=$2 board=$3 ofs=$4
@@ -39,15 +39,17 @@ case $cell in
   *) sc=$cell;;
 esac
 case $var in
-  base) env+=(SIM_SCAN_UP=0.97);;
+  base) env+=(SIM_SCAN_UP=0.97 SIM_SCAN_HEAT=0);;
   B94) env+=(SIM_SCAN_UP=0.94 SIM_SCAN_LOW=0.94);;
   D6) env+=(SIM_SCAN_UP=1.03);;
   u[0-9][0-9][0-9][0-9]) env+=(SIM_SCAN_UP=$(awk -v x="${var#u}" 'BEGIN { printf "%.3f", x / 1000 }'));;
+  t[0-9]*) env+=(SIM_SCAN_HEAT=$(awk -v x="${var#t}" 'BEGIN { printf "%.2f", x / 100 }'));;
   *) echo "variant $var: not in this sim (scan-static only)" >&2; exit 1;;
 esac
 mkdir -p "$OUTDIR"
 if [ ! -s "$f" ] || ! grep -q '^== PROBES' "$f"; then
-  env "${env[@]}" ~/bin/offload run --host "$HOST" --tag "$TAG" -- "$BIN" $sc > "$f" 2>&1
+  if [ -n "$DIRECT" ]; then env "${env[@]}" "$BIN" $sc > "$f" 2>&1 # on the host, inside `offload hold`
+  else env "${env[@]}" ~/bin/offload run --host "$HOST" --tag "$TAG" -- "$BIN" $sc > "$f" 2>&1; fi
 fi
 awk -v key="$key" '
   function num(re) { return match($0, re) ? substr($0, RSTART, RLENGTH) : "" }

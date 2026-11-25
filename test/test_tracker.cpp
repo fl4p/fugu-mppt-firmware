@@ -721,6 +721,25 @@ void test_scan_probe_above_weak_peak() {
     TEST_ASSERT_TRUE(r->p() > 1.03f * p0);
 }
 
+// Swept cold (Voc 80 V, Vmpp/Voc 0.853 learned), then heated to Voc 70.4 V: on the 5-substring peak's high side
+// (52 V), one substring at 0.8 puts the full string 8 % higher at 63.5 V. The cold share lifts the probe to 66.3 V,
+// where it reads x0.96; with Vin / m0 as the share it lands at 63.3 V and moves.
+void test_scan_probe_after_heating() {
+    for (const float hc: {0.f, 0.96f}) {
+        PeakScan::heatCut = hc;
+        auto r = std::make_unique<ScanRig>(52.f);
+        r->pv.setPvExact(true), r->sweep(), r->s.kVmp = 0.853f;
+        r->pv.setPv(4.f, 70.4f, 0.86f);
+        r->g[5] = 0.8f, r->shade();
+        const float p0 = r->p();
+        r->run(30'000);
+        TEST_ASSERT_EQUAL_INT(hc > 0 ? 2 : 1, r->ended);
+        if (hc > 0) TEST_ASSERT_TRUE(r->vin() > 62 && r->p() > 1.05f * p0);
+        else TEST_ASSERT_FLOAT_WITHIN(0.1f, 52.f, r->vin());
+    }
+    PeakScan::heatCut = 0.96f;
+}
+
 // Travel to a probe above the operating point drops the LS; measured while the LS fades in, the 3.7 % better
 // full-string peak reads 1 % low and looks like 2.6 %. Holding the measurement until the fade ends moves. A fade
 // that never ends (near probes on) still ends the scan at the timeout.
@@ -728,7 +747,7 @@ void test_scan_probe_waits_for_ls_fade() {
     for (const bool hold: {false, true}) {
         auto r = std::make_unique<ScanRig>(45.f);
         r->pv.setPvExact(true);
-        r->lsLoss = 0.01f, r->lsHold = hold, r->s.nearDv = 0;
+        r->lsLoss = 0.01f, r->lsHold = hold, r->s.nearDv = 0, r->s.kVmp = 0.82f; // 0.84: probe at 68.4 V reads x1.038 faded
         r->g[4] = r->g[5] = 0.655f, r->shade(), r->sweep();
         const float p0 = r->p();
         r->run(30'000);

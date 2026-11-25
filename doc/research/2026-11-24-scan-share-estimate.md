@@ -933,3 +933,46 @@ not re-run with it.
 * The probe-share fix is a proposal; no run tested it.
 * The Cin artefact's effect on the other 27 round 3 cells was not measured.
 * 1819121a and 3797fa4f were not run with the hold; both ends of their range are within noise.
+
+## Round 5: sim Cin fixed, heating rule (2026-11-25)
+
+### Changes
+
+* `test/host-stub/plant_boards.h` writes `plant_c_in` (1.2 mF); every ring-board run since 386cc936 had used 470 uF.
+* `PeakScan::heatCut` (0.96): when `kVmp` was learned at a sweep and Vin / m0 < heatCut x vs0, probes above m0 use
+  Vin / m0 as the share instead of the mean with vs0 (sim knob `SIM_SCAN_HEAT`, 0 = off; job.sh variants `tNN`).
+* Unit tests: `test_scan_probe_after_heating` (rig: swept cold, Voc 80 -> 70.4 V; off: probe at 66.3 V reads x0.96 and
+  stays, on: 63.3 V, moves x1.08). `test_scan_probe_waits_for_ls_fade` pins `kVmp` 0.82: with the 0.84 fallback
+  (438c1ddf) its probe lands at 68.4 V and reads x1.038 even during the fade, so the no-hold case moved.
+
+### Method
+
+Round 4's 28 cells x fry/flat x offsets 0 13 29 41 57, all on pgx93 (`offload hold`, job.sh `DIRECT=1` on the host).
+Tree = origin/main 438c1ddf (0.84 fallback) + the changes above. Variants: base (0.97, heat off), t0 (1.015,
+heat off = current firmware with the Cin fix), u1015 (1.015, heatCut 0.96), t93 (0.93). First binary: rule ungated
+(`results-5.txt`); second: gated on a learned `kVmp` (`results-5-gated.txt`, t0 and u1015 only; t0 byte-identical
+to the first binary's in all 280 runs). `python3 agg5.py <file>`.
+
+### Results (points, mean over 10 pairs, se in brackets)
+
+| Cell | 1.015 - 0.97 (Cin fixed) | heat 0.96 ungated | heat 0.93 ungated | heat 0.96 gated |
+|---|---|---|---|---|
+| l2k | +0.41 (0.13) | **-0.31 (0.14)**, min -1.45 | -0.31 (0.14) | 0.00 |
+| h3 | -0.41 (0.25) | +0.76 (0.18) | +0.76 (0.18) | +0.20 (0.14) |
+| h4 | -0.13 (0.08) | +0.19 (0.06) | +0.15 (0.05) | +0.10 (0.05) |
+| wx-shade-walk | -0.06 (0.09) | -0.01 (0.11) | 0.00 (0.12) | -0.04 (0.04) |
+| other 24 cells | within +-0.02 except l1 +1.04, l2 +5.36, l3 +0.82, l4 +5.33, l5 +5.45, l1d +3.32, h2 +0.19 | within +-0.01 | 0 | within +-0.01 |
+| mean of 28 | +0.763 | +0.022 | +0.022 | +0.009 |
+
+* With the correct Cin, 1.015 vs 0.97 gains +0.76 points on average (round 4: +0.68 with 470 uF); the heated cells
+  h3/h4 still lose -0.41/-0.13 against 0.97.
+* Ungated, the rule also fires in l2k (plant Vmpp/Voc 0.80, sweep never learns, fallback 0.84): Vin / m0 sits 6 %
+  below vs0 without any heating, and the 6x probe lands at 62.7 V for a maximum at 68.7 V (-8.7 %; the mean put it at
+  -4.7 %). There the weak substrings lift the higher maximum ~10 % above 6 shares, and the mean's excess compensates.
+* Gated, l2k is untouched and h3/h4 keep part of the gain: runs whose boot sweep did not learn `kVmp` fall back to
+  the mean. Net h3 vs 0.97: -0.21, h4: -0.03.
+
+### Unverified
+
+* Hardware: the rule fires only after a learned `kVmp` and >4 % heating without a new sweep; not seen in the field yet.
+* The cutoff (0.96 vs 0.93) makes no difference in these cells; nothing between was run.

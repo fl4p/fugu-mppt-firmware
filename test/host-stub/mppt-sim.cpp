@@ -54,7 +54,7 @@
 //     every wx run with scans: one "== PROBE" line per scan (probes vs the plant's maxima and power at the scan start;
 //     outcome from the maximum the operating point is on 5 s after the scan: ok / HIT / MISS-place / MISS-noise /
 //     WRONG / PARTIAL / light), "== PROBES" totals; probe factors below / above
-//     the operating point: SIM_SCAN_LOW, SIM_SCAN_UP (PeakScan::probeLow/High; SIM_SCAN_UP=0.97: the rule before 11-24)
+//     the operating point: SIM_SCAN_LOW, SIM_SCAN_UP (PeakScan::probeLow/High; SIM_SCAN_UP=0.97: the rule before 11-24), SIM_SCAN_HEAT (PeakScan::heatCut, 0: off)
 //     wx-dawn, wx-dusk  irradiance through the start threshold; wx-dawn: no-MPP backoff doubles 30..300 s ("== NOMPP")
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: off 4 s per failure, the restart keeps the old zeros,
@@ -4004,6 +4004,7 @@ static int simMain(int argc, char **argv) {
     if (sc == "scan-static") return scanStatic();
     if (const char *e = getenv("SIM_SCAN_LOW")) PeakScan::probeLow = (float) atof(e);
     if (const char *e = getenv("SIM_SCAN_UP")) PeakScan::probeHigh = (float) atof(e);
+    if (const char *e = getenv("SIM_SCAN_HEAT")) PeakScan::heatCut = (float) atof(e);
     if (const char *f = getenv("SIM_FINE")) sscanf(f, "%lf,%lf", &g_fineT0, &g_fineT1);
     if (const char *f = getenv("SIM_TTRACE")) sscanf(f, "%lf,%lf", &g_trkT0, &g_trkT1);
     // suffix -p0: limits.conf reverse_current_paranoia=0 (Vout-OV threshold 1.5x instead of 1.03x Vbat_max)

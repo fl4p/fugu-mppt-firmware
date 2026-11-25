@@ -453,7 +453,8 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.84 at start). The operating point is assigned
    to the nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
    operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their mean
-   $s = (V_{in}/m_0 + s_0)/2$.
+   $s = (V_{in}/m_0 + s_0)/2$. Exception for the higher candidates: if $k$ was taken from a sweep and $V_{in}/m_0$ is
+   more than 4 % below $s_0$, the string has heated since that sweep, and they use $V_{in}/m_0$ alone.
 
    A lower candidate ($m < m_0$) is placed at $0.97\,m\,s$, on the flat low-voltage side of
    its maximum. A higher one ($m > m_0$) is placed at $1.015\,m\,s$: it includes substrings weaker than any at the
@@ -604,9 +605,10 @@ still reads a few percent below its maximum, so with the 3 % margin a maximum le
 point is often not taken.
 
 Heating since the sweep lowers every maximum, while $s_0$ keeps the cold share. After a drop of about 10 % in
-$V_{oc}$, a higher probe can land on the steep high-voltage side of its maximum and miss a move that a lower
-placement would have found. A higher factor finds more upward moves in cool conditions and loses more of them
-after heating; 1.015 is the compromise.
+$V_{oc}$, the mean share would put a higher probe on the steep high-voltage side of its maximum, where it misses a
+move. Hence the heating exception above. It needs a learned $k$: with the fallback, a share below $s_0$ is as likely
+a string with a lower $V_{mpp}/V_{oc}$, whose higher maxima sit well above $m$ shares, and there the mean places the
+probe better.
 
 ## Sweep gating {#when-the-tracker-does-not-sweep}
 

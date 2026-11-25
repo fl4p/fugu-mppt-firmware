@@ -345,6 +345,7 @@ void test_scan_aborts_on_light_step();
 void test_scan_trigger_needs_15s();
 void test_scan_probe_anchor_on_vin();
 void test_scan_probe_above_weak_peak();
+void test_scan_probe_after_heating();
 void test_scan_probe_waits_for_ls_fade();
 void test_scan_learns_vmpp_ratio();
 void test_scan_timeout_returns_to_start();
@@ -625,6 +626,7 @@ void setup() {
     RUN_TEST(test_scan_trigger_needs_15s);
     RUN_TEST(test_scan_probe_anchor_on_vin);
     RUN_TEST(test_scan_probe_above_weak_peak);
+    RUN_TEST(test_scan_probe_after_heating);
     RUN_TEST(test_scan_probe_waits_for_ls_fade);
     RUN_TEST(test_scan_learns_vmpp_ratio);
     RUN_TEST(test_scan_timeout_returns_to_start);

@@ -20,6 +20,10 @@ struct PeakScan {
     // probe m at m shares times: below m0 on the flat low-voltage side of a peak; above m0 weaker substrings conduct
     // and lift the peak over m shares. Not const: the host sim varies them
     static inline float probeLow = 0.97f, probeHigh = 1.015f;
+    // with Vmpp/Voc learned, Vin / m0 below heatCut x the sweep's share: heated since the sweep, probes above m0
+    // take Vin / m0 alone (with the fallback the gap is the Vmpp/Voc spread)
+    static inline float heatCut = 0.96f;
+    static constexpr float kVmpFallback = 0.84f;
 
     uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = learn,
                              // 1 = single peak, nothing to scan
@@ -47,7 +51,7 @@ struct PeakScan {
     bool ret = false;
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
-    float voc = NAN, iEnv = 0, kVmp = 0.84f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
+    float voc = NAN, iEnv = 0, kVmp = kVmpFallback; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
     float pk = 0, vPk = 0, pLo = 0; // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it
     bool fall = false;
@@ -213,11 +217,12 @@ struct PeakScan {
             // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
             // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
             const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
-            const float sh = 0.5f * (vin / (float) m0 + vs0);
+            const float sv = vin / (float) m0, sh = 0.5f * (sv + vs0);
+            const float shUp = kVmp != kVmpFallback && sv < heatCut * vs0 ? sv : sh;
             claim();
             nc = 0;
             for (int m = 1; m <= n; ++m) {
-                const float v = (m > m0 ? probeHigh : probeLow) * (float) m * sh;
+                const float v = m > m0 ? probeHigh * (float) m * shUp : probeLow * (float) m * sh;
                 // unreachable, at our own peak, or a lower peak that cannot beat us even at the best current seen
                 if (m == m0 || v < vMin || v > 0.95f * voc || (m < m0 && iEnv > 0 && (float) m * sh * iEnv < pw * (1 + margin)))
                     continue;
