@@ -267,8 +267,9 @@ total: the device reads the averages directly and needs no console polling. `ls`
 dwell. `apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect_offset_drv` and
 `rect_offset_cal=1`, or 2 when the offset was clamped to +125 ns (live at once). Either is written
 to flash only after the converter has been disabled, because a flash write stalls the control loop.
-`L0` is not written when the run is marked `DISTURBED`. Like the script, it reports the physical
-inductance. A median-only version of the command agreed with the script to within ~2 % on board A
+`L0` is not written when the run is marked `DISTURBED` or the on-time offset is out of range. Like the
+script, it reports the physical inductance. Unlike the script, it also fits the
+[on-time offset](#on-time-offset) and corrects `L` for it. A median-only version of the command agreed with the script to within ~2 % on board A
 of §9.
 
 The command starts only from a converter stopped with `dc 0` (manual PWM, duty 0, converter off)
@@ -280,14 +281,22 @@ mode or the drive meanwhile. The refusals are listed in the
 For a tight result, use many small steps. Otherwise the i-max abort leaves only the low end of the
 band sampled, and the ring fit falls back to the median.
 
-After the result line the command prints the `Iout` zero and the peak-current dependence:
+After the result line the command prints the on-time offset, the `Iout` zero and the peak-current
+dependence:
 
 ```
-measure-coil: L = 76.40 uH  (ring fit, 33 DCM pts, Iout>=0.44A, +-0.4% noise +-1.6% syst; ring 247 kHz ...)
+measure-coil: L = <L> uH on-time corrected (ring fit, 33 DCM pts, Iout>=0.44A, +-0.4% noise +-1.6% syst; ring 247 kHz ...; uncorrected <L> uH)
+measure-coil: on-time offset <dl> ns +-<noise> noise +-<syst> syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span <r>x: <state>
 measure-coil: Iout zero +0.001/-0.003 A (off, before/after), subtracted
 measure-coil: L(Ipk), +-noise/offsets: 2.2-3.1A 75.71uH+-0.7/5.4% | 3.1-4.0A 77.07uH+-0.7/3.4% | 4.0-4.8A 76.45uH+-0.7/2.4%
 measure-coil: L(Ipk) slope +0.76 +-0.53 %/A over 2.2-4.8 A, Iout/on-time offsets add up to +-1.73: coil -2.04..+3.56 %/A, drop <= 2.0 %/A
 ```
+
+The result line names the value it reports, `on-time corrected` or `uncorrected`, and ends with the
+uncorrected `L` for comparison. The on-time line gives the fitted offset, its noise and systematic
+errors (one standard deviation) and the duty span of the points. `<state>` is `applied`, or why the
+uncorrected `L` is reported instead (see [On-time offset](#on-time-offset)); an offset beyond
+±400 ns fails the run and `apply` does not write `L0`.
 
 The `Iout zero` line gives the current read with the converter off before and after the sweep. If
 it moved by more than 0.02 A, the line ends with `DISTURBED`, and `apply` does not write `L0`. The
@@ -296,7 +305,10 @@ shift that the `Iout` and on-time offset bounds can cause in that bin. The secon
 slope with its noise error, the slope the offset bounds can produce, and the resulting range for
 the coil's own slope. Read the lower end as an upper bound on how much the coil's `L` drops over
 the band (see [Peak-current dependence](#peak-current-dependence)). Both lines are omitted when
-the band covers fewer than about 1.6 ring periods. The host script prints the same lines.
+the band covers fewer than about 1.6 ring periods. With the on-time offset applied, they come from the
+corrected points; the slope line then ends with a note, because the offset fit assumes a zero slope
+(see [On-time offset](#on-time-offset)). The host script prints the same lines, without the on-time
+line.
 
 #### Lower switching frequency
 
@@ -611,8 +623,8 @@ Over the DCM band the columns `1`, `D`, `1/D` and `1/D²` of these effects are n
 synthetic sweeps with the ring, a fit that adds `δt` as a parameter has a condition number of
 10–13 (columns normalized), a correlation of 0.97–0.98 between `δt` and the slope, and recovers an
 injected 30–60 ns offset only to ±50–75 ns per sweep. A prior on `δt` of the order of the dead
-time adds nothing the data can confirm. The report therefore keeps the slope and states what it
-can mean:
+time adds nothing the data can confirm. The uncorrected fit therefore keeps the slope and states
+what it can mean (the [on-time fit](#on-time-offset) instead assumes the slope):
 
 - The response of the fit to each offset is computed by fitting the per-point sensitivities
   (`dy/dIout`, `dy/dδt`) with the same model. Their bounds, the node charge
@@ -641,13 +653,75 @@ The −0.3 %/A offset is the ring's node charge, which the model includes. With 
 offset of 0, +31 and +62 ns the apparent slope stays within the offset bound plus two noise errors
 in every sweep.
 
+### On-time offset {#on-time-offset}
+
+The effective on-time of the control switch (the high side in a buck, the low side in a boost)
+differs from the commanded one by an offset `δt`: gate-drive delays, the dead time and the
+switch-node transitions. In DCM each point then follows
+
+$$
+I_{out} = \frac{V_{in}(V_{in}-V_{out})\,(D + \delta t\,f_{sw})^2}{2\,L\,f_{sw}\,V_{out}},
+\qquad \frac{1}{L_i} = \frac{1}{L}\left(1 + \frac{\delta t\,f_{sw}}{D_i}\right)^2 ,
+$$
+
+with `1/L_i` the per-point value computed from the commanded duty. A positive `δt` makes `L` read
+low, most at low duty, which is also the low-current end of the band. The point bias
+$\delta t / t_{on}$ depends on the physical on-time $t_{on} = L\,I_{pk}/(V_{in}-V_{out})$, not on
+`fsw`: at the same peak current a lower switching frequency changes nothing. Only a different
+`Vin − Vout` at the same peak current separates `δt` from a current-dependent `L`.
+
+`measure-coil l0` estimates `δt` with the slope fixed at zero: it fits
+$1/L_i = c_0\,(1 + 2\,\delta t\,f_{sw}/D_i)$ plus the ring terms at the frequency of the
+uncorrected fit, by least squares, and iterates with each point's duty replaced by
+`D + δt·fsw` until the estimate changes by less than 1 ns. A ring over fewer than about 1.6 periods
+of the band is dropped for this fit, because it cannot be told apart from a smooth trend. The final
+fit at the corrected duties gives `L`, the bins and the slope. The estimate has two errors:
+
+- **Noise**: the fit residuals and the `Iout` zero uncertainty.
+- **Systematic**: the node-charge bound (as for `L`) and a coil slope within ±0.5 %/A, each a uniform
+  bound. The fit takes any slope of the coil's own for an on-time offset.
+
+The corrected result's systematic error of `L` uses the offset's error in place of the on-time bound.
+The uncorrected `L` is reported instead when:
+
+- the band has fewer than 16 points, or the ring fit failed (no estimate);
+- the duty span of the points, highest over lowest, is under 2;
+- the offset's error, noise and systematic in quadrature, exceeds 80 ns.
+
+An offset beyond ±400 ns, by more than twice its error, is outside what gate drive and switching
+explain. The run then fails: the DCM model does not describe the data, and `L0` is not written.
+
+On the converter model with the ring (24 sweeps per case, stiff source, zero-corrected):
+
+| plant on-time offset | coil slope | uncorrected `L` error, mean | corrected `L` error, mean / rms | offset error, mean / rms | applied |
+|----------------------|------------|-----------------------------|---------------------------------|--------------------------|---------|
+| 0                    | 0          | +0.5 %                      | −0.5 / 0.8 %                    | −26 / 34 ns              | 21 of 24 |
+| +100 ns              | 0          | −2.9 %                      | −0.4 / 0.7 %                    | −25 / 33 ns              | 22 of 24 |
+| −100 ns              | 0          | +4.0 %                      | −0.4 / 0.6 %                    | −28 / 32 ns              | 20 of 24 |
+| +200 ns              | 0          | −6.5 %                      | −0.5 / 0.8 %                    | −26 / 34 ns              | 17 of 24 |
+| +100 ns              | −0.5 %/A   | −3.3 %                      | −2.1 / 2.2 %                    | −68 / 71 ns              | 19 of 24 |
+| 0                    | −1 %/A     | +0.4 %                      | −3.7 / 3.8 %                    | −133 / 137 ns            | 22 of 24 |
+| +600 ns              | 0          | −19 %                       | not applied                     | —                        | 0; 20 of 24 fail |
+
+The common −26 ns offset error lies within the node-charge bound. With no coil slope the
+actual offset error is about 0.6 times the stated one. A coil slope maps onto the offset at about
+130 ns per %/A on this model: −1 %/A reads as −133 ns and makes the corrected `L` 3.7 % low, while
+the uncorrected `L` is within 0.5 %. The correction helps only when the coil's own slope is small
+against the apparent one. Compare the corrected and uncorrected values and the slope of the
+uncorrected fit before writing `L0`.
+
+The same holds on the closed-loop simulator (`mc-flat-ton`, `mc-boost-dark-ton`): a −100 ns
+high-side offset on a 51 µH buck reads +4.7 % uncorrected and +1.7 % corrected (fitted −84 ns), and
++100 ns on the low side of an 80 µH boost reads −2.1 % and +1.0 % (fitted +153 ±57 ns).
+
 ### Stated uncertainty {#stated-uncertainty}
 
 The result line gives two relative errors of `L`, both one standard deviation:
 
 - **Noise**: from the fit residuals (the variance of `c0` in the least-squares fit) and the
   uncertainty of the `Iout` zero.
-- **Systematic**: the node-charge bound, the on-time bound and an assumed 1 % `Iout` gain tolerance,
+- **Systematic**: the node-charge bound, the on-time bound (the [on-time offset's](#on-time-offset) error
+  when it is applied) and an assumed 1 % `Iout` gain tolerance,
   each treated as a uniform distribution within its bound (divided by √3) and added in quadrature,
   plus ring-model mismatch. The mismatch term scales the noise term by the lag-1 autocorrelation
   `a` of the residuals in sweep order: $\sqrt{(1+a)/(1-a) - 1}$.
@@ -685,7 +759,7 @@ The fit removes the oscillating part of the ring. The following effects move the
 |--------|------|------------------|
 | Node charge drawn from the output by the ring (the node starts near 0 and settles near `Vout`) | $\Delta I_{out} \approx -C\,V_{out}\,f_{sw}$, about −5 mA | high, ≈ 0.5–2 % |
 | High-side turn-off transition: the coil current discharges `C` from `Vin`, delivering $\tfrac12 C V_{in}^2$ per cycle to the output | $\Delta I_{out} \approx C\,V_{in}^2 f_{sw} / (2 V_{out})$, about +15–20 mA at `Vin` ≈ 70 V | low, ≈ 1.5–6 % |
-| Gate-drive delays that lengthen the effective on-time by `δ` | $\Delta L/L \approx -2\delta / (D\,T)$ | low, ≈ 1 % per 10 ns at `D` = 0.1 |
+| Gate-drive delays that lengthen the effective on-time by `δ` (fitted and corrected by `measure-coil l0`, see [On-time offset](#on-time-offset)) | $\Delta L/L \approx -2\delta / (D\,T)$ | low, ≈ 1 % per 10 ns at `D` = 0.1 |
 | Early low-side turn-off (body-diode tail at `−(Vout+Vf)`) | < 0.1 % | high |
 | Winding resistance (`Iout·DCR` against `Vin−Vout`) | < 0.1 % | high |
 | `InductivityDcBias` (0.95) | not applied to the measurement; the firmware applies it to `L0` | none |

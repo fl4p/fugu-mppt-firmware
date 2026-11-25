@@ -1021,6 +1021,7 @@ const FILE_META = {
     diode_vf:{unit:"V",desc:"Body-diode forward drop on both clamps, in the dead time and on the reverse-current return to the input",type:"float"},
     t_dead:{unit:"s",desc:"Dead time before each rising gate edge; the coil freewheels through a body diode",type:"float"},
     t_hs_ext:{unit:"s",desc:"High-side on-time extension (turn-off minus turn-on delay)",type:"float"},
+    t_on_ofs:{unit:"s",desc:"Signed offset added to every on-time of the control switch (buck high side, boost low side)",type:"float"},
     r_hs:{unit:"Ω",desc:"Resistance in series with the coil while the high side conducts",type:"float"},
     r_ls:{unit:"Ω",desc:"Resistance in series with the coil while the low side conducts",type:"float"},
     t_sw:{unit:"s",desc:"High-side turn-off current fall time; the loss is paid from the input",type:"float"},
@@ -1213,7 +1214,7 @@ const FILE_KEYS = {
     "noise_iout","noise_ntc","noise_vin","noise_vout","ntc_v","out_d_i0","out_d_vt","plant_c_in",
     "plant_c_out","pv_isc","pv_k","pv_voc","pwm_clk","r_bat","r_hs","r_ls","ring_c","ring_cexp",
     "ring_ct","ring_q","ring_v","sun_day_s","sun_night_s","sun_peak","sun_seed","t_dead",
-    "t_hs_ext","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","vbat_ac_shape"],
+    "t_hs_ext","t_on_ofs","t_sw","v_bat","vbat_ac_amp","vbat_ac_freq","vbat_ac_shape"],
 };
 // SCRAPER:END FILE_KEYS
 
@@ -1249,7 +1250,7 @@ const TYPE_KEYS = {
     "pwm_deadtime_ns","r_bat","r_hs","r_ls","recharge_dod","recharge_vfloor_band",
     "rect_offset_ns","ring_c","ring_cexp","ring_ct","ring_q","ring_v","scan_near_v","sun_day_s",
     "sun_night_s","sun_peak","sweep_pace","sweep_speed","sweep_verify","sync_phase_deg",
-    "sync_phase_ns","t_dead","t_hs_ext","t_sw","tail_c_rate","target_duty_cycle","temp_derate",
+    "sync_phase_ns","t_dead","t_hs_ext","t_on_ofs","t_sw","tail_c_rate","target_duty_cycle","temp_derate",
     "temp_max","v_bat","vbat_ac_amp","vbat_ac_freq","vin_min","vout_max","vout_max_fallback",
     "vout_offset_max","wire_dr_min","wire_p_derate","wire_p_trip","wire_p_warn","wire_r_max"]),
   string: new Set(["adc","bat_charge_topic","bat_temp_topic","bat_voltage_topic","ble_security",
@@ -1332,7 +1333,7 @@ const DEFAULTS = {
   "noise_vin":"0.0","noise_vout":"0.0","out_d_i0":"0.0","out_d_vt":"1.0","plant_c_in":"0.00047",
   "plant_c_out":"0.00047","pwm_clk":"0","r_bat":"0.05","r_hs":"0.0","r_ls":"0.0","ring_c":"0.0",
   "ring_cexp":"0.6","ring_ct":"1.0","ring_q":"20.0","ring_v":"0.0","sun_day_s":"0.0",
-  "sun_night_s":"-1.0","sun_peak":"1.0","sun_seed":"1","t_dead":"0.0","t_hs_ext":"0.0",
+  "sun_night_s":"-1.0","sun_peak":"1.0","sun_seed":"1","t_dead":"0.0","t_hs_ext":"0.0","t_on_ofs":"0.0",
   "t_sw":"0.0","v_bat":"28.0","vbat_ac_amp":"0.0","vbat_ac_freq":"100.0","vbat_ac_shape":"0",
 };
 // SCRAPER:END DEFAULTS

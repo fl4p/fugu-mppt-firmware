@@ -35,6 +35,7 @@ The file accepts the following keys.
 | `diode_vf`      | V    | float | 0       | Body-diode forward drop on both clamps, in the dead time and on the reverse-current return to the input |
 | `t_dead`        | s    | float | 0       | Dead time before each rising gate edge (HS off → LS on, LS off → HS on); the coil freewheels through a body diode |
 | `t_hs_ext`      | s    | float | 0       | High-side on-time extension (turn-off minus turn-on delay)                  |
+| `t_on_ofs`      | s    | float | 0       | Signed offset added to every on-time of the control switch (buck high side, boost low side), without the dead-time interplay of `t_hs_ext` |
 | `r_hs`          | Ω    | float | 0       | Resistance in series with the coil while the high side conducts (Rds(on), coil DCR, input-cap ESR share) |
 | `r_ls`          | Ω    | float | 0       | Resistance in series with the coil while the low side conducts             |
 | `t_sw`          | s    | float | 0       | High-side turn-off current fall time; the loss is paid from the input       |
@@ -125,7 +126,7 @@ The firmware reads `vconv.conf` once at boot. The console changes part of the pl
   sun and cloud keys. `vconv set l <H>` overrides the inductor.
 - `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.
 
-The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `r_hs`, `r_ls`, `t_sw`,
+The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `t_on_ofs`, `r_hs`, `r_ls`, `t_sw`,
 `pwm_clk`, `adc_freq`, `noise_*`, `out_d_i0`, `out_d_vt`, `in_bf`, `in_bf_tau`) need a reboot. See [Console](../console.md).
 
 ## Switch-node ring

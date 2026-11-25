@@ -111,6 +111,7 @@ static void configureVirtualConverter() {
     g_vconv.setOutDiode(vc.f("out_d_i0", 0.0f), vc.f("out_d_vt", 1.0f));
     g_vconv.setSwitching(vc.f("t_dead", 0.0f), vc.f("t_hs_ext", 0.0f), vc.f("r_hs", 0.0f), vc.f("r_ls", 0.0f),
                          vc.f("t_sw", 0.0f));
+    g_vconv.setOnTimeOfs(vc.f("t_on_ofs", 0.0f));
     g_vconv.setPwmClk((uint32_t) vc.getLong("pwm_clk", 0));
     // renamed vconv.conf keys: an old key alone fails setup, naming its replacement
     for (auto [o, n]: {std::pair{"bf_model", "bflow_model"}, {"bf_stuck", "bflow_stuck"},

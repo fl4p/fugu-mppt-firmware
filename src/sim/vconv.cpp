@@ -227,7 +227,9 @@ void VirtualConverter::stepOneCycleBuck(float T) {
 
     // realised gate windows: tDead_ before each rising edge (an LS pulse shorter than that is swallowed), the HS
     // turns off tHsExt_ late; from HS turn-on to the next one is T
-    const float tH = (float) pwm_.pwmCtrl * invPmax_ * T, tL = (float) pwm_.pwmRect * invPmax_ * T;
+    float tH = (float) pwm_.pwmCtrl * invPmax_ * T;
+    const float tL = (float) pwm_.pwmRect * invPmax_ * T;
+    if (tH > 0.0f) tH = std::min(T, std::max(0.0f, tH + tOn_));
     const bool lsOn = tL > std::max(tDead_, tHsExt_);
     const float hsDelay = lsOn ? std::max(0.0f, tDead_ - (T - tH - tL)) : 0.0f;
     const float tHS = tH > 0.0f ? std::min(T, std::max(0.0f, tH + tHsExt_ - hsDelay)) : 0.0f;
@@ -398,8 +400,9 @@ float VirtualConverter::ringOff(float &x, float &i, float t, float &qIn, bool &z
 void VirtualConverter::stepOneCycleBoost(float T) {
     float invL = invL_;
     if (lK_ != 0.0f) invL /= std::max(0.1f, 1.0f - lK_ * iPk_);
-    const float tCtrl = (float) pwm_.pwmCtrl * invPmax_ * T; // LS on
     const float tRect = (float) pwm_.pwmRect * invPmax_ * T; // HS on
+    float tCtrl = (float) pwm_.pwmCtrl * invPmax_ * T;       // LS on
+    if (tCtrl > 0.0f) tCtrl = std::min(T - tRect, std::max(0.0f, tCtrl + tOn_));
     const float tOff = T - tCtrl - tRect;
 
     // Phase 1: Ctrl (LS) on — coil shorted to ground, dI/dt = Vin/L. The HS body

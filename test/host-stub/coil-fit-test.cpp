@@ -276,6 +276,57 @@ static int testOffsets(int trials) {
     return fail;
 }
 
+// on-time offset estimate (fitOnTime): plant HS on-time offset hoff (6.25 ns counts) on a coil without (k = 0) or with
+// a DC-bias slope; per case the recovered offset, uncorrected and corrected L errors, the stated offset error vs the actual
+// one and the share of sweeps the offset was applied in. 600 ns: out of range, reported and never applied
+static int testOnTime(int trials) {
+    struct Case { int hoff; float k, isc; };
+    const Case cases[] = {{0, 0, 8}, {16, 0, 8}, {-16, 0, 8}, {32, 0, 8}, {16, 0, 1.5f}, {16, 0.005f, 8}, {0, 0.01f, 8},
+                         {96, 0, 8}};
+    int fail = 0;
+    for (const auto &c: cases) {
+        std::mt19937 rng(555);
+        std::vector<float> e0, e1, ed, zd;
+        int applied = 0, n = 0, st[5] = {};
+        for (int t = 0; t < trials; ++t) {
+            const Rnd b(rng);
+            Opt o;
+            o.zero = true, o.hoff = c.hoff, o.k = c.k;
+            Zero z;
+            const auto p = sweep(rng, b.L, b.fr, b.q, b.voc, b.vbat, c.isc, 48, o, &z);
+            if ((int) p.size() < coilfit::kMinFitPts) continue;
+            float d[coilfit::kMaxPts], vi[coilfit::kMaxPts], vo[coilfit::kMaxPts], io[coilfit::kMaxPts];
+            const int m = std::min<int>((int) p.size(), coilfit::kMaxPts);
+            for (int i = 0; i < m; ++i) d[i] = p[i].d, vi[i] = p[i].vin, vo[i] = p[i].vout, io[i] = p[i].iout;
+            const auto r0 = coilfit::fit(d, vi, vo, io, m, (float) kFsw, z.sig);
+            int s = 0;
+            const auto r1 = coilfit::fitOnTime(d, vi, vo, io, m, (float) kFsw, z.sig, r0, s);
+            ++n, ++st[s];
+            // the plant's L at the points' mean Ipk (k: L = L0 (1 - k Ipk) per cycle)
+            float ipk = 0;
+            for (int i = 0; i < m; ++i) ipk += coilfit::ipkDcm(d[i], vi[i], vo[i], io[i]) / (float) m;
+            const float lp = b.L * (1 - c.k * ipk);
+            e0.push_back(r0.L / lp - 1);
+            if (s == 0) {
+                ++applied, e1.push_back(r1.L / lp - 1);
+                const float err = r1.dl - c.hoff * 6.25e-9f;
+                ed.push_back(err * 1e9f), zd.push_back(err / std::hypot(r1.dlse, r1.dlsys));
+            }
+        }
+        printf("on-time %+.0f ns, coil slope %+.1f %%/A, %s, %d sweeps: uncorrected L err mean %+.2f%% rms %.2f%% | applied"
+               " %d (status 2/3/4: %d/%d/%d): corrected L err mean %+.2f%% rms %.2f%%, offset err mean %+.0f rms %.0f ns, "
+               "rms z %.2f\n", c.hoff * 6.25f, -c.k * 100, c.isc < 5 ? "soft" : "stiff", n, 100 * meanOf(e0),
+               100 * rmsOf(e0), applied, st[2], st[3], st[4], 100 * meanOf(e1), 100 * rmsOf(e1), meanOf(ed), rmsOf(ed),
+               rmsOf(zd));
+        if (c.hoff * 6.25e-9f > coilfit::kDlMax) { // out of range: reported (status 4), never applied
+            if (applied || 3 * st[4] < 2 * n) ++fail, printf("  FAIL: out-of-range offset applied or not reported\n");
+        } else if (c.k == 0 && c.isc > 5 && !(3 * applied >= 2 * n && std::fabs(meanOf(e1)) < 0.5f && rmsOf(e1) < 1.f &&
+                                       rmsOf(zd) < 1.5f && st[4] == 0))
+            ++fail, printf("  FAIL\n");
+    }
+    return fail;
+}
+
 static int fitFile(const char *path) {
     FILE *f = fopen(path, "r");
     if (!f) return 2;
@@ -307,6 +358,7 @@ static int fitFile(const char *path) {
 
 int main(int argc, char **argv) {
     if (argc > 2 && std::string(argv[1]) == "--fit") return fitFile(argv[2]);
+    if (argc > 2 && std::string(argv[1]) == "--ontime") return testOnTime(atoi(argv[2]));
     const int trials = argc > 1 ? atoi(argv[1]) : 24;
     std::mt19937 rng(12345);
     std::uniform_real_distribution<float> U(0, 1);
@@ -360,6 +412,7 @@ int main(int argc, char **argv) {
     fail += testSplit(argc > 2 ? atoi(argv[2]) : 100);
     fail += testDisturbed(trials);
     fail += testOffsets(argc > 3 ? atoi(argv[3]) : 16);
+    fail += testOnTime(argc > 3 ? atoi(argv[3]) : 16);
     printf("coil-fit-test: %s\n", fail ? "FAIL" : "PASS");
     return fail ? 1 : 0;
 }

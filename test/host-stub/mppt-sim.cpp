@@ -28,7 +28,9 @@
 //                              # mc-flat: `measure-coil l0` entered from MPPT at ~160 W in CCM on flat's plant
 //                              # mc-flat-lowf: the same at 22 kHz (the sweep after `f=`, not the switch to it)
 //                              # mc-flat-ramp: the same entered by the `dc 0` ramp-down (SIM_MC_RAMP=1)
-//                              # mc-boost-dark: `measure-coil l0` in boost at night (battery in, dark string out); -lowf at 21.5 kHz
+//                              # mc-flat-ton: the same with a plant HS on-time offset of -100 ns (vconv.conf t_on_ofs)
+//                              # mc-boost-dark: `measure-coil l0` in boost at night (battery in, dark string out); -lowf at 21.5 kHz,
+//                              #   -ton with a plant LS on-time offset of +100 ns and no coil DC bias
 //                              # mc-boost-open: the same with the output unloaded, the 80 V trip
 //                              # mc-boost-bfopen: the same with the backflow switch stuck open: the start aborts
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
@@ -2098,6 +2100,32 @@ static bool simPsuWait(uint32_t ticket) {
 static float med5(float *a) { return coilfit::detail::median(a, 5); }
 static float g_mcIpk = 0; // largest row Ipk of the last simMeasureL0 (L-free DCM estimate)
 
+// sweepL0()'s fit: uncorrected (g_mcRes0), then with the on-time offset (g_mcResT, status g_mcSt); returns the one the
+// firmware reports (uncorrected unless the offset is applicable)
+static coilfit::Result g_mcRes0, g_mcResT;
+static int g_mcSt = 1;
+static coilfit::Result mcFit(const float *d, const float *vi, const float *vo, const float *io, int n, float fsw, float zsig) {
+    g_mcRes0 = coilfit::fit(d, vi, vo, io, n, fsw, zsig);
+    g_mcResT = coilfit::fitOnTime(d, vi, vo, io, n, fsw, zsig, g_mcRes0, g_mcSt);
+    const auto &a = g_mcRes0, &b = g_mcResT;
+    printf("  measure: uncorrected L %.2f uH slope %+.2f %%/A | on-time %+.0f +-%.0f noise +-%.0f syst ns, span %.2f, status %d"
+           " | corrected L %.2f uH +-%.1f/%.1f %% slope %+.2f %%/A | ring %.0f kHz %.1f periods\n", a.L * 1e6f, a.k * 100, b.dl * 1e9f, b.dlse * 1e9f,
+           b.dlsys * 1e9f, b.dspan, g_mcSt, b.L * 1e6f, b.se * 100, b.sys * 100, b.k * 100, a.f * 1e-3f, a.periods);
+    return g_mcSt ? a : b;
+}
+// -ton scenarios: the plant's on-time offset (vconv.conf t_on_ofs) against the estimate; L vs lPlant
+static int mcTonCheck(const std::string &sc, float lPlant, const std::function<void(bool, const char *)> &chk) {
+    const char *e = getenv("SIM_MC_TON");
+    if (!e) return 0;
+    const float ton = (float) atof(e), u = std::hypot(g_mcResT.dlse, g_mcResT.dlsys);
+    printf("== %s: on-time plant %+.0f ns, fitted %+.0f +-%.0f ns; L uncorrected %+.2f %%, corrected %+.2f %% vs plant\n",
+           sc.c_str(), ton * 1e9f, g_mcResT.dl * 1e9f, u * 1e9f, (g_mcRes0.L / lPlant - 1) * 100, (g_mcResT.L / lPlant - 1) * 100);
+    chk(g_mcSt == 0, "on-time offset applied");
+    chk(std::fabs(g_mcResT.dl - ton) < 2 * u, "on-time offset within 2 sigma of the plant's");
+    chk(std::fabs(g_mcResT.L / lPlant - 1) < std::fabs(g_mcRes0.L / lPlant - 1), "corrected L closer to the plant");
+    return 0;
+}
+
 static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
     const double t0 = tNow();
     coilfit::Result res;
@@ -2147,7 +2175,7 @@ static coilfit::Result simMeasureL0(int steps, uint32_t dwellMs, double &secs) {
         int nk = 0;
         for (int i = 0; i < n; ++i)
             if (io[i] >= floor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
-        res = coilfit::fit(d, vi, vo, io, nk, fsw);
+        res = mcFit(d, vi, vo, io, nk, fsw, 0);
     }
     // restore as the task does: ramp down, wait for the disable, back to MPPT
     mppt.setManualTarget(0);
@@ -2279,7 +2307,7 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
         if (io[i] >= floor) d[nk] = d[i], vi[nk] = vi[i], vo[nk] = vo[i], io[nk] = io[i], ++nk;
     g_mcIpkMean = 0;
     for (int i = 0; i < nk; ++i) g_mcIpkMean += coilfit::ipkDcm(d[i], vi[i], vo[i], io[i]) / (float) nk;
-    res = coilfit::fit(d, vi, vo, io, nk, fsw, zsig);
+    res = mcFit(d, vi, vo, io, nk, fsw, zsig);
     if (std::fabs(z1 - z0) > coilfit::kZeroTol) printf("  measure: zero DISTURBED %+.3f/%+.3f\n", z0, z1);
     mppt.setExplicitOvLimit(ov0);
     if (mppt.limits.reverse_current_paranoia) mppt.bflow.enable(false);
@@ -2292,7 +2320,9 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
 //   frequency: no runtime change without MCPWM). SIM_MC_DIODE=i0,vt: the string (5 substrings, knee ~70 V: 7.3e-9,3.7),
 //   SIM_MC_L=50e-6 with SIM_CONF=coil.conf:L0=50e-6: that board's coil, SIM_MC_VINOFS=a,b: Vin reads
 //   a + b Iin [V, V/A] low. SIM_MC_K: plant DC bias
-//   L = L0 (1 - k Ipk) (1/A, default 0.01), SIM_MC_L: plant L0 (default 80e-6). Per pass: L vs the plant's L at the fitted
+//   L = L0 (1 - k Ipk) (1/A, default 0.004: a sendust core, inside the on-time fit's slope tolerance; at 0.01 the fit
+//   takes the slope for an on-time offset of about -130 ns and L comes out ~4 % low), SIM_MC_L: plant L0 (default 80e-6).
+//   -ton: plant LS on-time +100 ns (t_on_ofs), k 0: the estimate vs the plant's offset, corrected vs uncorrected L. Per pass: L vs the plant's L at the fitted
 //   rows' mean Ipk within 3 %, the slope vs -k (printed), Vout below 80 V, Iin below 8 A, no protection trip.
 // mc-boost-open: the output unloaded (string disconnected): the trip stops it at 80 V.
 // All start from the night state: C_in and the string at 6.85 V, the battery behind its open backflow switch (in_bf), whose
@@ -2304,7 +2334,7 @@ static int runMcBoost(const std::string &name) {
         printf("== %s %s: %s\n", name.c_str(), c ? "ok" : "FAIL", w);
         f += !c;
     };
-    const float k = getenv("SIM_MC_K") ? (float) atof(getenv("SIM_MC_K")) : 0.01f;
+    const float k = getenv("SIM_MC_K") ? (float) atof(getenv("SIM_MC_K")) : 0.004f;
     g_vconv.setLBias(k);
     const bool open = name == "mc-boost-open";
     if (open) g_vconv.setOutDiode(0, 0);
@@ -2345,6 +2375,7 @@ static int runMcBoost(const std::string &name) {
         chk(std::fabs(r.L / lPlant - 1) < 0.03f, "L within 3 % of the plant");
         chk(g_mcVmax < 80.f && g_mcImax < 8.f, "Vout < 80 V, Iin < 8 A");
         chk(g_trips.size() == trips0 && stop != "TRIP", "no trip");
+        mcTonCheck(name, lPlant, chk);
     }
     chk(converter.disabled(), "off after the run");
     printf("== SUMMARY %s: %s (%d failures)\n", name.c_str(), f ? "FAILED" : "OK", f);
@@ -2390,6 +2421,7 @@ static int runMcFlat(const std::string &sc) {
     chk(g_trips.size() == trips0, "no protection trip during the sweep");
     chk(fabsf(r.L / g_vconv.getL() - 1) < 0.03f, "L within 3 % of the plant");
     chk(r.n >= 3 && std::isfinite(r.L), "the sweep found its DCM points");
+    mcTonCheck(sc, g_vconv.getL(), chk);
     run(40, 5.0);
     chk(!converter.disabled() && g_app.opMode.load() == OpMode::Mppt, "MPPT running again");
     printf("== SUMMARY %s: %s (%d failures)\n", sc.c_str(), f ? "FAILED" : "OK", f);
@@ -4013,6 +4045,9 @@ static int simMain(int argc, char **argv) {
     if (p0) sc.resize(sc.size() - 3);
     if (sc == "rcal-flat") setenv("SIM_RING", "flat", 0), setenv("SIM_ADC_HZ", "1470", 0);
     if (sc == "mc-flat-ramp") setenv("SIM_MC_RAMP", "1", 1);
+    // -ton: a plant on-time offset (buck HS -100 ns, boost LS +100 ns) on a coil without DC bias
+    if (sc == "mc-flat-ton") setenv("SIM_MC_TON", "-100e-9", 0);
+    if (sc == "mc-boost-dark-ton") setenv("SIM_MC_TON", "100e-9", 0), setenv("SIM_MC_K", "0", 0);
     const bool dcd = sc.rfind("dcd-", 0) == 0, dcdFry = dcd && sc.size() > 4 && !sc.compare(sc.size() - 4, 4, "-fry");
     if (dcdFry) setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
     const bool flatTake = sc == "bf-daily-flat" || sc.rfind("mc-flat", 0) == 0 || sc.rfind("bf-flat-ccm", 0) == 0 ||
@@ -4151,6 +4186,7 @@ static int simMain(int argc, char **argv) {
               {"plant_c_out", "1.2e-3"}, {"out_d_i0", "2.3e-8"}, {"out_d_vt", "4.45"}, {"noise_iin", "0.02"}, {"noise_vin", "0.02"},
               {"noise_vout", "0.05"}, {"in_bf", "1"}, {"bflow_stuck", sc == "mc-boost-bfopen" ? "1" : "0"}};
     g_batAuto = sc.rfind("bat-auto", 0) == 0;
+    if (const char *e = getenv("SIM_MC_TON")) ov.push_back({"t_on_ofs", e});
     boot(ov, p0);
     if (mcBoost && getenv("SIM_MC_L")) g_vconv.setPassives(g_vconv.getCin(), g_vconv.getCout(), (float) atof(getenv("SIM_MC_L")));
     if (rcal) g_vconv.setDiodeVf(0.7f);

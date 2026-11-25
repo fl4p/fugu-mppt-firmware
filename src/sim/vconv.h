@@ -253,6 +253,8 @@ public:
     void setSwitching(float tDead, float tHsExt, float rHs, float rLs, float tSw) {
         tDead_ = tDead, tHsExt_ = tHsExt, rHs_ = rHs, rLs_ = rLs, tSw_ = tSw, cycRingC_ = -1.0f;
     }
+    // control-switch on-time offset (s, signed: buck HS, boost LS), added to every commanded on-time
+    void setOnTimeOfs(float s) { tOn_ = s; }
     [[nodiscard]] float getRingC() const { return ringC_; }
     [[nodiscard]] float getRingF() const { return ringCe_ > 0.0f ? 1.0f / (6.2831853f * std::sqrt(l_ * ringCe_)) : 0.0f; }
     [[nodiscard]] float getRingQ() const { return ringQ_; }
@@ -376,7 +378,7 @@ private:
     // switch-node ring (setRing): C, Q; cached decay rate, damped angular frequency and reciprocals
     float ringC_ = 0.0f, ringQ_ = 20.0f, cycRingC_ = -1.0f, ringV_ = 0.0f, ringExp_ = 0.0f, ringCe_ = 0.0f, cycRingV_ = 0.0f, ringCt_ = 1.0f;
     float ringA_ = 0.0f, ringWd_ = 0.0f, ringInvWd_ = 0.0f, ringInvC_ = 0.0f;
-    float tDead_ = 0.0f, tHsExt_ = 0.0f, rHs_ = 0.0f, rLs_ = 0.0f, tSw_ = 0.0f;
+    float tDead_ = 0.0f, tHsExt_ = 0.0f, rHs_ = 0.0f, rLs_ = 0.0f, tSw_ = 0.0f, tOn_ = 0.0f;
     // cached: 1/Vin, edge C, its impedance and cos/sin of the dead-time swing angle, tSw^2/(24 edge C)
     float invVin_ = 0.0f, cn_ = 0.0f, edgeZ_ = 0.0f, edgeInvZ_ = 0.0f, edgeCos_ = 1.0f, edgeSin_ = 0.0f, swK_ = 0.0f;
 

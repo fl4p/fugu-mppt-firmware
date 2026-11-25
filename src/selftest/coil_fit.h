@@ -17,6 +17,9 @@
 // L(Ipk): the slope s, and bins of equal point count, each spanning >= ~0.8 ring periods, of the
 // ring-corrected 1/L_i. Errors: noise (residuals, Iout zero read) and systematic (node charge, on-time offset,
 // ring-model mismatch, Iout gain). An Iout or on-time offset also tilts L(Ipk): the slope is not the coil's alone.
+// On-time offset dl (effective on-time = commanded + dl): every point uses D + dl*fsw. Its estimate drops the slope
+// (L constant over Ipk) and fits 1/L_i = c0 (1 + 2 dl fsw/D_i) with the ring terms; dl and the slope are nearly
+// collinear over one sweep, so dl carries the slope tolerance kSlopeTol as a systematic error.
 namespace coilfit {
 
 constexpr int kMaxPts = 64;
@@ -25,6 +28,9 @@ constexpr float kFLo = 80e3f, kFHi = 1.2e6f; // ring frequency search range, Hz
 constexpr int kMaxBins = 5, kMinBinPts = 6;
 constexpr float kOnTimeMin = 50e-9f; // on-time offset bound (s) when the dead time is shorter
 constexpr float kGainTol = 0.01f;    // assumed Iout gain tolerance (shunt), relative
+constexpr float kSlopeTol = 0.005f;  // coil L(Ipk) slope tolerance of the on-time estimate, 1/A
+constexpr float kDlMax = 400e-9f;    // plausible on-time offset (s): beyond it the DCM model does not fit
+constexpr float kDlTol = 80e-9f;     // on-time offset error (s, noise and systematic) up to which it is applied
 
 // A boost (vin the LV input, vout the HV output, its input current the coil current) is the buck with input vout and
 // output vout - vin at the same control duty: mirroring the switch node (v -> vout - v) keeps the coil's voltage and
@@ -60,6 +66,8 @@ struct Result {
     // L(Ipk), needs kMinFitPts points and >= 2 bins
     float k = NAN, kse = NAN; // apparent dL/dIpk / L(Ipk -> 0) and its noise error, 1/A
     float ksys = NAN;    // slope the Iout and on-time offset bounds can produce, 1/A
+    float dl = NAN, dlse = NAN, dlsys = NAN; // on-time offset estimate at this fit's points, its noise and systematic (s)
+    float dspan = 0;     // duty span of the points, max/min
     int nb = 0;          // bins, 0 = none
     // Ipk range (A), L (H), noise and offset-bound errors (relative)
     float lo[kMaxBins], hi[kMaxBins], Lb[kMaxBins], seb[kMaxBins], sysb[kMaxBins];
@@ -86,9 +94,11 @@ inline float ring(const float *c, float w, float x, int nh) {
 }
 
 // least squares y ~ A c, A columns: 1, cos/sin of h*f*t (h <= nh), x; returns the residual sum of squares.
-// v: adds the ring envelope x*cos, x*sin (if nh) and returns the diagonal of (A^T A)^-1 for c0 and x
+// v: adds the ring envelope xe*cos, xe*sin (if nh; xe defaults to x) and returns the diagonal of (A^T A)^-1 for c0
+// and x
 inline float solve(const float *y, const float *t, const float *x, int n, float f, int nh, float c[8],
-                   float *v = nullptr) {
+                   float *v = nullptr, const float *xe = nullptr) {
+    if (!xe) xe = x;
     const int sx = 1 + 2 * nh, p = sx + (nh && v ? 3 : 1), q = p + (v ? 2 : 0);
     float N[8][11] = {};
     for (int i = 0; i < n; ++i) {
@@ -99,7 +109,7 @@ inline float solve(const float *y, const float *t, const float *x, int n, float 
         a[1] = cw, a[2] = sw;
         if (nh > 1) a[3] = cw * cw - sw * sw, a[4] = 2 * sw * cw;
         a[sx] = x[i];
-        if (nh && v) a[sx + 1] = x[i] * cw, a[sx + 2] = x[i] * sw;
+        if (nh && v) a[sx + 1] = xe[i] * cw, a[sx + 2] = xe[i] * sw;
         for (int r = 0; r < p; ++r) {
             for (int k = 0; k < p; ++k) N[r][k] += a[r] * a[k];
             N[r][p] += a[r] * y[i];
@@ -122,7 +132,7 @@ inline float solve(const float *y, const float *t, const float *x, int n, float 
     else c[sx + 1] = c[sx + 2] = 0;
     float rss = 0;
     for (int i = 0; i < n; ++i) {
-        const float e = y[i] - c[0] - ring(c, 6.2831853f * f * t[i], x[i], nh) - c[sx] * x[i];
+        const float e = y[i] - c[0] - ring(c, 6.2831853f * f * t[i], xe[i], nh) - c[sx] * x[i];
         rss += e * e;
     }
     return rss;
@@ -140,25 +150,30 @@ inline float median(float *a, int n) { // sorts a
 }
 
 // d: HS duty fraction, vin/vout [V], iout [A] of the accepted DCM points (n <= kMaxPts); fsw [Hz]; zsig: Iout
-// zero uncertainty (A, zeroCorrect()); ton: bound of the HS on-time offset (s), e.g. the dead time
+// zero uncertainty (A, zeroCorrect()); ton: bound of the HS on-time offset (s), e.g. the dead time; dl: on-time
+// offset applied to every point (s); fr >= 0: ring frequency (Hz, 0 = none) instead of the scan
 inline Result fit(const float *d, const float *vin, const float *vout, const float *iout, int n, float fsw,
-                  float zsig = 0, float ton = kOnTimeMin) {
+                  float zsig = 0, float ton = kOnTimeMin, float dl = 0, float fr = -1) {
     Result r;
     if (n > kMaxPts) n = kMaxPts;
-    float y[kMaxPts], t[kMaxPts], s[kMaxPts], x[kMaxPts], w[kMaxPts];
-    auto ok = [&](int i) { return (vin[i] - vout[i]) * vin[i] * d[i] * d[i] > 0 && iout[i] > 0 && vout[i] > 0; };
+    float y[kMaxPts], t[kMaxPts], s[kMaxPts], x[kMaxPts], w[kMaxPts], u[kMaxPts];
+    auto de = [&](int i) { return d[i] + dl * fsw; };
+    auto ok = [&](int i) { return (vin[i] - vout[i]) * vin[i] > 0 && de(i) > 0 && iout[i] > 0 && vout[i] > 0; };
     int m = 0;
-    float vm = 0;
+    float vm = 0, dlo = 1, dhi = 0;
     for (int i = 0; i < n; ++i) {
         if (!ok(i)) continue;
-        y[m] = 2 * vout[i] * fsw * iout[i] / ((vin[i] - vout[i]) * vin[i] * d[i] * d[i]);
-        t[m] = (1 - d[i] * vin[i] / vout[i]) / fsw;
-        x[m] = (vin[i] - vout[i]) * d[i] / fsw; // Ipk * L
+        const float D = de(i);
+        y[m] = 2 * vout[i] * fsw * iout[i] / ((vin[i] - vout[i]) * vin[i] * D * D);
+        t[m] = (1 - D * vin[i] / vout[i]) / fsw;
+        x[m] = (vin[i] - vout[i]) * D / fsw; // Ipk * L
         s[m] = y[m];
         vm += std::max(vout[i], vin[i] * vin[i] / (2 * vout[i]) - vout[i]);
+        dlo = std::min(dlo, D), dhi = std::max(dhi, D);
         ++m;
     }
     r.n = m;
+    r.dspan = dhi / dlo;
     if (m < 3) return r;
     const float ymed = detail::median(s, m);
     r.Lmed = r.L = 1 / ymed;
@@ -181,8 +196,9 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     const float dt = detail::median(s, m - 1);
     const int nh = m >= 24 ? 2 : 1;
     const float fLo = std::max(kFLo, 1.0f / span), fHi = std::min(kFHi, 0.45f / dt);
-    float best = INFINITY, fBest = 0;
-    if (span > 0 && dt > 0 && fHi > fLo) {
+    float best = INFINITY, fBest = fr;
+    if (fr >= 0) best = fr > 0 ? 0 : INFINITY;
+    else if (span > 0 && dt > 0 && fHi > fLo) {
         float df = 0.1f / span;
         for (float f = fLo; f < fHi; f += df) {
             const float e = detail::solve(y, t, x, m, f, nh, c);
@@ -201,7 +217,7 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     float rss = INFINITY;
     if (best < 0.5f * rss0) {
         rss = detail::solve(y, t, x, m, fBest, nh, c, v);
-        if (c[1] * c[1] + c[2] * c[2] > 1e-4f * c[0] * c[0]) { // >= 1 % ripple: ring
+        if (fr > 0 || c[1] * c[1] + c[2] * c[2] > 1e-4f * c[0] * c[0]) { // >= 1 % ripple: ring
             r.L = 1 / (c[0] * ymed);
             r.f = fBest;
             r.amp = std::sqrt(c[1] * c[1] + c[2] * c[2]) / c[0];
@@ -219,10 +235,10 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     rss = detail::solve(y, t, x, m, r.f, r.nh, c, v);
     if (!(rss < INFINITY) || !(c[0] > 0)) return r;
     const float sig = std::sqrt(rss / (float) (m - p));
-    // Offsets as responses of the fit: s = dy/dIout, w = dy/dton. Bounds: the zero read zsig (noise), the net node
-    // charge per cycle (ring -C*Vout, HS turn-off +C*Vin^2/(2*Vout); the larger term) and ton (systematic).
+    // Offsets as responses of the fit: s = dy/dIout, w = dy/dton = 1e6 u y. Bounds: the zero read zsig (noise), the net
+    // node charge per cycle (ring -C*Vout, HS turn-off +C*Vin^2/(2*Vout); the larger term) and ton (systematic).
     for (int i = 0, j = 0; i < n; ++i)
-        if (ok(i)) s[j] = y[j] / iout[i], w[j] = 2 * fsw * y[j] / d[i], ++j;
+        if (ok(i)) s[j] = y[j] / iout[i], u[j] = 2e-6f * fsw / de(i), w[j] = 1e6f * u[j] * y[j], ++j;
     float cz[8], cd[8], vz[2], q = 0, e0 = 0;
     if (!(detail::solve(s, t, x, m, r.f, r.nh, cz, vz) < INFINITY) ||
         !(detail::solve(w, t, x, m, r.f, r.nh, cd, vz) < INFINITY))
@@ -235,22 +251,37 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     const float a = std::min(0.9f, std::max(0.f, q / rss)), infl = std::sqrt((1 + a) / (1 - a));
     const float zn = r.f > 0 ? vm * fsw / (39.478418f * r.f * r.f * r.L) : 0;
     const float sn = sig * std::sqrt(v[0]) / c[0];
+    const float rho = r.L * ymed; // Ipk scale, x = rho * Ipk
+    { // on-time offset: 1/L_i = c0 + c0 dl 2 fsw/D_i (u, dl in us) + ring, no slope; responses to the Iout zero and to
+        // the slope (w = y Ipk)
+        float cu[8], cs[8], ck[8], vu[2];
+        for (int i = 0; i < m; ++i) w[i] = y[i] * (x[i] + xm) / rho;
+        const float e = detail::solve(y, t, u, m, r.f, r.nh, cu, vu, x);
+        if (e < INFINITY && cu[0] > 0 && detail::solve(s, t, u, m, r.f, r.nh, cs, vz, x) < INFINITY &&
+            detail::solve(w, t, u, m, r.f, r.nh, ck, vz, x) < INFINITY) {
+            const float g = 1e-6f / cu[0];
+            r.dl = dl + cu[sx] * g;
+            r.dlse = std::hypot(std::sqrt(e / (float) (m - p) * vu[1]) * infl, cs[sx] * zsig) * g;
+            const float bz = cs[sx] * zn, bk = ck[sx] * kSlopeTol; // bounds, uniform
+            r.dlsys = std::sqrt((bz * bz + bk * bk) / 3) * std::fabs(g);
+        }
+    }
     if (r.nh) {
         r.se = std::hypot(sn, cz[0] / c[0] * zsig);
         const float bz = cz[0] / c[0] * zn, bd = cd[0] / c[0] * ton; // bounds, independent and uniform
         r.sys = std::sqrt((bz * bz + bd * bd + kGainTol * kGainTol) / 3 + sn * sn * (infl * infl - 1));
     }
     // L(Ipk)
-    const float rho = r.L * ymed, g = c[0] + c[sx] * xm; // rho: Ipk scale, x = rho * Ipk
+    const float g = c[0] + c[sx] * xm;
     r.k = -c[sx] * rho / g;
     r.kse = std::hypot(sig * std::sqrt(v[1]) * infl, cz[sx] * zsig) * rho / g;
     r.ksys = (std::fabs(cz[sx]) * zn + std::fabs(cd[sx]) * ton) * rho / g;
     for (int i = 0; i < m; ++i) {
-        const float u = y[i] - detail::ring(c, 6.2831853f * r.f * t[i], x[i], r.nh), ip = (x[i] + xm) / rho;
-        const float z = s[i], zd = w[i];
+        const float yr = y[i] - detail::ring(c, 6.2831853f * r.f * t[i], x[i], r.nh), ip = (x[i] + xm) / rho;
+        const float z = s[i], zd = 1e6f * u[i] * y[i];
         int j = i - 1; // insertion sort by Ipk
-        while (j >= 0 && x[j] > ip) y[j + 1] = y[j], x[j + 1] = x[j], s[j + 1] = s[j], w[j + 1] = w[j], --j;
-        y[j + 1] = u, x[j + 1] = ip, s[j + 1] = z, w[j + 1] = zd;
+        while (j >= 0 && x[j] > ip) y[j + 1] = y[j], x[j + 1] = x[j], s[j + 1] = s[j], u[j + 1] = u[j], --j;
+        y[j + 1] = yr, x[j + 1] = ip, s[j + 1] = z, u[j + 1] = zd;
     }
     int nb = std::min(kMaxBins, m / kMinBinPts);
     if (r.f > 0) nb = std::min(nb, (int) (r.periods * 1.25f));
@@ -260,15 +291,42 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
     }
     for (int b = 0; b < nb; ++b) {
         const int i0 = b * m / nb, i1 = (b + 1) * m / nb;
-        float u = 0, z = 0, zd = 0;
-        for (int i = i0; i < i1; ++i) u += y[i], z += s[i], zd += w[i];
-        u /= (float) (i1 - i0), z /= (float) (i1 - i0), zd /= (float) (i1 - i0);
+        float yr = 0, z = 0, zd = 0;
+        for (int i = i0; i < i1; ++i) yr += y[i], z += s[i], zd += u[i];
+        yr /= (float) (i1 - i0), z /= (float) (i1 - i0), zd /= (float) (i1 - i0);
         r.lo[b] = x[i0], r.hi[b] = x[i1 - 1];
-        r.Lb[b] = 1 / (u * ymed);
-        r.seb[b] = std::hypot(sig / std::sqrt((float) (i1 - i0)), z * zsig) / u;
-        r.sysb[b] = (z * zn + zd * ton) / u;
+        r.Lb[b] = 1 / (yr * ymed);
+        r.seb[b] = std::hypot(sig / std::sqrt((float) (i1 - i0)), z * zsig) / yr;
+        r.sysb[b] = (z * zn + zd * ton) / yr;
     }
     r.nb = nb;
+    return r;
+}
+
+// on-time offset of r: 0 applicable; 1 not estimated (too few points), 2 duty span under 2x, 3 error (noise and
+// systematic) over kDlTol, 4 out of range (beyond kDlMax by 2 sigma)
+inline int dlStatus(const Result &r) {
+    const float u = std::hypot(r.dlse, r.dlsys);
+    if (!(u == u) || !(r.dl == r.dl)) return 1;
+    if (std::fabs(r.dl) > kDlMax + 2 * u) return 4;
+    if (r.dspan < 2) return 2;
+    return u > kDlTol ? 3 : 0;
+}
+
+// fit() with the on-time offset applied, iterated on its own estimate from r0 (the fit at dl 0) at r0's ring frequency;
+// st: dlStatus(). The on-time bound of the stated errors becomes the estimate's uncertainty.
+inline Result fitOnTime(const float *d, const float *vin, const float *vout, const float *iout, int n, float fsw,
+                        float zsig, const Result &r0, int &st) {
+    // under ~1.6 periods a ring is not separable from a smooth trend (as for L(Ipk)): the offset fit drops it
+    const float fr = r0.periods >= 1.6f ? r0.f : 0;
+    Result r = r0;
+    if (r0.nh && !fr) r = fit(d, vin, vout, iout, n, fsw, zsig, kOnTimeMin, 0, 0);
+    for (int i = 0; i < 4 && dlStatus(r) != 1 && std::fabs(r.dl) < 3 * kDlMax; ++i) {
+        const float dl = r.dl;
+        r = fit(d, vin, vout, iout, n, fsw, zsig, 1.7320508f * std::hypot(r.dlse, r.dlsys), dl, fr);
+        if (std::fabs(r.dl - dl) < 1e-9f) break;
+    }
+    st = dlStatus(r);
     return r;
 }
 
