@@ -1,0 +1,4 @@
+# Light heap poisoning: an overrun aborts in free() with the block. Costs ~13 KB of free heap
+# (bench, 2026-11-25), too much for fry/flat; layer after sdkconfig.d/fleet on a bench image.
+# CONFIG_HEAP_POISONING_DISABLED is not set
+CONFIG_HEAP_POISONING_LIGHT=y

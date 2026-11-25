@@ -270,6 +270,16 @@ config FUGU_RT_ALLOC_COUNT
         Counts mallocs and frees made by the loopRt task (heap hooks; one call and a task compare per
         heap operation). `rt-stats` and `bootinfo` print the counts; steady state must be zero.
 
+config FUGU_PBUF_PROBE
+    bool "Snapshot the heap around a pbuf freed with ref 0"
+    depends on FUGU_WITH_NETW && ESP_COREDUMP_ENABLE
+    default n
+    help
+        Wraps lwIP pbuf_free (one compare on the hot path). A free of a pbuf whose reference count
+        is already 0 (lwIP aborts on it) first copies 384 bytes around the pbuf, the caller, the task
+        and a heap integrity check into g_pbufProbe, which the core dump includes. `crash pbuf`
+        triggers it.
+
 config FUGU_RT_ALLOC_TRACE
     bool "Record call stacks of RT-task heap allocations"
     depends on FUGU_RT_ALLOC_COUNT

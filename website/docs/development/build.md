@@ -72,6 +72,7 @@ Other opt-in fragments in `sdkconfig.d/`, each built the same way in its own dir
 | `pwr` | runtime power knobs (`pwr` console command) |
 | `pm`, `pm_ls` | power-management experiments (`pm_ls` layers after `pm`) |
 | `heaptrack` | per-block heap owner tags for `heap tasks`, bench only |
+| `heap_poison` | light heap poisoning: an overrun aborts in `free()`. About 13 KB less free heap, bench only (layer after `fleet`) |
 | `rt_alloc_trace` | RT-task heap allocation call-site trace |
 
 If the generated `sdkconfig` looks wrong, delete it and rebuild.

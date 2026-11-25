@@ -69,6 +69,8 @@ extern volatile uint8_t g_rtLogTest;
 #include "etc/network_shim.h"
 #include "etc/rt_task.h"
 #include "etc/idle_profile.h"
+#include <lwip/netif.h>
+#include <lwip/pbuf.h>
 #endif
 #ifdef WITH_NETTOOLS
 #include <esp_http_client.h>
@@ -1590,12 +1592,38 @@ static void crashRecurse(volatile int x) {
 }
 static void cmdCrash(cmd *c) {
     auto t = Command(c).getArg(0).getValue();
-    if (t != "null" && t != "abort" && t != "stack")
-        CMD_FAIL_RETURN("crash: expected null|abort|stack (deliberate panic, writes a coredump)");
+    if (t != "null" && t != "abort" && t != "stack" && t != "overrun"
+#ifdef WITH_NETW
+        && t != "lwip" && t != "pbuf"
+#endif
+    )
+        CMD_FAIL_RETURN("crash: expected null|abort|stack|overrun|lwip|pbuf (deliberate panic, writes a coredump)");
     UART_LOG("crash: inducing '%s' panic NOW", t.c_str());
     delay(80); // let the line flush over UART/telnet/MQTT/BLE before we die
     if (t == "abort") abort();
     if (t == "stack") crashRecurse(1);
+    if (t == "overrun") { // heap poisoning catches it in free(); without poisoning this corrupts the heap
+        auto *b = (volatile uint8_t *) malloc(16);
+        for (int i = 0; i < 24; ++i) b[i] = 0;
+        free((void *) b);
+        UART_LOG("crash overrun: free() passed (heap poisoning off?), rebooting");
+        delay(80);
+        esp_restart();
+    }
+#ifdef WITH_NETW
+    if (t == "lwip") { // core API off the tcpip thread: aborts with CONFIG_LWIP_CHECK_THREAD_SAFETY
+        netif_find("zz0");
+        CMD_FAIL_RETURN("crash lwip: no abort (CONFIG_LWIP_CHECK_THREAD_SAFETY off)");
+    }
+    if (t == "pbuf") { // ref-0 free: lwIP aborts; CONFIG_FUGU_PBUF_PROBE snapshots it first
+        auto *p = pbuf_alloc(PBUF_RAW, 64, PBUF_RAM);
+        if (!p) CMD_FAIL_RETURN("crash pbuf: no heap");
+        memset(p->payload, 0xA5, 64);
+        p->ref = 0;
+        pbuf_free(p);
+        CMD_FAIL_RETURN("crash pbuf: no abort (lwIP asserts off?)");
+    }
+#endif
     volatile uint32_t *p = (volatile uint32_t *) (uintptr_t) (esp_timer_get_time() & 0); // null, opaque to -Wnull
     *p = 0xDEAD;
 }

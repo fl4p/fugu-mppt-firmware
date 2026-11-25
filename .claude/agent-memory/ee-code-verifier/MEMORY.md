@@ -34,3 +34,4 @@
 - [CV hold is current-mode (11-23)](project_cv_hold_current_mode.md) — Iout limit from BMS frames, pin at Vbat_max; outer gain K*R_dyn/r ~0.1 real; load-off spike; floor trickle
 - [Balance stale pause](project_balance_stale_pause.md) — first-stale-tick balance ordering trap, resume skips exits, 180 s frozen-limit window
 - [CV-hold entry plant fit + gain bounds](project_cv_hold_entry_plant_fit.md) — 11-23 40 A overshoot fit (1+2 mOhm, knee); K·R_f/r<1; 48c9203c margins
+- [fry pbuf ref==0 panic 11-24](project_fry_pbuf_ref0_panic_1124.md): silent-assert abort decoded to p->ref>0 on SYN seg; stacks-only core; poisoning/wrap probe next

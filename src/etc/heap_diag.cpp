@@ -78,3 +78,46 @@ void heapDiagLf(uint32_t nowMs) {
                  (unsigned) heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT),
                  (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
 }
+
+#if CONFIG_FUGU_PBUF_PROBE
+#include <cstring>
+#include <esp_attr.h>
+#include <esp_memory_utils.h>
+#include <lwip/pbuf.h>
+
+// Filled once, right before lwIP aborts on a pbuf whose ref count is already 0; the core dump
+// includes it (gdb: p/x g_pbufProbe). mem holds [p - 128, p + 256): TLSF header at p - 8, the
+// struct pbuf at p, then its payload.
+struct PbufProbe {
+    uint32_t magic; // 'PBF0' once filled
+    uint32_t p, caller, mem0, freeB, largest;
+    int32_t heapOk; // heap_caps_check_integrity_all(); errors also go to the UART
+    char task[configMAX_TASK_NAME_LEN];
+    uint8_t mem[384];
+};
+COREDUMP_DRAM_ATTR PbufProbe g_pbufProbe;
+
+static void __attribute__((noinline, cold)) pbufProbeStash(const struct pbuf *p, void *caller) {
+    auto &s = g_pbufProbe;
+    s.p = (uint32_t) p;
+    s.caller = (uint32_t) caller;
+    const char *t = pcTaskGetName(nullptr);
+    strlcpy(s.task, t ? t : "?", sizeof(s.task));
+    const auto *m = (const uint8_t *) p - 128;
+    if (esp_ptr_in_dram(m) && esp_ptr_in_dram(m + sizeof(s.mem) - 1)) {
+        memcpy(s.mem, m, sizeof(s.mem));
+        s.mem0 = (uint32_t) m;
+    }
+    s.freeB = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+    s.largest = heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+    s.magic = 0x30464250; // set before the scan, which may itself abort on a broken heap
+    s.heapOk = heap_caps_check_integrity_all(true);
+}
+
+extern "C" u8_t __real_pbuf_free(struct pbuf *p);
+
+extern "C" u8_t __wrap_pbuf_free(struct pbuf *p) {
+    if (__builtin_expect(p && !p->ref, 0)) pbufProbeStash(p, __builtin_return_address(0));
+    return __real_pbuf_free(p);
+}
+#endif
