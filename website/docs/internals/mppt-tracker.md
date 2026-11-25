@@ -126,7 +126,8 @@ up from the bottom of the sweep measures them again, lowest Vin first (a boost h
 1. The loop steers Vin to the recorded Vin of the maximum, as the [partial peak scan](#partial-peak-scan) steers to
    a probe. Maxima below 1.05 times the input voltage floor are skipped.
 2. Once Vin is within 1 % of it (or after 1.5 s), it waits for the power filter to settle (`powerSettleMs()`, at most
-   1 s) and averages the power for 100 ms. Vin is at rest then, so the input caps neither discharge nor charge, and the
+   1 s) and for the low side to fade back in (see [schedule and cost](#schedule-and-cost)), and averages the power for 100 ms.
+   Vin is at rest then, so the input caps neither discharge nor charge, and the
    probe compares directly with the down-pass value, from which the discharge term was removed.
 3. After the last probe it steers to the best one and measures there again (the landing).
 
@@ -468,7 +469,8 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    [near-point probes](#near-point-probes), once per period).
 3. The scan holds the operating point, waits for the power filter to settle (`powerSettleMs()`, at most 1 s),
    and averages the power for 100 ms ($P_0$). It then steers $V_{in}$ to each candidate in turn (duty
-   $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. Finally it returns
+   $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. Each measurement also
+   waits until the low side has faded back in (see [schedule and cost](#schedule-and-cost)). Finally it returns
    to the start point and measures $P_0'$. A scan that is not done after 30 s ends at the start point.
 4. Each probe is compared with $\max(P_0, P_0')$, so a change of irradiance during the scan cannot make a probe
    look better. If $P_0'$ differs from $P_0$ by more than 15 %, the light changed too much and the scan keeps
@@ -500,8 +502,8 @@ sun), the near probes run alone, marked `near only`, and the tracker then contin
 due by the trigger without candidates runs nothing, so near probes run at most once per period.
 
 The probes are a measurement only: they take no part in the best probe, the 15 % light-change check, the
-60 s re-scan or the move. The 30 s scan timeout starts after them, so the rest of the scan runs as without
-them, about three probe times later.
+60 s re-scan or the move. They end at the start point if not done 30 s after the scan started; the scan's own
+30 s timeout starts after them, so the rest of the scan runs as without them, about three probe times later.
 
 ### Substring count
 
@@ -585,8 +587,13 @@ A limiter that becomes active during a scan ends it, and the duty fades back to 
 operating mode (manual, PSU, PV emulator, MPPT) drops a running scan and its reference; PSU and PV emulator mode keep
 their own regulation.
 
-Each probe takes at most 2.6 s: up to 1.5 s to reach its voltage (within 1 %), the power filter settle (at most
-1 s) and 100 ms of averaging. A scan measures the reference, up to 5 candidates and the start point again, plus the
+Without the low-side hold below, each probe takes about 2.6 s at most: up to 1.5 s to reach its voltage (within 1 %), the power filter settle (at
+most 1 s) and 100 ms of averaging. The travel to a probe above the operating point lowers the duty in steps that add
+up to a low-side drop to its minimum pulse ([cumulative decrease](diode-emulation.md#cumulative-decrease)). Until
+the low side has faded back in, part of the coil current freewheels through its body diode and the output power
+reads low (0.5 to 0.9 % in the simulator), enough to miss a better maximum close to the 3 % margin. With sync rect on (not forced PWM), the
+settle time therefore restarts while the low-side command is more than `pwmMax/64` below its limit; this adds the
+fade-in time to such a probe. A scan measures the reference, up to 5 candidates and the start point again, plus the
 two near-point probes; one that is not done 30 s after the near-point probes ends at the start point. The cost is
 the power given up at the probes plus the travel between them.
 

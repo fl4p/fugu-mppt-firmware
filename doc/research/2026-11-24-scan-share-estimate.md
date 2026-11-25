@@ -24,6 +24,9 @@ harvest, and does a change help? Candidates: A (vs0 alone when m0 = n), B (lower
   any at the operating point; that lifts it above m shares, and below it the power falls about in proportion to the
   voltage (the weak substring limits the current), so a -10 % placement reads -10 %. Upward moves with a gain below
   about 10 % were missed until the next global sweep (wrong-peak 1360-1470 s of 1800 s in l1, l2, l4, l5).
+* **Round 4 (below): the LS hold is in the firmware.** `PeakScan::update(..., hold)` restarts the settle time while
+  `SynchronousConverter::lsFading()` (sync rect on, not forced PWM); 1.015 gains +0.68 points over the 28 cells
+  (origin/main +0.48), every result line identical to the round 3 patch.
 * **Round 3 (below, current firmware):** the 1.015 gain shrank from +0.71 to +0.48 points because ac7f3ffa drops the
   LS to its minimum during the scan's travel to probes above the operating point; those probes read ~0.8 % low.
   Holding the probe measurement until the LS fade-in is done restores +0.68 (sim experiment, not in firmware).
@@ -657,3 +660,105 @@ About 19 runs per minute on pgx93 (18 slots, ~50 s per run), 1400 runs in about 
 `src/peak_scan.h` hunk where `probeHigh` is missing, the mppt-sim.sh compile line, then
 `SIM_CONF=tracker.conf:pv_substrings=6 SIM_RING=fry SIM_NOISE=fry SIM_NOISE_OFS=0 SIM_SHADE=2,0.65,r,0,0.45
 SIM_SCAN_UP=1.015 <bin> wx-shade-gen`.
+
+## Round 4: LS hold in firmware (2026-11-25)
+
+The round 3 sim patch, implemented in the firmware.
+
+### Change
+
+* `SynchronousConverter::lsFading()` (`src/buck.h`): sync rect on and the LS command more than `pwmMax/64` below
+  its limit. The same expression already decided when `pwmPerturbFractional()` keeps the fade going on a zero
+  step; that call now uses the getter, so no state is duplicated.
+* `PeakScan::update(..., bool hold = false)` (`src/peak_scan.h`): while `hold` is set, a settled measurement
+  restarts its settle time and drops its partial average. Shared by every phase: the reference P0 and P0', the
+  candidates, the near-point probes, the move's landing measurement and the sweep return pass.
+* `MpptController::update()` (`src/mppt.cpp`) passes `converter.lsFading() && !converter.forcedPwm_()` at both
+  call sites (scan and return pass). RT cost: a few loads and compares per tick, no new member, no RAM.
+* Bound: the 30 s timeout now also covers the near-point phase (counted from the scan start; the candidates'
+  30 s still start after it). Without that a fade that never ends would stall the scan in its near probes
+  forever; the Ref / Probe / Back / Go phases and the return pass already had the 30 s timeout (ended 4, back to
+  d0 / the captured duty). The near probes take about 8 s at most otherwise, so the new bound does not fire.
+* ac7f3ffa's drop (`dropAcc`) is untouched.
+
+Which probes carry the bias: those reached by lowering the duty, i.e. candidates above the operating point, the
++`scan_near_v` near probe, P0' after candidates that were all below the start point, and every return-pass probe
+(the pass walks up from the sweep's bottom, so each step lowers the duty, and each probe is compared with its
+down-pass power: `rDev` and the ranking read low by the fade). P0 (start point, before any travel) and probes
+below the start point (duty increases) are not affected. The hold covers all of them; the return-pass effect was
+not measured separately (wx-sweep-return harvest 97.6 % on both binaries).
+
+### Test
+
+`test_scan_probe_waits_for_ls_fade` (`test/test_tracker.cpp`, registered in `test/main.cpp`): the ScanRig gets an
+LS model (duty decreases adding up to T/50 within about 40 ms mark the LS as fading for 400 ms, during which the
+power reads `lsLoss` = 1 % low; the rig passes the fade as `hold`). Two substrings at 0.655, from the 45 V maximum:
+the full-string maximum is 3.7 % better. Without the hold the probe reads x1.026 and the scan stays (ended 1);
+with it x1.037 and it moves (ended 2, Vin > 64 V). A third run keeps the LS fading for good with near probes on: the
+scan ends at the timeout (ended 4). Host Unity shim: passes with the change; fails without the hold line (first
+part) and without the near-phase timeout (third part).
+
+`test_scan_timeout_returns_to_start` failed on main: the rig's start duty was truncated while `update()` gets the
+rounded one (773 vs 774); the test now rounds. `test_scan_probe_above_weak_peak` also fails on main and with this
+change (probe x1.029 vs the 3 % margin; round 2 read x1.031): not addressed here.
+
+### Closed loop
+
+Binaries built from a tree export: origin/main e418cdf3 (sha256 `dd94eeda9cd5...`) and the same tree with this
+change (`5b3290ba54c6...`), `offload build-sim`, every run on **pgx93** (tags lshold-main, lshold-fix), 28 cells x
+10 paired realisations, base (0.97) vs u1015. 10 of 1120 runs lost their ssh link and were re-run (same host,
+binary and key). Harvest delta vs the same binary's base, points, mean (min..max); scan time per scan from the
+`== SCAN` line:
+
+| Cell | main: base harvest | main: u1015 | fix: base harvest | fix: u1015 | s per scan at u1015, main / fix |
+|---|---|---|---|---|---|
+| a1 | 99.02 | -0.00 (-0.02..+0.01) | 99.01 | +0.00 (-0.01..+0.03) | 1.95 / 2.44 |
+| a2 | 99.51 | -0.00 (-0.02..+0.02) | 99.49 | -0.01 (-0.02..+0.02) | 1.68 / 2.16 |
+| a3 | 98.75 | +0.01 (-0.02..+0.04) | 98.73 | +0.01 (-0.01..+0.04) | 2.26 / 2.90 |
+| a4 | 99.07 | -0.00 (-0.02..+0.03) | 99.01 | +0.00 (-0.03..+0.02) | 2.36 / 3.07 |
+| a5 | 99.29 | -0.00 (-0.05..+0.04) | 99.23 | -0.00 (-0.05..+0.06) | 2.95 / 3.85 |
+| a6 | 97.94 | -0.00 (-0.02..+0.01) | 98.39 | +0.01 (+0.00..+0.02) | 2.96 / 3.70 |
+| l1 | 95.23 | +0.02 (-0.01..+0.05) | 95.23 | +0.03 (+0.01..+0.06) | 1.62 / 2.19 |
+| l2 | 93.43 | +3.27 (+0.02..+5.35) | 93.36 | +4.55 (+1.38..+5.42) | 2.38 / 3.12 |
+| l3 | 97.39 | +2.08 (+2.03..+2.11) | 97.37 | +2.09 (+2.06..+2.13) | 2.16 / 2.76 |
+| l4 | 94.02 | +2.39 (-0.02..+5.34) | 93.95 | +4.20 (+2.16..+4.89) | 2.34 / 3.18 |
+| l5 | 94.45 | +3.32 (-0.04..+5.95) | 94.30 | +4.70 (+0.00..+6.08) | 2.94 / 3.74 |
+| l6 | 99.20 | +0.01 (+0.00..+0.05) | 99.20 | +0.01 (+0.00..+0.03) | 7.68 / 9.41 |
+| l1d | 95.26 | +1.52 (+0.25..+2.40) | 95.25 | +2.17 (+1.04..+3.47) | 1.68 / 2.19 |
+| a3d | 98.77 | -0.01 (-0.05..+0.01) | 98.75 | +0.00 (-0.02..+0.03) | 2.29 / 2.95 |
+| l2k | 98.35 | +1.23 (+0.31..+1.50) | 98.64 | +0.91 (+0.33..+1.49) | 2.60 / 3.42 |
+| a3k | 99.14 | -0.01 (-0.05..+0.02) | 99.18 | +0.00 (-0.03..+0.05) | 2.27 / 2.96 |
+| h1 | 98.86 | -0.02 (-0.08..+0.04) | 98.79 | +0.00 (-0.04..+0.04) | 1.88 / 2.51 |
+| h2 | 98.10 | +0.93 (-0.02..+3.55) | 97.95 | +1.07 (-0.01..+3.56) | 1.96 / 2.51 |
+| h3 | 98.08 | +0.08 (-1.24..+1.80) | 98.30 | -0.07 (-1.09..+0.98) | 2.26 / 2.91 |
+| h4 | 98.56 | -1.08 (-4.22..+0.91) | 98.60 | -0.62 (-1.75..+0.02) | 2.28 / 2.86 |
+| wx-shade2-move | 99.12 | -0.00 (-0.01..+0.01) | 99.12 | -0.00 (-0.02..+0.02) | 2.10 / 2.73 |
+| wx-shade3-move | 99.33 | +0.01 (+0.00..+0.04) | 99.31 | +0.01 (-0.01..+0.04) | 2.16 / 2.67 |
+| wx-shade-walk | 96.98 | -0.46 (-3.54..+0.57) | 96.95 | -0.14 (-0.99..+0.49) | 3.19 / 3.95 |
+| wx-shade-cloud | 96.73 | +0.00 (+0.00..+0.00) | 96.71 | +0.00 (+0.00..+0.00) | 2.32 / 2.78 |
+| wx-sweep-shade | 99.25 | +0.03 (+0.02..+0.04) | 99.23 | +0.03 (+0.01..+0.04) | 3.94 / 5.09 |
+| wx-shade2 | 99.50 | -0.01 (-0.03..+0.01) | 99.49 | -0.01 (-0.04..+0.02) | 2.81 / 3.95 |
+| wx-shade3 | 99.44 | -0.00 (-0.03..+0.02) | 99.43 | +0.00 (-0.03..+0.02) | 2.85 / 3.70 |
+| wx-cloud | 99.05 | +0.00 (+0.00..+0.00) | 99.01 | +0.00 (+0.00..+0.00) | 2.33 / 3.13 |
+| **mean of 28 cells** | | **+0.48** | | **+0.68** | |
+| worst cell mean | | -1.08 (h4) | | -0.62 (h4) | |
+
+Every one of the 560 result lines per binary has the same `h2` as round 3 (main: `results-3.txt`, fix:
+`results-3-fix.txt` with `fix-ls-hold.patch`), so the firmware change behaves exactly like the sim patch and the
+new near-phase bound never fired. MISS-noise landings (10 runs): l2 24 -> 0, l4 11 -> 0, l5 24 -> 1, l1d 19 -> 5,
+h4 10 -> 0. Scans take about 25-30 % longer (the fade-in time per probe reached by a duty decrease).
+
+Suite: all 147 scenarios of `mppt-sim.sh --list` exit 0 on both binaries (pgx93, tags lshold-suite-main /
+lshold-suite-fix); 11 differ in their SUMMARY / TRACKER lines, by at most 0.2 points of harvest
+(wx-shade-cloud 97.1 -> 96.9 %, wx-sweep-learn 99.4 -> 99.3 %).
+
+h4 stays at -0.62 (se 0.22); not investigated here.
+
+### Open
+
+* Hardware: the real fade-in time and diode drop set the bias and the extra scan time; neither is measured.
+* Forced PWM is excluded as in the patch, although an LS that lags its complementary limit there also leaves a
+  body-diode gap; ac7f3ffa's drop does not run in forced PWM, so the fade is short there.
+* A manual LS count (`rect-cal`, bench) can keep `lsFading()` true: a scan then runs into its 30 s timeout.
+
+Files: `scan-share/results-4-main.txt`, `results-4-fix.txt` (560 lines each), `closed-loop-tables-4.md`.

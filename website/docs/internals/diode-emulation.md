@@ -410,8 +410,9 @@ A steady ramp of `r` counts per current sample settles at `r·N`. When the sum e
 `pwmMax/50`, the command drops to `pwmRectMin` and the sum starts again from zero. Ramps faster
 than `pwmMax/(50·N)` counts per sample (about 4 counts with `filt_len` 20) trigger it; the P&O
 dither and slow limiter retreats do not. On a fast-sampling board the fade from the end of a sweep
-to its MPP also triggers it, and the LS stays near its minimum until that fade ends. Forced PWM and
-a manual LS count bypass the rule.
+to its MPP also triggers it, and the LS stays near its minimum until that fade ends. So does the partial peak
+scan's travel to a probe above the operating point; the scan waits for the fade-in before it measures
+([schedule and cost](mppt-tracker.md#schedule-and-cost)). Forced PWM and a manual LS count bypass the rule.
 
 Unlike the single large step, this rule leaves the DCM state to `computeDCM`. A forced DCM state
 at a high `M` would count as an uncovered LS minimum pulse, and the minimum-pulse protection

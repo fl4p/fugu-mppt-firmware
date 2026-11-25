@@ -456,8 +456,11 @@ struct ScanRig {
     VirtualConverter pv;
     PeakScan s;
     float g[6] = {1, 1, 1, 1, 1, 1}, light = 1, d;
-    uint32_t now = 1000;
+    // LS model: duty decreases adding up to T/50 within ~40 ms drop the LS, the power then reads lsLoss low for 400 ms
+    float lsLoss = 0, dropAcc = 0;
+    uint32_t now = 1000, lsUntil = 0;
     int active = 0, ended = 0;
+    bool lsHold = false; // pass the fade to update()
 
     explicit ScanRig(float vStart, uint8_t n = 6) {
         pv.setPv(4.f, 80.f, 0.86f);
@@ -482,8 +485,15 @@ struct ScanRig {
         for (uint32_t end = now + ms; now < end;) {
             now += 2;
             f(*this);
-            const float t = s.update(now, vin(), vin(), p(), (uint16_t) std::lround(d), 29.f, 5.f, [] { return 50.f; });
-            if (!std::isnan(t)) d += std::clamp((t - d) * 0.2f, -10.f, 10.f), ++active;
+            const bool fade = now < lsUntil;
+            const float t = s.update(now, vin(), vin(), p() * (fade ? 1 - lsLoss : 1), (uint16_t) std::lround(d), 29.f,
+                                     5.f, [] { return 50.f; }, lsHold && fade);
+            if (!std::isnan(t)) {
+                const float dd = std::clamp((t - d) * 0.2f, -10.f, 10.f);
+                d += dd, ++active;
+                dropAcc = 0.95f * dropAcc + std::max(0.f, -dd);
+                if (lsLoss > 0 && dropAcc > 2047 / 50) lsUntil = now + 400, dropAcc = 0;
+            }
             if (s.ended) ended = s.ended, s.ended = 0;
         }
     }
@@ -711,6 +721,29 @@ void test_scan_probe_above_weak_peak() {
     TEST_ASSERT_TRUE(r->p() > 1.03f * p0);
 }
 
+// Travel to a probe above the operating point drops the LS; measured while the LS fades in, the 3.7 % better
+// full-string peak reads 1 % low and looks like 2.6 %. Holding the measurement until the fade ends moves. A fade
+// that never ends (near probes on) still ends the scan at the timeout.
+void test_scan_probe_waits_for_ls_fade() {
+    for (const bool hold: {false, true}) {
+        auto r = std::make_unique<ScanRig>(45.f);
+        r->pv.setPvExact(true);
+        r->lsLoss = 0.01f, r->lsHold = hold, r->s.nearDv = 0;
+        r->g[4] = r->g[5] = 0.655f, r->shade(), r->sweep();
+        const float p0 = r->p();
+        r->run(30'000);
+        TEST_ASSERT_EQUAL_INT(hold ? 2 : 1, r->ended);
+        if (hold) TEST_ASSERT_TRUE(r->vin() > 64 && r->p() > 1.03f * p0);
+        else TEST_ASSERT_FLOAT_WITHIN(0.5f, 45.f, r->vin());
+    }
+    auto r = std::make_unique<ScanRig>(45.f);
+    r->pv.setPvExact(true);
+    r->lsLoss = 0.01f, r->lsHold = true;
+    r->g[4] = r->g[5] = 0.655f, r->shade(), r->sweep();
+    r->run(60'000, [](ScanRig &x) { x.lsUntil = x.now + 400; });
+    TEST_ASSERT_EQUAL_INT(4, r->ended);
+}
+
 // Vmpp / Voc from the sweep MPP: an unshaded string's ratio is taken, a shaded maximum's (outside 0.74..0.86) is not.
 void test_scan_learns_vmpp_ratio() {
     PeakScan s{};
@@ -727,7 +760,7 @@ void test_scan_learns_vmpp_ratio() {
 void test_scan_timeout_returns_to_start() {
     auto r = std::make_unique<ScanRig>(68.8f);
     r->g[5] = 0.7f, r->shade(), r->sweep();
-    const uint16_t dStart = (uint16_t) r->d;
+    const uint16_t dStart = (uint16_t) std::lround(r->d);
     // the first timeout: the rig does not return to d0, so a later scan starts off the near probes' settled duty
     int d0 = -1;
     float pRef = 1;

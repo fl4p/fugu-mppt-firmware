@@ -190,10 +190,10 @@ struct PeakScan {
     }
 
     // NAN while idle; else the duty count to steer to. vinFast: med3, vin/pw: the tracker's (ewm) signals,
-    // settleMs(): power filter settling time [ms]
+    // settleMs(): power filter settling time [ms], hold: pw reads low (LS fading in), restart the settle time
     template<class SettleMs>
     __attribute__((always_inline)) float update(uint32_t now, float vinFast, float vin, float pw, uint16_t d,
-                                                float vMin, float pMin, SettleMs settleMs) {
+                                                float vMin, float pMin, SettleMs settleMs, bool hold = false) {
         if (phase == Idle) {
             if (n < 2 || !(voc > 0)) return NAN;
             if (vin > 0 && pw / vin > iEnv) iEnv = pw / vin;
@@ -232,12 +232,13 @@ struct PeakScan {
         }
         const float vt = phase == Near ? rv[k] : phase == Probe || phase == Go ? (ret ? rv[k] : vc[k]) : v0;
         if (!settled && (std::fabs(vinFast - vt) < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, tPhase = now;
+        if (settled && hold) tPhase = now, acc.clear();
         if (settled) {
             const float ts = std::fmin(settleMs(), 1000.f), dt = (float) (now - tPhase); // fmin: NAN -> 1 s
             if (dt > ts) acc.add(pw);
             if (dt > ts + kMeasMs) step(now, vin);
         }
-        if (phase != Idle && phase != Near && now - t0 > 30000) phase = Idle, pRef = -1, ended = 4, ret = false;
+        if (phase != Idle && now - t0 > 30000) phase = Idle, pRef = -1, ended = 4, ret = false;
         return phase == Idle ? NAN : (float) d * std::sqrt(vinFast / vt);
     }
 

@@ -627,6 +627,8 @@ public:
     }
 
     [[nodiscard]] bool syncRectEnabled_() const { return syncRectEnabled; }
+    // sync rect on, the LS more than T/64 below its target: fading in (after a drop to pwmRectMin, or at start)
+    [[nodiscard]] bool lsFading() const { return syncRectEnabled && pwmRect + (driverPwmMax >> 6) < pwmRectMax; }
 
     [[nodiscard]] const uint16_t &pwmMaxDriver() const { return driverPwmMax; };
     [[nodiscard]] float getCoilL() const { return coilL0 * InductivityDcBias; } // the model's L (H)
@@ -1471,7 +1473,7 @@ public:
         if (directionInt != 0)
             pwmPerturb(directionInt);
         else if (pwmRect < pwmRectMax &&
-                 (forcedPwm_() || (syncRectEnabled && pwmRect + (driverPwmMax >> 6) < pwmRectMax)))
+                 (forcedPwm_() || lsFading()))
             // The LS fade lives in pwmPerturb(), and this is the one caller that can stop reaching
             // it: a controller sitting at equilibrium truncates to a zero integer step forever.
             // Manual PWM has main.cpp's per-tick pwmPerturb(0) for this; the automatic modes would

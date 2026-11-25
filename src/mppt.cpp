@@ -303,7 +303,7 @@ void MpptController::update() {
         float t = NAN;
         if (controlMode == MpptControlMode::None || controlMode == MpptControlMode::MPPT || controlMode == CV)
             t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d, 0, 0,
-                            [this] { return powerSettleMs(); });
+                            [this] { return powerSettleMs(); }, converter.lsFading() && !converter.forcedPwm_());
         if (controlMode != MpptControlMode::None && controlMode != MpptControlMode::MPPT && !(t < (float) d))
             t = NAN, scan.abort(), scan.ended = 0;
         if (!std::isnan(t)) {
@@ -361,7 +361,8 @@ void MpptController::update() {
         !batteryFull && !converter.boost()) {
         const uint16_t d = converter.getCtrlOnPwmCnt();
         const float t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d,
-                                    1.05f * vinFloor(true), 25 * sweepMinPower(), [this] { return powerSettleMs(); });
+                                    1.05f * vinFloor(true), 25 * sweepMinPower(), [this] { return powerSettleMs(); },
+                                    converter.lsFading() && !converter.forcedPwm_());
         if (!std::isnan(t)) {
             // the tracker pauses; back at the start point it carries on, on another peak it restarts
             controlMode = MpptControlMode::Sweep, keepTracker = true;
