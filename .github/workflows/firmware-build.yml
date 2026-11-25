@@ -1,0 +1,58 @@
+name: Firmware build
+
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'main/**', 'components/**', 'sdkconfig*', 'sdkconfig.d/**', 'partitions*.csv', 'CMakeLists.txt',
+            'config/**', '.github/workflows/firmware-build.yml']
+  pull_request:
+    paths: ['src/**', 'main/**', 'components/**', 'sdkconfig*', 'sdkconfig.d/**', 'partitions*.csv', 'CMakeLists.txt',
+            'config/**', '.github/workflows/firmware-build.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: firmware-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.0.3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: esp32s3
+            target: esp32s3
+            defaults: sdkconfig.defaults
+          - name: fleet
+            target: esp32s3
+            defaults: sdkconfig.defaults;sdkconfig.d/fleet
+          - name: esp32
+            target: esp32
+            defaults: sdkconfig.defaults
+    name: build (${{ matrix.name }})
+    env:
+      IDF_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the version string counts commits
+      - name: Submodules
+        run: |
+          git config --global --add safe.directory '*'
+          git submodule update --init --recursive components
+      - uses: actions/cache@v4
+        with:
+          path: managed_components
+          key: managed-${{ hashFiles('main/idf_component.yml') }}
+      - name: Build
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py -B build/ci -DSDKCONFIG=build/ci/sdkconfig "-DSDKCONFIG_DEFAULTS=${{ matrix.defaults }}" build
+      - name: Size
+        shell: bash
+        run: |
+          . "$IDF_PATH/export.sh" > /dev/null
+          idf.py -B build/ci -DSDKCONFIG=build/ci/sdkconfig size | tail -15
