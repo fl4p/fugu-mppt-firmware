@@ -18,6 +18,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: git submodule update --init etc/fugu etc/idf-devtools
+      - name: esp-ota-ble host modules at the pinned version
+        run: |
+          v=$(awk '/^  esp-ota-ble:/{f=1} f&&/version:/{print $2; exit}' main/idf_component.yml)
+          git clone -q https://github.com/fl4p/esp-ota-ble.git managed_components/esp-ota-ble
+          git -C managed_components/esp-ota-ble checkout -q "$v"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
