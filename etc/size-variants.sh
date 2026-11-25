@@ -52,8 +52,8 @@ print("%-16s %9d %+8d %8s %#9x %8d %8d" % (sys.argv[1], n, n - base, free, e["hd
 printf '%-16s %9s %8s %8s %9s %8s %8s\n' variant bytes delta free irom drom+ drom-
 rc=0
 if build base ""; then
-  base=$(stat -f %z build/sz/base/fugu-firmware.bin 2>/dev/null || stat -c %s build/sz/base/fugu-firmware.bin)
-  row base "$base"
+  base=$(wc -c < build/sz/base/fugu-firmware.bin | tr -d " ")
+  row base "$base" || rc=1
 else
   echo "base: build failed, see build/sz/base/build.log"; exit 1
 fi

@@ -216,7 +216,7 @@ Measured one at a time on the production config (`sdkconfig.d/fleet`, 1,802,032 
 A global `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y` without the libmain override saves 41.6 KB but compiles out every
 `ESP_LOGI` of the firmware, so `svc log <name> info` has nothing left to show.
 
-On that config DROM sat 7,300 B above its lower page edge. A cut that removes more rodata than that moves IROM down a
+On that config DROM could shrink by only 7,296 B before IROM moves. A cut that removes more rodata moves IROM down a
 page, and the next OTA rewrites the whole [image layout](#image-layout) once. Both log-level builds crossed it.
 
 ## Measuring variants
@@ -247,7 +247,7 @@ image.
 
 ```
 build/fleet/fugu-firmware.bin: 1802032 B (0x1b7f30), 69840 B free of 0x1c9000
-  IROM at 0x60018 (page 6): DROM len 0x51c7c may grow 58228 B / shrink 7300 B before IROM moves a page
+  IROM at 0x60018 (page 6): DROM len 0x51c7c may grow 58208 B / shrink 7296 B before IROM moves a page
 ```
 
 The firmware-build CI runs it on every build, warns when DROM is within 4 KB of either edge, and fails the production
