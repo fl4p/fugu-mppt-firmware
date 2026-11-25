@@ -11,8 +11,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: firmware-build-${{ github.ref }}
-  cancel-in-progress: true
+  group: firmware-build-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

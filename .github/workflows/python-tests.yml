@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: python-tests-${{ github.ref }}
-  cancel-in-progress: true
+  group: python-tests-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pytest:
