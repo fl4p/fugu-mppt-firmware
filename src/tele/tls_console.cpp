@@ -22,7 +22,18 @@
 namespace {
 constexpr uint16_t kOutCap = 1024;
 constexpr uint8_t kLineCap = 128;
-constexpr uint32_t kMinHeap = 24000;
+#if CONFIG_MBEDTLS_DYNAMIC_BUFFER
+constexpr uint32_t kSessionHeap = 2000, kMinBlock = 0;
+#else
+#ifdef CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN
+constexpr uint32_t kInLen = CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN, kOutLen = CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN;
+#else
+constexpr uint32_t kInLen = CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN, kOutLen = CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN;
+#endif
+// static record buffers + ~4.7 KB context (24.6 KB measured at 16 KB in / 4 KB out)
+constexpr uint32_t kSessionHeap = kInLen + kOutLen + 4800, kMinBlock = kInLen + 512;
+#endif
+constexpr uint32_t kMinHeap = std::max<uint32_t>(24000, kSessionHeap + 2048);
 constexpr time_ms kHandshakeMs = 10000;
 
 struct Session {
@@ -87,7 +98,9 @@ static void acceptClient() {
     socklen_t al = sizeof(a);
     int fd = accept(s_listen, (sockaddr *) &a, &al);
     if (fd < 0) return;
-    const char *why = s_sess ? "busy" : heap_caps_get_free_size(MALLOC_CAP_8BIT) < kMinHeap ? "low heap" : nullptr;
+    const char *why = s_sess ? "busy"
+                    : heap_caps_get_free_size(MALLOC_CAP_8BIT) < kMinHeap
+                      || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kMinBlock ? "low heap" : nullptr;
     Session *x = why ? nullptr : new(std::nothrow) Session{};
     if (!x) {
         ESP_LOGW(TAG, "refused %s: %s", inet_ntoa(a.sin_addr), why ? why : "no memory");

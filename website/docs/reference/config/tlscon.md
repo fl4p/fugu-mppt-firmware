@@ -50,7 +50,8 @@ The server accepts one client at a time:
 - Each line it sends runs as a console command; `exit` closes the session.
 - A line longer than 128 bytes is discarded and answered with `ERR: line too long`.
 - A second client is refused while a session is open, and so is any client while the free heap is below
-  24 000 bytes.
+  24 000 bytes, or below the session cost plus 2 KB with static buffers (about 27 KB at the defaults). With static
+  buffers the largest free block must also hold the input buffer.
 - A handshake that has not completed after 10 s is dropped.
 
 The TLS context is allocated only while a client is connected. The listening socket and the PSK configuration stay
