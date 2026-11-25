@@ -117,8 +117,11 @@ protected:
         ConfFile c{_confPath, true};
         _refused = 0;
         _blocks = 0;
-        if (c.getString("mode", "off") != "vedirect") {
-            ESP_LOGE(_name, "mode=%s not supported (off|vedirect)", c.getString("mode", "off").c_str());
+        _tx = _rx = -1;
+        const auto mode = c.getString("mode", "off");
+        if (mode == "off") return true;
+        if (mode != "vedirect") {
+            ESP_LOGE(_name, "mode=%s not supported (off|vedirect)", mode.c_str());
             return false;
         }
         _tx = pin(c, "tx_pin");
@@ -155,7 +158,7 @@ protected:
     void onStop() override { release(); }
 
     void onTick() override {
-        if (_refused) return;
+        if (_refused || !_installed) return;
         const uint32_t now = millis();
         if (now - _lastMs < 1000) return;
         _lastMs = now;
@@ -170,6 +173,7 @@ public:
     [[nodiscard]] std::string statusDetail() const override {
         char b[48];
         if (_refused) snprintf(b, sizeof b, "refused: rx 0x%02x", _refused - 1);
+        else if (!_installed) return "off";
         else snprintf(b, sizeof b, "vedirect %lu blocks", (unsigned long) _blocks);
         return b;
     }

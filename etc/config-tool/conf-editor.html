@@ -994,7 +994,7 @@ const FILE_META = {
   "tlscon.conf":   { port:{unit:"",desc:"TCP port of the TLS-PSK console (default 992)",type:"int"} },
   "telnet.conf":   { trusted:{unit:"",desc:"Allow all commands over telnet (0 = read-only commands only)",type:"bool"} },
   "extport.conf":  {
-    mode:{unit:"",desc:"Port mode: off, or vedirect (VE.Direct text block once a second, 19200 8N1); only vedirect starts the service. CONFIG_FUGU_WITH_EXTPORT builds only",type:"enum",opts:["off","vedirect"]},
+    mode:{unit:"",desc:"Port mode: off (port idle), or vedirect (VE.Direct text block once a second, 19200 8N1); any other value fails the service start. CONFIG_FUGU_WITH_EXTPORT builds only",type:"enum",opts:["off","vedirect"]},
     tx_pin:{unit:"",desc:"GPIO of the port's TX line; required, a missing or invalid pin or the rx_pin pin fails the service start",type:"int"},
     rx_pin:{unit:"",desc:"GPIO of the port's RX line; any byte other than a VE.Direct HEX frame latches TX off. Unset = no guard",type:"int"},
     pid:{unit:"",desc:"VE.Direct product ID sent in the PID field (default 0xA056, SmartSolar MPPT 100/30)",type:"int"},

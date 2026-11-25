@@ -11,7 +11,7 @@ service keys. For details, see [Service architecture](../services.md#per-service
 
 | key         | unit | type | default | description |
 |-------------|------|------|---------|-------------|
-| `mode`      |      | enum | off     | `off` or `vedirect`. Only `vedirect` starts the service; `off` or any other value fails the start |
+| `mode`      |      | enum | off     | `off` (service runs, port idle) or `vedirect`. Any other value fails the service start |
 | `tx_pin`    |      | int  | —       | GPIO of the port's TX line. Required: a missing or invalid pin, or the same pin as `rx_pin`, fails the service start |
 | `rx_pin`    |      | int  | -1      | GPIO of the port's RX line, used as the wrong-adapter guard (below). -1 = no guard |
 | `pid`       |      | int  | 0xA056  | Product ID sent in the `PID` field. The default is the SmartSolar MPPT 100/30 |
