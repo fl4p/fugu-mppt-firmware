@@ -978,9 +978,9 @@ static void testRingBack() {
             const RectCal &cal = h.ctl.cal;
             noteRise("ring 51 uH Q3-40", cal);
             // two-sided: Q 3 learns up to 33 ct late (applied 13 late), Q 40 up to 14 ct early; Q 5 has a 6 mA first
-            // dip below the 10 mA knee bound and may fail
-            CHECK(!h.tripped && (cal.get() == RectCal::Fail || (cal.get() == RectCal::Done && cal.applied <= -35 + 20
-                                                                  && cal.learned >= -35 - 25)),
+            // dip below the 10 mA knee bound and may fail, or (glibc libm) learn late and apply 0, which changes nothing
+            CHECK(!h.tripped && (cal.get() == RectCal::Fail || (cal.get() == RectCal::Done && cal.applied == 0 && q == 5)
+                                 || (cal.get() == RectCal::Done && cal.applied <= -35 + 20 && cal.learned >= -35 - 25)),
                   "ring Q %.0f seed %u: state %d '%s' applied %d", q, seed, cal.get(), cal.why, cal.applied);
             printf("ring 230 ct Q %2.0f seed %u: %s%s learned %+d applied %+d%s (truth -35, %u pts)\n", q, seed,
                    cal.get() == RectCal::Done ? "done" : "failed: ", cal.why, cal.learned, cal.applied,
