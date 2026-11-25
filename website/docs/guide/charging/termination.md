@@ -314,15 +314,15 @@ loops run on the BMS frames:
   resistance implied by the termination line (12.5 mΩ for 280 Ah with the
   defaults, see above).
   $K$ is 1.5 with the cell above `cv_eoc` and 0.5 below it.
-- Look-ahead, part of the cell loop: within 60 mV of `cv_eoc`, a cell that
-  rose faster than 0.25 mV/s (3 mV per 12 s frame) on two frame pairs in a
-  row, beyond the ohmic step of the `ibat` change (2.5 mΩ), uses its voltage
-  36 s ahead at that rate instead of the present one. $K$ follows the sign of
-  this projected error, so a cell still below `cv_eoc` can get the downward
-  gain. The rate is taken over the frames' arrival times; a pair less than 4 s
-  or more than 30 s apart (lost frames, a burst) starts the count of two pairs
-  again. The polarization of a nearly full cell builds over minutes, so a cell
-  below `cv_eoc` that still rises has no room left.
+- Look-ahead, part of the cell loop: the polarization of a nearly full cell
+  builds over minutes, so a cell below `cv_eoc` that still rises has no room
+  left. Within 60 mV of `cv_eoc`, a cell that rose faster than 0.25 mV/s
+  (3 mV per 12 s frame) on two frame pairs in a row, beyond the ohmic step of
+  the `ibat` change (2.5 mΩ), uses its voltage projected 36 s ahead at that
+  rate instead of the present one. $K$ follows the sign of this projected
+  error, so a cell still below `cv_eoc` can get the downward gain. The rate is
+  taken over the frames' arrival times. A pair less than 4 s or more than 30 s
+  apart (lost frames, a burst) starts the count of two pairs again.
 - Current loop, on each `ibat` frame: the converter's output-current limit
   moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
   stays at most 2 A above the converter's own output current, so it does not
@@ -412,10 +412,11 @@ without coordination. The gains are sized for that:
   than 3 % in a 12 s frame, so $R$ is about 3 mΩ, well inside both bounds.
   The slow upward gain keeps the polarization that relaxes after a current cut
   from being read as room for more current.
-- The look-ahead is not part of that bound. It acts only near `cv_eoc` and
+- The look-ahead lies outside that bound. It acts only near `cv_eoc` and
   only on a sustained rise, and lowers the target. Each lower current shrinks
-  the next rise, so it lets go by itself; the measured `ibat` step is taken
-  out of the rise, so a current step is not read as a rise or fall of the cell.
+  the next rise, so the look-ahead lets go by itself. The measured `ibat` step
+  is taken out of the rise, so a current step is not read as a rise or fall of
+  the cell.
 - Each charger's limit moves `ibat` one for one, so N chargers sum to a gain of
   0.4 N per `ibat` frame: 0.8 for two, stable also when the BMS reports the
   current one frame late.
