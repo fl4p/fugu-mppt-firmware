@@ -82,7 +82,9 @@ The charger uses the data in three places:
   instead of charging to `vout_max` blind. See [LFP charging](lfp-charging.md).
 - Termination: the charger evaluates it on each new cell-voltage frame, and only while both the cell-voltage and the
   current feed are fresh. See [Termination & recharge](termination.md).
-- Cell count: the charger derives it from the charger settings as `floor(vout_max / cv_eoc)`.
+- Cell count: the charger derives it from the charger settings as `floor(vout_max / cv_eoc)`. With `vout_max=auto` it
+  detects the count from Vout at boot, and fresh BMS frames must agree with it
+  ([Pack detection](../../reference/config/charger.md#pack-detection)).
 
 ## Stale data and fallback
 

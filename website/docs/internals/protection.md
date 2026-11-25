@@ -102,6 +102,7 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `Vr-sensor-fail` | Duty cycle well above what Vout and Iout imply while the current stays below 1 % of Iout max: a sensor or half-bridge fault. `reverse_current_paranoia` only; not in PSU mode while Vout is between half the setpoint and the setpoint | 5 s |
 | `boost-no-input` | Boost: duty above 25 % of its maximum, the current below 1 % of Iout max and Vout more than 2 V below Vin, for 1 s. A conducting input passes Vin through to Vout, so the input path is open (a backflow switch that does not turn on). `Vr-sensor-fail` cannot see this case | 10 s |
 | `supply-UV` | Board supply, max(Vin, Vout) − 0.3 V, below 9 V. Skipped in manual PWM | 5 s |
+| `bat-detect` | `charger.conf::vout_max=auto` and no pack detected yet ([Pack detection](../reference/config/charger.md#pack-detection)), in every mode | 5 s |
 | — | Not PSU mode, no battery voltage known (`charger.conf::vout_max`, `vset` or an earlier detection), and none can be detected from Vout. Starts a new sensor calibration. No `backoff` line outside a sweep; during a sweep the sweep ends with `backoff 4s [stopAndBackoff] mid-sweep` | 4 s |
 | `temp-stale` | A fitted NTC or MCU temperature sensor is open, shorted or silent: 3 readings in a row outside −40…150 °C (about 9 s), or no valid reading for 90 s. A shorted NTC trips `temp` instead if the ADC saturates below the supply rail. An unfitted NTC never trips | 5 s, then until a valid reading |
 | `temp` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown` | 5 s |
@@ -495,6 +496,7 @@ and which of those stop it while it runs:
 | `conf-save` | A rectifier-calibration result or a `pwr pwm` setting is being saved | held |
 | `psu-boost-setpoint` | PSU mode, boost: the setpoint is below Vin |  |
 | `psu-ov-conflict` | PSU mode: the setpoint conflicts with the OV limit |  |
+| `bat-detect` | `charger.conf::vout_max=auto` has not detected the pack yet, see [Pack detection](../reference/config/charger.md#pack-detection) | held, stops it |
 | `backoff` | The backoff timer is running | held, stops it |
 | `wire-trip` | The wire-fault guard is tripped | held, stops it |
 | `temp-stale` | A fitted NTC or MCU temperature sensor has given 3 invalid readings in a row (outside −40…150 °C), no valid reading for 90 s, or none since boot | held, stops it |

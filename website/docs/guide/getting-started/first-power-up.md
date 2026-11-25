@@ -36,7 +36,8 @@ Check the following items before you power the board:
 - [ ] Review [`limits.conf`](../../reference/config/limits.md) with `cat conf/limits.conf`. Set `hv_max`,
   `lv_max`, `hv_i_max`, and `lv_i_max` to what your hardware and your battery tolerate, not to the example values.
 - [ ] `charger.conf::vout_max` matches the battery you will connect later
-  ([LFP charging](../charging/lfp-charging.md)).
+  ([LFP charging](../charging/lfp-charging.md)), or is `auto` for a 4, 8 or 16 cell pack on a buck
+  ([Pack detection](../../reference/config/charger.md#pack-detection)).
 - [ ] `coil.conf::L0` matches your inductor; diode emulation relies on it
   ([diode emulation](../../internals/diode-emulation.md)).
 - [ ] Supply voltage above `limits.conf::vin_min` (10.5 V in the examples, protects the board supply) and below

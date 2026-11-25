@@ -66,7 +66,8 @@ The `fugu1` folders differ as follows:
   [Internal ADC](internal-adc.md). Its `charger.conf`, `coil.conf` and `converter.conf` are those of `fugu1_esp32`.
 
 Set `charger.conf::vout_max` before the first start. The `fugu1` folders leave it unset because it depends on the
-pack, and without it setup fails and the converter stays off.
+pack, and without it setup fails and the converter stays off. `vout_max=auto` does not apply to these boards: their
+backflow switch is not declared on the battery side (see [Pack detection](../../reference/config/charger.md#pack-detection)).
 
 ### Solar boost
 

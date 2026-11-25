@@ -238,7 +238,7 @@ These parameters also shape termination:
 - `recharge_dod`: DoD threshold for releasing termination (see above).
 - `vout_max_fallback`: pack output limit without BMS data and float target
   after termination, default `n_cells × cv_float`. The cell count is
-  `floor(vout_max / cv_eoc)`.
+  `floor(vout_max / cv_eoc)`, or detected at boot with `vout_max=auto`.
 
 Setup fails and the converter stays off if `cv_eoc` is below `cv_float`,
 `cv_ceiling` is below `cv_eoc`, or `cv_hold_band` is not positive. With the

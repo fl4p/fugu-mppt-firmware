@@ -58,7 +58,7 @@ The following table lists the `charger.conf` keys.
 
 | Key                  | Unit      | Range                              | Description |
 | -------------------- | --------- | ---------------------------------- | ----------- |
-| `vout_max`           | V         | > 0                                | Nominal maximum pack voltage. Hard upper bound for the converter setpoint. Typical: ~14.6 V (4s LFP), ~29 V (8s), ~57 V (16s). |
+| `vout_max`           | V         | > 0, or `auto`                     | Nominal maximum pack voltage. Hard upper bound for the converter setpoint. Typical: ~14.6 V (4s LFP), ~29 V (8s), ~57 V (16s). `auto` detects 4, 8 or 16 cells at boot ([Pack detection](../../reference/config/charger.md#pack-detection)). |
 | `cv_eoc`             | V         | ≥ `cv_float`                       | End-of-charge voltage **per cell** (absorption ceiling). The charger keeps the highest cell at or below this. Typical LFP: 3.55–3.65. |
 | `cv_float`           | V         | 0 < `cv_float` ≤ `cv_eoc`          | Float voltage **per cell**, i.e. where the termination line crosses zero current. Typical LFP: 3.37. |
 | `vout_max_fallback`  | V         | > 0                                | Pack-voltage limit used when BMS data is unavailable, and the float target after termination. Default `N_cells × cv_float`. Must be a positive voltage: `0` does **not** disable the converter. A non-positive pin is ignored and the limit returns to `vout_max`, both when the BMS goes stale and during terminated float. |
