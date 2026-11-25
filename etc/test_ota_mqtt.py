@@ -305,5 +305,38 @@ class EnvAndFilter(unittest.TestCase):
         self.assertFalse(M.same_24(None, '192.168.1.200'))
 
 
+class RunDeviceTest(unittest.TestCase):
+    def test_lost_link_is_a_failure_not_a_traceback(self):
+        def boom(*a):
+            raise ConnectionError("MQTT broker did not acknowledge command 'get-config sensor.conf'")
+        orig, M.ota_device = M.ota_device, boom
+        try:
+            self.assertEqual(2, M.run_device(NS(), 'fry', None, None, None, None))
+        finally:
+            M.ota_device = orig
+
+    def test_lost_link_message_says_nothing_was_sent(self):
+        import io, contextlib
+        def boom(*a):
+            raise ConnectionError('x')
+        orig, M.ota_device = M.ota_device, boom
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                M.run_device(NS(), 'fry', None, None, None, None)
+        finally:
+            M.ota_device = orig
+        self.assertIn('before `ota` was sent', buf.getvalue())
+
+    def test_other_errors_still_raise(self):
+        def boom(*a):
+            raise ValueError('bug')
+        orig, M.ota_device = M.ota_device, boom
+        try:
+            self.assertRaises(ValueError, M.run_device, NS(), 'fry', None, None, None, None)
+        finally:
+            M.ota_device = orig
+
+
 if __name__ == '__main__':
     unittest.main()

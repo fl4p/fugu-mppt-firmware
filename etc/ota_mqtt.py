@@ -496,6 +496,16 @@ def conf_keys_check(args, con, name):
     return True
 
 
+def run_device(args, name, *rest):
+    """ota_device() with a link lost before `ota` was sent (preflight reads only) reported as that device's
+    failure (2) instead of a traceback; ota_device() handles a loss after it."""
+    try:
+        return ota_device(args, name, *rest)
+    except ConnectionError as e:
+        print(f'❌ {name}: link lost before `ota` was sent, nothing changed ({type(e).__name__}: {e})')
+        return 2
+
+
 def preflight(args, con, tap, name, image, before):
     """guards() plus device activity, RTC layout and the last OTA record. Returns False to stop."""
     ok = guards(args, con, image, before, name)
@@ -690,6 +700,8 @@ def ota_device(args, name, image, server, gw, locks):
                 if gw:
                     gw.boost()
                 result, text, after, t_ota = attempt(args, con, tap, url, image, before)
+            except ConnectionError as e:  # `ota` may have gone out: no retry, the device state is unknown
+                result, text, after = 'lost', f'MQTT link lost after `ota` was sent ({e}): check bootinfo', None
             finally:
                 if gw:
                     gw.restore()
@@ -715,11 +727,17 @@ def ota_device(args, name, image, server, gw, locks):
         print(f'✅ {name}: {text}')
         archive_elf(name, 'ota-mqtt', image['version'], args.bin)
         if args.verify:
-            vok, vtext = verify(args, con, tap, image, t_ota)
+            try:
+                vok, vtext = verify(args, con, tap, image, t_ota)
+            except ConnectionError as e:
+                vok, vtext = False, f'MQTT link lost during verify ({e}): check bootinfo'
             print(f"{name}: power before {fmt_status(st_before)}")
             print(f"{name}: power after  {fmt_status(tap.status(time.monotonic() - 30))}")
             if args.check:
-                print_checks(checks, run_checks(con, args.check))
+                try:
+                    print_checks(checks, run_checks(con, args.check))
+                except ConnectionError as e:
+                    print(f'checks skipped: MQTT link lost ({e})')
             entry['result'] = ('ok, ' if vok else 'VERIFY FAILED, ') + vtext
             record(entry)
             print(f"{'✅' if vok else '❌'} {name}: {vtext}")
@@ -850,7 +868,7 @@ def main():
 
     results = {}
     for name in names:
-        results[name] = ota_device(args, name, image, server, gw, locks)
+        results[name] = run_device(args, name, image, server, gw, locks)
         if results[name] and not args.dry_run:
             break
     if len(names) > 1:

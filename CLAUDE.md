@@ -84,7 +84,7 @@ file asks), rect-cal running/unsaved, a sweep or top-balance run
 `ota-<device>` and `ota-relay` (refuses when held, `--lock-wait S` queues), stages the image on the relay with
 `etc/ota-via-relay.sh` when this host cannot serve it (own staging dir, `<name>-<sha8>.bin`, first free port
 9000-9099; `status|stop <token>`), sends `ota <url>` and checks `bootinfo` for the image's version on the other slot
-with a reset uptime. Failed downloads are retried (`--retries 2`, backoff 30/90 s) with throughput, relay status and
+with a reset uptime. Failed downloads are retried (`--retries 2`, backoff 30/90 s; a broker link lost after `ota` was sent is recorded as `lost`, not retried) with throughput, relay status and
 whether the device rebooted (the firmware's 300 s OTA watchdog restarts it). `--verify` (default; `--no-verify`) then
 waits for `rollback=VALID` (`--valid-timeout 90`), watches the new boot's log (from the first line after the reboot) for ADC stall, INA timeout,
 loop latency, protection backoff (not the boot's `sweep-no-mpp`), panic, non-SW reset and reboot lines (`--watch 120`) and prints power before/after. Each OTA is recorded in `elf-archive/ota-owners.jsonl` (who, version,

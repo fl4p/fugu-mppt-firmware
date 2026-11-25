@@ -158,7 +158,7 @@ refused, and 2 on a setup error.
 | `-f`, `--force`             | Update even when the device already runs the image version                 |
 | `--check CMD`               | Read-only command run before and after, shown as a diff; repeatable        |
 | `--no-verify`               | Skip the `rollback=VALID` wait (`--valid-timeout`, 90 s) and log watch (`--watch`, 120 s) |
-| `--retries N`               | Retries after a failed download, default 2 (`--retry-backoff`, default `30,90` s) |
+| `--retries N`               | Retries after a failed download, default 2 (`--retry-backoff`, default `30,90` s). A broker link lost after `ota` was sent is not retried: it is recorded as `lost`, check `bootinfo` |
 | `--yes`                     | Accept the guard prompts                                                   |
 | `--allow-driver-change`     | Push across a gate-driver change or an unverified driver                   |
 | `--broker`, `--port`        | MQTT broker, default `$MQTT_HOST`, `$MQTT_PORT`                            |
