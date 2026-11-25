@@ -15,7 +15,7 @@ struct PlantBoard {
     float ringF, ringV, ringCexp, ringQ, ringCt; // free ring frequency at Vin = ringV, C ~ Vin^-ringCexp, Q, edge C ratio
     float qHigh; // Q of the "-hq" variant: ripple of the undamped bench (no core loss)
     float vf, tDead, tHsExt, rHs, rLs, tSw; // diode_vf, t_dead, t_hs_ext, r_hs, r_ls, t_sw
-    float cIn; // c_in: 2 x 470 uF +20 % and the panel's own; fry's dusk sweeps fit 1.0-1.5 mF output-referred
+    float cIn; // plant_c_in: 2 x 470 uF +20 % and the panel's own; fry's dusk sweeps fit 1.0-1.5 mF output-referred
     float rectOffsetNs; // coil.conf rect_offset_ns (firmware side; mppt-sim applies it to the MCPWM preset, not in rcal*)
 
     [[nodiscard]] float ringC() const { return ringF > 0 ? 1.f / (39.478418f * ringF * ringF * lPlant) : 0.f; }
@@ -25,7 +25,7 @@ struct PlantBoard {
         auto s = [](float v) { char b[24]; snprintf(b, sizeof b, "%g", v); return std::string(b); };
         return {{"ring_c", s(ring ? ringC() : 0.f)}, {"ring_q", s(ringQ)}, {"ring_v", s(ringV)}, {"ring_cexp", s(ringCexp)}, {"ring_ct", s(ringCt)},
                 {"diode_vf", s(vf)}, {"t_dead", s(tDead)}, {"t_hs_ext", s(tHsExt)}, {"r_hs", s(rHs)}, {"r_ls", s(rLs)},
-                {"t_sw", s(tSw)}, {"c_in", s(cIn)}};
+                {"t_sw", s(tSw)}, {"plant_c_in", s(cIn)}};
     }
 };
 
