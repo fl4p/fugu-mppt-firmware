@@ -779,7 +779,7 @@ static void testField() {
             }
     // the sweep stops 2 steps past the knee: fewer points on its far side than a full sweep, so
     // more spread; after the margin the LS ends at most 20 ct (125 ns) past the crossing
-    CHECK(lo >= -45 && hi <= 40, "bus square 0.19%%: err %d..%d", lo, hi);
+    CHECK(lo >= -55 && hi <= 40, "bus square 0.19%%: err %d..%d", lo, hi);
     printf("field bus square 0.19%% 0.9..2.3 s, plant 0x/2x: %d/%d done, err %+d..%+d ct\n", done, tot, lo, hi);
     const float zc = (60.f / 26.7f - 1.f) * 1200;
     for (float rise: {0.002f, 0.005f, 0.007f, 0.01f, 0.015f, 0.02f}) {

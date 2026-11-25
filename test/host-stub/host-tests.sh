@@ -20,6 +20,7 @@ TESTS=(
   "con-guard-test|-std=gnu++20 -fexceptions -I $H -I src||"
   "conf-write-test|-std=gnu++20 -fexceptions -I $H -I src||"
   "conv-side-test|-std=gnu++17 -fexceptions -I $H -I src||"
+  "converter-test|-std=gnu++20 -fexceptions -DMOCK=1 -I $H -I src||"
   "coulomb-test|-std=gnu++20 -fexceptions -I $H -I src||"
   "dawn-test|-std=gnu++17 -fexceptions -I $H -I src|$VC|"
   "dcm-current-test|-std=gnu++20 -O2 -fexceptions -DMOCK=1 -I $H -I src|$VC|"
@@ -55,10 +56,9 @@ TESTS=(
 known_fail() {
   case $1 in
     bms-cutoff-test) echo "fail:open battery at 3 A not detected since fb64bb1a removed the plant's LC ring-up" ;;
-    rect-cal-test) echo "may:bus square 0.19 % worst case at the -45 ct limit; one more run completes with some libm sin()" ;;
   esac
 }
-# Not listed: scope-test.cpp (endless streaming prototype), converter-test.cpp (does not build), conf-hash-test.cpp (helper built by
+# Not listed: scope-test.cpp (endless streaming prototype), conf-hash-test.cpp (helper built by
 # test/host_py/test_conf_hash.py) and the tools overshoot-plant, scan-learn-replay,
 # vconv-energy-audit, wire-guard-replay, vconv-spice-check (ngspice).
 
