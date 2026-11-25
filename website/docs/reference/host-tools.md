@@ -68,7 +68,7 @@ python3 etc/fugu_console.py -p $ESPPORT --coredump get       # pull + decode a c
 | `--adapter hciN`                      | BlueZ adapter (Linux)                                                          |
 | `--ble-proxy HOST[:PORT]`             | BLE via an ESPHome `bluetooth_proxy` (plaintext API); `--proxy-password`       |
 | `--mqtt [BROKER]`                     | MQTT (bare: `$MQTT_HOST`), with `--mqtt-port`, `--mqtt-user`, `--mqtt-pass` (defaults `$MQTT_PORT`/`$MQTT_USER`/`$MQTT_PASS`, filled from `etc/mqtt.env`); see [MQTT topics](mqtt.md) |
-| `--mqtt-readonly`                     | Stream the log, never publish commands                                         |
+| `--mqtt-readonly`                     | Stream the log, never publish commands (refused with `-c`, `--stdin`, `--coredump`) |
 | `-c`, `--command CMD`                 | Run a command and exit; repeatable                                             |
 | `--stdin`                             | Run newline-separated commands from stdin (auto when stdin is piped)           |
 | `--elf PATH`                          | ELF for `peek <symbol>` / `sym` resolution (default `$FUGU_ELF` or newest build) |
@@ -253,8 +253,13 @@ etc/idf-devtools/flash-diff.sh -p $ESPPORT
 ## elf_archive.py
 
 `elf_archive.py` keeps one zstd-compressed ELF per unique build, deduplicated by the app ELF SHA-256, plus an
-`index.jsonl` flash log, so a later coredump can be decoded against the exact build. `idf.py flash`/`app-flash` and
-`ota.py` archive automatically. The archive lives in `$ELF_ARCHIVE_DIR` or `./elf-archive`.
+`index.jsonl` flash log, so a later coredump can be decoded against the exact build. `idf.py flash`/`app-flash`,
+`ota.py` and `ota_mqtt.py` archive automatically; `ota_mqtt.py` also archives a failed push (method `ota-mqtt-failed`,
+skipped by the `--device` fallback), since a rolled-back image may have crashed first. The archive lives in
+`$ELF_ARCHIVE_DIR` or `./elf-archive`.
+
+When no archived build matches, `decode` searches the `build/` directories of the repository's git worktrees (and each
+`--search DIR`) for the ELF whose SHA-256 is in the dump, archives it as method `found-local` and decodes against it.
 
 The following commands decode a coredump, list the flash log, and extract an archived ELF:
 
@@ -272,7 +277,7 @@ Each subcommand accepts the following flags.
 | `archive`  | `<device>`, `--method ota\|serial`, `--at ISO`, `--build-dir`, `--elf`, `--bin`, `--version`, `--foreground` |
 | `list`     | `--device`                                                                          |
 | `find`     | `--device`, `--at`, `--sha`, `-o`/`--out`                                           |
-| `decode`   | `<core>`, `--device`, `--at`, `--sha`, `--core-format` (default `raw`)              |
+| `decode`   | `<core>`, `--device`, `--at`, `--sha`, `--search DIR`, `--core-format` (default `raw`) |
 
 Set the device name for serial flashes with `FUGU_DEVICE=<name> idf.py flash`. See
 [Debugging](../development/debugging/index.md).

@@ -708,6 +708,7 @@ def ota_device(args, name, image, server, gw, locks):
         table(bootinfo_row('after', after))
         if result != 'ok':
             print(f'❌ {name}: {text}')
+            archive_elf(name, 'ota-mqtt-failed', image['version'], args.bin)  # it may have run and dumped
             entry['result'] = f'{result}: {text}'
             record(entry)
             return 1

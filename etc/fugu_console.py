@@ -1377,6 +1377,10 @@ def main():
     if args.tele and not args.ble:
         print("--tele requires --ble", file=sys.stderr)
         return 1
+    if args.mqtt_readonly and (args.command or args.stdin or args.coredump):
+        print("--mqtt-readonly never sends commands: drop it to run -c/--stdin/--coredump",
+              file=sys.stderr)
+        return 1
 
     guard = LockGuard(enabled=not args.no_lock_guard, take=args.take_lock, note=args.lock_note,
                       transport=transport_label(args))
