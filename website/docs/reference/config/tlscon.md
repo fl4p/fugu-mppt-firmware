@@ -43,12 +43,15 @@ with FTP or HTTP config access. The console masks it as `***` in the command ech
 
 ## Sessions
 
-The server accepts one client at a time. Once the handshake completes, the client receives the banner
-(`Welcome to <hostname> (<ip>)`, the firmware version) and from then on the muxed log, like a telnet client. Each
-line it sends runs as a console command; `exit` closes the session. A line longer than 128 bytes is discarded and
-answered with `ERR: line too long`. A second client is refused while a session is
-open, and so is a client when the free heap is below 24 KB. A handshake that has not completed after 10 s is
-dropped.
+The server accepts one client at a time:
+
+- Once the handshake completes, the client receives the banner (`Welcome to <hostname> (<ip>)`, the firmware
+  version) and from then on the muxed log, like a telnet client.
+- Each line it sends runs as a console command; `exit` closes the session.
+- A line longer than 128 bytes is discarded and answered with `ERR: line too long`.
+- A second client is refused while a session is open, and so is any client while the free heap is below
+  24 000 bytes.
+- A handshake that has not completed after 10 s is dropped.
 
 The TLS context is allocated only while a client is connected. The listening socket and the PSK configuration stay
 allocated while the service runs. An open session costs about 2 KB of heap with `CONFIG_MBEDTLS_DYNAMIC_BUFFER=y` and
@@ -57,7 +60,7 @@ about 24.6 KB with the default static buffers (see [TLS heap](../../guide/gettin
 ## Client
 
 `etc/fugu_console.py` connects with `--tls HOST[:PORT]`; the key comes from `--psk` and `--psk-id`, or from
-`$FUGU_PSK` and `$FUGU_PSK_ID`. It needs Python 3.13 or later. Any TLS client with PSK support works as well:
+`$FUGU_PSK` and `$FUGU_PSK_ID`; the identity defaults to `fugu`. It needs Python 3.13 or later. Any TLS client with PSK support works as well:
 
 ```bash
 python3 etc/fugu_console.py --tls <device-ip> --psk-id <identity> --psk <hex key> -c status

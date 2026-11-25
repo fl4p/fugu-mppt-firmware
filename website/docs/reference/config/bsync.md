@@ -13,7 +13,7 @@ Sniffing is receive-only (no association or TX), so sync also works while Wi-Fi 
 
 The keys `enabled` (0/1) and `log_level` (`error`, `warn`, or `info`) are common to all services. See [Service architecture](../services.md#per-service-conf-file).
 
-The service reads the keys below when it starts, so `svc rs bsync` applies a change. A missing or malformed `bssid`, or a `channel` outside 1–14, fails the start. It also refuses to start on a wired-sync follower.
+The service reads the keys below when it starts, so `svc rs bsync` applies a change. A missing or malformed `bssid`, or a `channel` outside 1–14, fails the start. It also refuses to start on a wired-sync follower or while a `pwm-freq` change is pending, and while it runs it refuses `pwm-freq`.
 
 The file accepts the following keys:
 

@@ -1339,7 +1339,7 @@ const DEFAULTS = {
 const CHAN_SUFFIX_DEFAULT = { ch:"255", factor:"1.0", midpoint:"0.0", filt_len:"10", gain:"1.0", offset:"0.0" };
 
 // defaults the flat DEFAULTS table can't hold: per-file values, and a "" read whose effect is a named mode
-const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "converter.conf|mode":"\"mppt\"",
+const FILE_DEFAULTS = {"http.conf|port":"80", "tlscon.conf|port":"992", "extport.conf|mode":"\"off\"", "converter.conf|mode":"\"mppt\"",
   "converter.conf|c_in":"0.001", "vconv.conf|plant_c_in":"0.00047", "vconv.conf|ntc_v":"0.9"};
 function lookupDefault(file, key){
   const base = file.split("/").pop(), fd = FILE_DEFAULTS[base+"|"+key];

@@ -40,6 +40,8 @@ not start with a dot, and are at most 32 characters long; anything else returns 
 | `PUT /conf/<name>` | `201` (created) or `204` (replaced); needs `Content-Length` (`411`), at most 16 KB (`413`) |
 | `DELETE /conf/<name>` | `204`, or `404` |
 | `OPTIONS` any path | `204` CORS preflight, no auth |
+| any other request without valid Basic auth | `401` |
+| any other method | `405` |
 
 A `PUT` writes to a temporary file and renames it over the target only after the full body has arrived, so an
 aborted upload leaves the old file in place. Every response carries `Access-Control-Allow-Origin: *` and
@@ -50,7 +52,7 @@ aborted upload leaves the old file in place. Every response carries `Access-Cont
 The server runs inside the network loop without its own task:
 
 - at most 2 connections; further clients wait in the listen backlog until one closes
-- request line and headers up to 1 KB (`414`/`431` beyond)
+- request line and headers up to 1 KB (`414` or `431` beyond)
 - 10 s to send the headers, then 10 s for the body and the response; a stalled connection is dropped
 
 ## Example

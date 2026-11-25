@@ -18,7 +18,7 @@ service keys. For details, see [Service architecture](../services.md#per-service
 | `enabled`   |      | bool | 0       | Start this service at boot |
 | `log_level` |      | enum | info    | Verbosity: `error`, `warn`, or `info` |
 
-All keys are read when the service starts (`svc rs extport`).
+`mode`, `tx_pin`, `rx_pin` and `pid` are read when the service starts (`svc rs extport`).
 
 ## VE.Direct output
 
@@ -32,7 +32,7 @@ bytes 0 mod 256. HEX mode is not implemented.
 | `FW` | firmware version, e.g. `210` for 2.1.0 |
 | `SER#` | `FG` plus the last four bytes of the MAC address |
 | `V`, `I` | output (battery) voltage in mV and current in mA, EWM-filtered; `I` > 0 while charging |
-| `VPV`, `PPV` | input (panel) voltage in mV and power in W |
+| `VPV`, `PPV` | input (panel) voltage in mV; power in W, measured on the side with the physical current sensor (output power on boards with an output shunt) |
 | `CS` | 0 off, 3 bulk, 4 absorption (CV control or CV hold), 5 float (charge terminated), 252 manual duty (`dc`) |
 | `MPPT` | 0 off, 1 voltage or current limited, 2 tracking (MPPT or sweep) |
 | `OR` | off reason while the converter is stopped: `0x00000001` input too low, `0x00000010` protection (backoff, temperature, fault inhibits), else 0 |
@@ -42,11 +42,11 @@ bytes 0 mod 256. HEX mode is not implemented.
 | `H22`, `H23` | the same for the most recent stored day |
 | `HSDS` | number of stored days, modulo 365 |
 
-No block is sent until the sensor filters hold finite values.
+The port sends its first block once the sensor filters hold finite values.
 
 ## Wrong-adapter guard
 
-A VE.Direct peer either stays silent or sends HEX frames (`:`, hex digits, newline). With `rx_pin` set, the first
+A VE.Direct peer either stays silent or sends HEX frames (`:`, uppercase hex digits, `\n`). With `rx_pin` set, the first
 received byte outside that set turns TX off and leaves it off until `svc rs extport`. A CAN transceiver echoing TX
 trips the guard on the first block. `svc list` shows `refused: rx 0x..` with the offending byte.
 

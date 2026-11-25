@@ -7,15 +7,18 @@ sidebar_position: 11
 
 The `ftp` service gives access to the littlefs partition, including the config files, over the LAN (port 21). `enabled` (0/1) and `log_level` (`error`, `warn` or `info`) are the common service keys (see [Service architecture](../services.md#per-service-conf-file)).
 
-NVS credentials take precedence, and the conf values are the fallback. If either credential is still
-unset after that, both fall back to user `user` and the chip ID as password. `ftp_user`, `ftp_pass` and `pasv_port` are read when the service
+NVS credentials take precedence, and the conf values are the fallback. No console command writes the NVS keys;
+they come from a provisioned NVS image. If either credential is still unset after that, both fall back to user
+`user` and the chip ID as password.
+
+`ftp_user`, `ftp_pass` and `pasv_port` are read when the service
 starts, so `svc rs ftp` applies them (`svc rs http` for the [HTTP endpoint](http.md), which uses the same
 credentials). The console masks `ftp_pass` as `***` (see [Secrets](../console.md#secrets)).
 
 :::warning
 FTP gives read-write access to the whole littlefs partition, including `/littlefs/conf` (calibration, limits, Wi-Fi and MQTT secrets). Set both
-`ftp_user` and `ftp_pass`, because the fallback password is the chip ID, which is not secret. The `ftp` warning log
-says the fallback is in use (`using user=user, password = chip ID`) but does not print the password.
+`ftp_user` and `ftp_pass`, because the fallback password is the chip ID, which is not secret. When the service starts, a
+warning with tag `creds` says the fallback is in use (`using user=user, password = chip ID`); it does not print the password.
 :::
 
 The file accepts the following keys:

@@ -90,7 +90,7 @@ menu "PWM drivers"
         help
             Phase/frequency-lock the MCPWM switching clock of multiple converters to a shared
             timebase recovered from sniffed 802.11 beacons (RX-only, works unassociated).
-            Adds the `bsync` service + bsync.conf. See website/docs/internals/sync/beacon-sync.md.
+            Adds the `bsync` service + bsync.conf. See website/docs/development/sync/beacon-sync.md.
 
     config FUGU_WITH_LEDC
         bool "LEDC fan PWM + anaw"
@@ -132,8 +132,9 @@ config FUGU_WITH_TELNET
     bool "Telnet console (telnet service, TCP port 23, no authentication)"
     default y
     help
-        Plaintext console and log sink on TCP port 23. Anyone on the network can run any
-        command. The service starts only with telnet.conf enabled=1.
+        Plaintext console and log sink on TCP port 23. Read-only commands only, unless
+        telnet.conf trusted=1 lets anyone on the network run any command. The service
+        starts only with telnet.conf enabled=1.
 
 config FUGU_WITH_TLS_CONSOLE
     bool "TLS-PSK console (tlscon service)"
