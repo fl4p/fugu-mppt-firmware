@@ -137,7 +137,7 @@ The tests in `test/host-stub/` cover the following areas:
 | File | What it tests |
 |---|---|
 | `vconv-test.cpp` | VirtualConverter: CCM/DCM physics, energy conservation, PV model, ripple models, boost branch, irradiance profile (cases A–Z and variants) |
-| `converter-test.cpp` | `SynchronousConverter` buck math (diode emulation timing); does not build at present, not part of `host-tests.sh` |
+| `converter-test.cpp` | `SynchronousConverter` ripple current and CCM/DCM decision with its hysteresis |
 | `integrator-test.cpp` | Integrator / coulomb-counter arithmetic |
 | `tracker-window-test.cpp` | Tracker averaging period under a limiter that takes over every period; `MeanAccumulator` saturation |
 | `mcpwm-timing-test.cpp` | MCPWM timing: prescaler / resolution selection (`bestTiming`) |
