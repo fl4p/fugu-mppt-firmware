@@ -381,8 +381,8 @@ The run:
 2. It reads the `Iin` zero, then raises the duty until `Vout` is 2 V above `Vin`. Below that the
    coil current does not return to zero in each period, so no row is taken.
 3. It steps through the duty band and ends the sweep at the first row that reaches one of these:
-   - `Iin` 5 A, 75 % of the current trip and below the 6 A protection that applies without
-     synchronous rectification
+   - `Iin` above 5 A, or above 75 % of the current trip if that is lower; 5 A stays below the 6 A
+     protection that applies without synchronous rectification
    - `Ipk` above the input-current limit
    - a next step that would come near CCM
    - `Vout` within 2 V of the voltage trip
