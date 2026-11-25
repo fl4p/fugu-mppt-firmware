@@ -5,7 +5,7 @@ sidebar_position: 11
 
 # ftp.conf
 
-The `ftp` service gives access to the littlefs partition, including the config files, over the LAN (port 21). `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys (see [Service Architecture](../services.md#per-service-conf-file)).
+The `ftp` service gives access to the littlefs partition, including the config files, over the LAN (port 21). `enabled` (0/1) and `log_level` (`error`, `warn` or `info`) are the common service keys (see [Service architecture](../services.md#per-service-conf-file)).
 
 NVS credentials take precedence, and the conf values are the fallback. If either credential is still
 unset after that, both fall back to user `user` and the chip ID as password. `ftp_user`, `ftp_pass` and `pasv_port` are read when the service

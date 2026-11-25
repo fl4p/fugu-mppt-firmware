@@ -6,13 +6,13 @@ sidebar_position: 14.5
 # extport.conf
 
 `extport.conf` configures the external comms port (service `extport`). The service exists only in builds with
-`CONFIG_FUGU_WITH_EXTPORT=y` (off by default). `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common
-service keys. For details, see [Service Architecture](../services.md#per-service-conf-file).
+`CONFIG_FUGU_WITH_EXTPORT=y` (off by default). `enabled` (0/1) and `log_level` (`error`, `warn` or `info`) are the common
+service keys. For details, see [Service architecture](../services.md#per-service-conf-file).
 
 | key         | unit | type | default | description |
 |-------------|------|------|---------|-------------|
-| `mode`      |      | enum | off     | `off` or `vedirect`. Any other value fails the service start |
-| `tx_pin`    |      | int  | —       | GPIO of the port's TX line. Required; no pin is driven while it is unset |
+| `mode`      |      | enum | off     | `off` or `vedirect`. Only `vedirect` starts the service; `off` or any other value fails the start |
+| `tx_pin`    |      | int  | —       | GPIO of the port's TX line. Required: a missing or invalid pin, or the same pin as `rx_pin`, fails the service start |
 | `rx_pin`    |      | int  | -1      | GPIO of the port's RX line, used as the wrong-adapter guard (below). -1 = no guard |
 | `pid`       |      | int  | 0xA056  | Product ID sent in the `PID` field. The default is the SmartSolar MPPT 100/30 |
 | `enabled`   |      | bool | 0       | Start this service at boot |

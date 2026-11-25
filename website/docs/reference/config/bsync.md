@@ -5,13 +5,13 @@ sidebar_position: 16
 
 # bsync.conf
 
-`bsync.conf` configures the beacon PWM-clock sync service, `bsync`. The service frequency- and phase-locks the MCPWM switching clock of multiple converters to a shared timebase recovered from sniffed 802.11 beacons. See [Beacon Clock Sync](../../development/sync/beacon-sync.md).
+`bsync.conf` configures the beacon PWM-clock sync service, `bsync`. The service frequency- and phase-locks the MCPWM switching clock of multiple converters to a shared timebase recovered from sniffed 802.11 beacons. See [Beacon clock sync](../../development/sync/beacon-sync.md).
 
 The service exists only in `CONFIG_FUGU_WITH_BSYNC` builds, which need NETW and MCPWM.
 
 Sniffing is receive-only (no association or TX), so sync also works while Wi-Fi is "off" for precision measurements. All participating devices must point `bssid` and `channel` at the *same* AP.
 
-The keys `enabled` (0/1) and `log_level` (`error`, `warn`, or `info`) are common to all services. See [Service Architecture](../services.md#per-service-conf-file).
+The keys `enabled` (0/1) and `log_level` (`error`, `warn`, or `info`) are common to all services. See [Service architecture](../services.md#per-service-conf-file).
 
 The service reads the keys below when it starts, so `svc rs bsync` applies a change. A missing or malformed `bssid`, or a `channel` outside 1–14, fails the start. It also refuses to start on a wired-sync follower.
 

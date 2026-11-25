@@ -5,7 +5,7 @@ sidebar_position: 14
 
 # lcd.conf
 
-`lcd.conf` configures the I2C status display (service `lcd`). `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys. For details, see [Service Architecture](../services.md#per-service-conf-file).
+`lcd.conf` configures the I2C status display (service `lcd`). `enabled` (0/1) and `log_level` (`error`, `warn` or `info`) are the common service keys. For details, see [Service architecture](../services.md#per-service-conf-file).
 
 The file has the following keys:
 

@@ -5,11 +5,11 @@ sidebar_position: 12
 
 # telnet.conf
 
-`telnet.conf` configures the remote console over TCP port 23, which runs as the service `telnet`. Its keys `enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys described in [Service Architecture](../services.md#per-service-conf-file).
+`telnet.conf` configures the remote console over TCP port 23, which runs as the service `telnet`. Its keys `enabled` (0/1) and `log_level` (`error`, `warn` or `info`) are the common service keys described in [Service architecture](../services.md#per-service-conf-file).
 
 The telnet console has no authentication and no encryption. It is off unless `enabled=1`, and it runs only
 read-only commands unless `trusted=1` (see [Trusted consoles](../console.md#trusted-consoles)). With `trusted=1`
-anyone on the network can run any command, including `ota`. The service is compiled in only with `CONFIG_FUGU_WITH_TELNET` (on by default, see [build options](../../guide/getting-started/build-options.md)).
+anyone on the network can run any command, including `ota`. The service is compiled in only with `CONFIG_FUGU_WITH_TELNET` (on by default, see [Build options](../../guide/getting-started/build-options.md#feature-flags)).
 
 The following table lists the keys in `telnet.conf`.
 

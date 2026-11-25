@@ -8,8 +8,8 @@ sidebar_position: 11.5
 `http.conf` configures the HTTP file endpoint for the config partition, which runs as the service `http`. It exists
 only in builds with `CONFIG_FUGU_WITH_HTTP_CONF` (off by default, see
 [Build options](../../guide/getting-started/build-options.md#feature-flags)). Its keys `enabled` (0/1) and
-`log_level` (`error`/`warn`/`info`) are the common service keys described in
-[Service Architecture](../services.md#per-service-conf-file).
+`log_level` (`error`, `warn` or `info`) are the common service keys described in
+[Service architecture](../services.md#per-service-conf-file).
 
 The following table lists the keys in `http.conf`.
 
@@ -19,7 +19,7 @@ The following table lists the keys in `http.conf`.
 | `log_level` |      | enum | info    | Verbosity: `error`, `warn` or `info` |
 | `port`      |      | int  | 80      | TCP port, read when the service starts (`svc rs http`) |
 
-The server uses the same credentials as the FTP service (NVS `ftp_user`/`ftp_pass`, then [`ftp.conf`](ftp.md), then
+The server uses the same credentials as the FTP service (NVS `ftp_user` and `ftp_pass`, then [`ftp.conf`](ftp.md), then
 user `user` with the chip ID as password), sent as HTTP Basic auth. They are read when the service starts, so
 `svc rs http` applies a change.
 

@@ -9,8 +9,8 @@ sidebar_position: 12.5
 encrypted and authenticated with TLS 1.2 and a pre-shared key (cipher suite `TLS-PSK-WITH-AES-128-GCM-SHA256`). It
 exists only in builds with `CONFIG_FUGU_WITH_TLS_CONSOLE` (off by default, see
 [Build options](../../guide/getting-started/build-options.md#feature-flags)). Its keys `enabled` (0/1) and
-`log_level` (`error`/`warn`/`info`) are the common service keys described in
-[Service Architecture](../services.md#per-service-conf-file).
+`log_level` (`error`, `warn` or `info`) are the common service keys described in
+[Service architecture](../services.md#per-service-conf-file).
 
 The following table lists the keys in `tlscon.conf`.
 
