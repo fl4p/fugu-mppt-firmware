@@ -708,12 +708,12 @@ void test_scan_probe_anchor_on_vin() {
     TEST_ASSERT_TRUE(r->p() > 1.03f * p0);
 }
 
-// Exact series string, two substrings at 0.65: on the 45 V peak (4 conducting), the full-string peak at 72.4 V is 8 %
-// better. Weak substrings conducting lift it 9 % above 6 shares; a probe at 0.97 x 6 shares reads below the start.
+// Exact series string, two substrings at 0.67: on the 45 V peak (4 conducting), weak substrings conducting lift the
+// full-string peak above 6 shares. A probe at 0.97 x 6 shares reads x1.014 (stays), at 1.015 x1.06 (moves).
 void test_scan_probe_above_weak_peak() {
     auto r = std::make_unique<ScanRig>(45.f);
     r->pv.setPvExact(true);
-    r->g[4] = r->g[5] = 0.65f, r->shade(), r->sweep();
+    r->g[4] = r->g[5] = 0.67f, r->shade(), r->sweep();
     const float p0 = r->p();
     r->run(30'000);
     TEST_ASSERT_EQUAL_INT(2, r->ended);
