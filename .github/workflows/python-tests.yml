@@ -17,6 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # test_migrate_side_keys diffs against an older commit
       - run: git submodule update --init etc/fugu etc/idf-devtools
       - name: esp-ota-ble host modules at the pinned version
         run: |
