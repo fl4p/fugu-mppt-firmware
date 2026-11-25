@@ -475,7 +475,7 @@ heated cases. No factor meets it: every factor has a cell mean below -0.1 (wx-sh
   Raising the fallback from 0.82 to **0.84** recovers the whole gap and costs nothing at the bottom of the field's
   0.79-0.85 range, so the wider-window and sweep-maxima candidates are not needed. The constants reproduce their
   references exactly (`kVmp`=0.82 gives the base 97.34, `kVmp`=0.86 gives `kVmp exact` 98.75), so the constant does
-  stand in for the fallback. The firmware is unchanged here.
+  stand in for the fallback. Shipped as `kVmp = 0.84f` in `src/peak_scan.h`.
 * Regression-tested over the whole matrix, because a constant is only faithful where the learning never fires.
   `SIM_KVMP_START` sets the fallback once, before the first sweep, so the sweep's own learning still overwrites it; a
   per-tick constant would suppress the learning and fake a regression in every unshaded cell. 28 cells x {0.82, 0.84} x
@@ -495,7 +495,9 @@ heated cases. No factor meets it: every factor has a cell mean below -0.1 (wx-sh
   sit in the `l*` ramp cells, where the shade is already in at the boot sweep so the fallback is the value in use. The
   `a*` cells (shade arrives after an unshaded boot sweep) and the h1-h4 heating cells are flat - the control: where the
   sweep learns, the fallback is irrelevant and the change is invisible. So `kVmp = 0.82f` -> `0.84f` in
-  `src/peak_scan.h` is a strict improvement where it acts and a no-op elsewhere.
+  `src/peak_scan.h` is a strict improvement where it acts and a no-op elsewhere. That is the fallback
+  (line 50) only: the substring-count grid in `learn()` carries its own literal `0.82` (line 155) and is a separate,
+  unmeasured knob, left as it was.
 
 ### Reproduce (round 2)
 

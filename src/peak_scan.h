@@ -47,7 +47,7 @@ struct PeakScan {
     bool ret = false;
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
-    float voc = NAN, iEnv = 0, kVmp = 0.82f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
+    float voc = NAN, iEnv = 0, kVmp = 0.84f; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
     float pk = 0, vPk = 0, pLo = 0; // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it
     bool fall = false;

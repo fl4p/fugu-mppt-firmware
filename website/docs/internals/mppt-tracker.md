@@ -450,7 +450,7 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
 
 1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input voltage at the
    start of the last global sweep (converter off) and $k = V_{mpp}/V_{oc}$ taken from the sweep's maximum when it lies
-   in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.82 at start). The operating point is assigned
+   in 0.74..0.86 (an unshaded string); otherwise the last value is kept (0.84 at start). The operating point is assigned
    to the nearest multiple $m_0$ of $s_0$. $V_{in}/m_0$ overestimates the share when weaker substrings conduct at the
    operating point, $s_0$ misses heating since the sweep and the spread of $V_{mpp}/V_{oc}$; the scan uses their mean
    $s = (V_{in}/m_0 + s_0)/2$.
