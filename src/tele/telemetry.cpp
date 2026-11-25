@@ -10,6 +10,7 @@
 #include <ESPmDNS.h>
 
 #include <AsyncUDP.h>
+#include <esp_sntp.h>
 
 //#include <Preferences.h>
 
@@ -172,7 +173,16 @@ static bool timeSyncAsync(const char *tzInfo, const char *ntpServer1, const char
     if (!tSyncStarted) {
         ESP_LOGI("tele", "Starting time sync");
         tSyncStarted = millis() + 1;
-        configTzTime(tzInfo, ntpServer1, ntpServer2, ntpServer3);
+        // not configTzTime(): without CONFIG_LWIP_TCPIP_CORE_LOCKING it runs lwIP's sntp (udp pcb,
+        // sys_timeout list) on this task, racing the tcpip thread; esp_sntp_* post to that thread
+        esp_sntp_stop();
+        esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+        esp_sntp_setservername(0, ntpServer1);
+        esp_sntp_setservername(1, ntpServer2);
+        esp_sntp_setservername(2, ntpServer3);
+        esp_sntp_init();
+        setenv("TZ", tzInfo, 1);
+        tzset();
     } else if (time(nullptr) > 1000000000l) {
         struct tm timeinfo;
         time_t nowSecs = time(nullptr);
