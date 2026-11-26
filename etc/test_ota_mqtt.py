@@ -59,6 +59,14 @@ class Bootinfo(unittest.TestCase):
                          'old-image')
 
 
+class Summary(unittest.TestCase):
+    def test_dry_run_refusal_is_not_ok(self):
+        s = M.summary(['a', 'b', 'c'], {'a': 0, 'b': 'refuse'})
+        self.assertIn('a ok', s)
+        self.assertIn('b would refuse', s)
+        self.assertIn('c not run', s)
+
+
 class Guards(unittest.TestCase):
     def test_unconfirmed_running_image_refused_non_interactively(self):
         a = NS(bin='/nonexistent/fugu-firmware.bin', no_driver_check=True, dry_run=False, yes=False)

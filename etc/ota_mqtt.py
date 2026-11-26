@@ -677,7 +677,8 @@ def ota_device(args, name, image, server, gw, locks):
                 print(f'staging failed: {e}')
                 return 2
             table()
-            print(f'dry-run: would send `ota {url}` to {name}')
+            print(f'dry-run: would send `ota {url}` to {name}'
+                  + (', but the real run stops at a guard above' if args.would_refuse else ''))
             return 0
 
         note = f"OTA {image['version']} by {args.who}"
@@ -755,7 +756,8 @@ def ota_device(args, name, image, server, gw, locks):
 
 def summary(names, results):
     return '\nsummary: ' + ', '.join(
-        f"{n} {'not run' if n not in results else 'ok' if results[n] == 0 else 'FAILED'}" for n in names)
+        f"{n} {'not run' if n not in results else 'would refuse' if results[n] == 'refuse' else 'ok' if results[n] == 0 else 'FAILED'}"
+        for n in names)
 
 
 def main():
@@ -871,7 +873,11 @@ def main():
 
     results = {}
     for name in names:
+        prior, args.would_refuse = args.would_refuse, False
         results[name] = run_device(args, name, image, server, gw, locks)
+        if args.would_refuse and not results[name]:
+            results[name] = 'refuse'
+        args.would_refuse = prior or args.would_refuse
         if results[name] and not args.dry_run:
             break
     if len(names) > 1:
