@@ -107,4 +107,4 @@ The table maps source paths to their contents.
 | [MCPWM driver](pwm-drivers.md) | MCPWM synchronous-buck driver |
 | [Services](services.md) | Core-0 loop, service lifecycle, Wi-Fi and BLE |
 | [DCM coil ringing](dcm-ringing.mdx) | Switch-node ringing in discontinuous mode |
-| [LFP Longevity](lfp-longevity.md) | What the aging literature says about charge control |
+| [LFP longevity](lfp-longevity.md) | What the aging literature says about charge control |

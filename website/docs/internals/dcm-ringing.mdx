@@ -26,6 +26,7 @@ The switch node shows two distinct ringing phenomena:
 - **DCM coil ringing** (this page) occurs *only after* the inductor current reaches zero and both FETs are off.
   The main power inductor `L` resonates with the switch-node capacitance `C_sw` (see [LC tank](#lc-tank)), well
   above `f_sw` (for example 39 kHz) but far below the HF transition ring. The ring lasts hundreds of ns to µs.
+  It can change the effective duty cycle, which makes the output voltage harder to predict [5].
 
 Because the DCM ring is much slower, firmware can time events against it: `T_ring/4` spans tens to hundreds of
 PWM ticks (one MCPWM tick is 6.25 ns).
@@ -144,7 +145,8 @@ coil.
 
 #### Snubber for the HF ring
 
-The standard snubber design procedure (ADI [1], TI [4], Severns) targets this ring. It has these steps:
+The snubber design procedure of ADI [1] and TI [4] targets this ring. Severns [7] also derives `L_par` from the ring
+period, measured before and after adding a known test capacitor (about twice the switch capacitance). The procedure has these steps:
 
 1. Measure the ringing frequency `f_r` on the switch node with a scope (bandwidth limiting off,
    short ground spring).
@@ -152,8 +154,8 @@ The standard snubber design procedure (ADI [1], TI [4], Severns) targets this ri
    half. Then `C_par = C_ext / 3` (total capacitance quadrupled halves `f_r`, since `f_r ∝ 1/√(L·C)`).
 3. Find the parasitic inductance: `L_par = 1 / (4π² · f_r² · C_par)`.
 4. Set `R_snub = √(L_par / C_par)`, the characteristic impedance of the tank. This value critically damps it.
-5. Set `C_snub` to 3–10 × `C_par` (ADI [1] says 1–4 ×, TI [4] says 3–10 ×). A larger `C_snub` gives more damping but
-   more loss.
+5. Set `C_snub` to 1–4 × `C_par` (ADI [1]); Severns' quick design [7] starts at twice the sum of the switch output
+   capacitance and the mounting capacitance. A larger `C_snub` gives more damping but more loss [4].
 6. Estimate the snubber loss, `P = C_snub · V² · f_sw`: the capacitor is charged and discharged once per cycle, and
    each dissipates `½ · C_snub · V²` in `R_snub`.
 
@@ -175,7 +177,7 @@ Adjusting the dead-time can marginally affect ringing amplitude.
 #### PCB layout
 
 A smaller high-`di/dt` commutation loop lowers overshoot, so keep the input capacitor, HS FET, and
-LS FET as physically close as possible. Trace adds ~10 nH per 25 mm. A smaller loop means less
+LS FET as physically close as possible. With poor layout, trace can add up to 10 nH per 25 mm [1]. A smaller loop means less
 parasitic inductance, less stored energy, and lower overshoot. This is the most effective hardware change
 but requires a board respin. Planar or laminated busbars or adjacent PCB power layers add magnetic
 field cancellation.
@@ -220,8 +222,9 @@ At light loads, the converter can skip switching pulses entirely instead of oper
 fires a burst of CCM pulses to charge the output, then goes idle until `V_out` droops below a
 threshold. The pulses within a burst run in CCM, so the node rings once per burst, after the last pulse, instead of
 once per switching cycle. The trade-offs are
-lower-frequency output ripple at the burst frequency and potential audible noise. Many IC
-controllers (onsemi FAN65008, TI LM5146) do this automatically.
+lower-frequency output ripple at the burst frequency and potential audible noise. Some ICs offer pulse skipping as
+a light-load mode. With its MODE pin set for it, the onsemi FAN65008B runs in DCM and skips pulses as the load
+falls further [8]; in DCM its node still rings after each pulse it fires.
 
 ### Active damping
 
@@ -295,15 +298,20 @@ turn-on loss but does not damp the ring.
 
 ## References
 
-1. Analog Devices, "The Unseen Ring: Taming Parasitics in Buck Converters Using a Snubber," 2026-03-16.
+1. D. Carey, "The Unseen Ring: Taming Parasitics in Buck Converters Using a Snubber," Analog Devices, 2026-03-16.
    https://www.analog.com/en/resources/technical-articles/the-unseen-ring.html
 2. Specter Engineering, "Switch Node Ringing," 2019-10-04.
    https://www.specterengineering.com/blog/2019/9/26/switch-node-ringing
 3. EE StackExchange, "Snubbing DCM (nonsynchronous) Buck converter."
    https://electronics.stackexchange.com/questions/246301/
-4. Texas Instruments, "Controlling switch-node ringing in synchronous buck converters," SLYT465.
+4. R. Taylor and R. Manack, "Controlling switch-node ringing in synchronous buck converters," Texas Instruments
+   Analog Applications Journal, 2Q 2012, SLYT465.
    https://www.ti.com/lit/pdf/slyt465
-5. "Impact of inductor current ringing in DCM on output voltage of DC-DC buck power converters," 2017.
-   https://www.researchgate.net/publication/317525001
+5. M. Walczak, "Impact of inductor current ringing in DCM on output voltage of DC-DC buck power converters,"
+   Archives of Electrical Engineering, vol. 66, no. 2, pp. 313–323, 2017. https://doi.org/10.1515/aee-2017-0023
 6. US Patent 8933635B2, "Method of preventing spurious ringing."
    https://patents.google.com/patent/US8933635B2/en
+7. R. Severns, "Design of Snubbers for Power Circuits," Cornell Dubilier.
+   https://www.cde.com/resources/technical-papers/design.pdf
+8. onsemi, "FAN65008B: PWM Buck Regulator, Synchronous, Voltage Mode, High Performance, 65V, 10A," data sheet.
+   https://www.onsemi.com/download/data-sheet/pdf/fan65008b-d.pdf

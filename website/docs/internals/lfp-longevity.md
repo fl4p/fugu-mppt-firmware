@@ -1,5 +1,5 @@
 ---
-title: "LFP Longevity"
+title: "LFP longevity"
 sidebar_position: 12
 toc_max_heading_level: 3
 mdx:
@@ -18,7 +18,7 @@ export const Ref = ({n}) => {
 :::tip[In short]
 
 - **[Temperature](#6-temperature) first:** a resting pack loses capacity 2–3× faster at 45–50 °C than at 25–30 °C [[1](#ref-1), [6](#ref-6)].
-- **Avoid sitting near full:** aging rises with [average SoC](#41-average-soc), with a [step](#31-soc-steps) above ~70 % in one LFP cell (depending on the cell). Keep the pack mostly below that and charge to full only occasionally [[1](#ref-1), [2](#ref-2)]; what counts is the [time at the top](#52-time-at-the-top). The charger does this with [`partial_charge`](#8-charger-settings).
+- **Avoid sitting near full:** aging rises with [average SoC](#41-average-soc), with a [step](#31-soc-steps) above ~70 % in one LFP cell; the step's position varies between cell designs. Keep the pack mostly below that and charge to full only occasionally [[1](#ref-1), [2](#ref-2)]; what counts is the [time at the top](#52-time-at-the-top). The charger does this with [`partial_charge`](#8-charger-settings).
 - **[Charge rate](#7-charge-rate) hardly matters** at ≤ 0.5 C [[4](#ref-4)]. **Never charge below 0 °C** ([lithium plating](#62-cold-and-plating)) [[20](#ref-20)].
 - **[Storage](#33-manufacturer-data):** 30–50 % SoC, 0–35 °C [[8](#ref-8)].
 
@@ -41,14 +41,14 @@ This page distinguishes two kinds of aging:
 
 Lifetime models such as the one in [[4](#ref-4)] treat total loss as the sum of the two. A pack in
 a solar installation spends most of its life at rest or cycling slowly, so calendar aging carries
-a large share of its loss (see [§4.4](#44-solar-rates)).
+a large share of its loss, as the [solar-rate results](#44-solar-rates) show.
 
 The evidence below comes from laboratory aging studies on single cells: 18650 and 26650
 cylindrical cells, 240 mAh pouch cells and 100 Ah prismatic cells, one pack-level float test,
 one cell datasheet, two reviews and one practitioner article. None of the studies tested the
 large prismatic cells (around 280 Ah) commonly used in stationary packs. Transferring their
-numbers to such a pack is an assumption, and the page repeats it where it matters. Section 9 lists
-the other limits of the evidence.
+numbers to such a pack is an assumption, and the page repeats it where it matters. [Limitations](#9-limitations)
+lists the other limits of the evidence.
 
 ## 2. Aging mechanisms
 
@@ -64,12 +64,12 @@ graphite potential is nearly constant over much of that range [[2](#ref-2)].
 
 A second mechanism specific to LFP is iron dissolution from the cathode and deposition on the
 anode, which accelerates lithium loss. In [[2](#ref-2)] it occurred during cycling, was stronger at
-high temperature and high SoC, and did not occur during a voltage hold (see
-[§5.3](#53-float-and-cv-holds)).
+high temperature and high SoC, and did not occur during a
+[voltage hold](#53-float-and-cv-holds).
 
 At low temperature and high charge current, **lithium plating** takes over: metallic lithium
 deposits on the graphite instead of intercalating into it. This also shows up as loss of lithium
-inventory, but it can be much faster ([§6.2](#62-cold-and-plating)).
+inventory, but it can be much faster (see [cold and plating](#62-cold-and-plating)).
 
 Because the LFP cathode is stable when fully delithiated, the high-voltage side reactions that
 age nickel- and cobalt-based cells near 100 % SoC were not seen for LFP in [[1](#ref-1)]. The SoC
@@ -117,6 +117,12 @@ with the higher temperatures, although their periodic check-ups ran at 25 °C [[
 
 ### 3.2 Temperature
 
+In the study below, storage SoC is secondary to temperature. This is compatible with the
+[SoC steps](#31-soc-steps): three storage SoCs cannot resolve plateaus 20–30 % wide, and at
+every temperature tested in [[6](#ref-6)] the fully charged cells still aged fastest. Temperature
+decides how fast a cell ages at rest. SoC decides on which plateau it does so, and its weight
+grows with temperature.
+
 Grolleau et al. stored a commercial 15 Ah graphite/LFP cell at 30, 45 and 60 °C and at 30, 65
 and 100 % SoC for at least 450 days [[6](#ref-6)]. The measured losses were [[6](#ref-6), §3.1]:
 
@@ -127,13 +133,8 @@ The authors conclude that storage SoC "is of secondary importance compared to st
 temperature, but its influence increases with temperature", and that below 30 °C the SoC
 influence predicted by their model is minor [[6](#ref-6), §3.2 and Conclusion].
 
-Their model estimates an end of life at 100 % SoC of 20, 13.5 and 9 years at 20, 25 and 30 °C
-[[6](#ref-6), Table 5]. Those figures are extrapolations of a fitted model, not observations.
-
-The two results are compatible. Three storage SoCs cannot resolve plateaus 20–30 % wide, and at
-every temperature tested in [[6](#ref-6)] the fully charged cells still aged fastest. Temperature decides
-how fast a cell ages at rest. SoC decides on which plateau it does so, and its weight grows with
-temperature.
+Extrapolating their fitted model, the authors estimate an end of life at 100 % SoC of 20, 13.5
+and 9 years at 20, 25 and 30 °C [[6](#ref-6), Table 5]. These figures are not observations.
 
 Lam et al. analysed calendar aging of several commercial cell types over up to 13 years,
 including two K2 Energy LFP 18650 types stored at 24–85 °C and 50 or 100 % SoC for 7.8 years
@@ -211,9 +212,10 @@ A later paper by the same group, Spingler et al., reports a capacity recovery of
 after continuous shallow cycling in three LFP/graphite cell models (two 26650, one 18650). A large
 part of the shallow-cycling loss was recovered by holding the cells at 0 % or 100 % SoC, and
 differential voltage analysis and post-mortem experiments point to strongly non-uniform lithium
-distributions in the electrodes [[22](#ref-22), Abstract]. The dissertation reports that no
-clear relation between SoC range and degradation could be stated for the first 5000 FEC
-[[5](#ref-5), §7.1].
+distributions in the electrodes [[22](#ref-22), Abstract].
+
+The dissertation reports that no clear relation between SoC range and degradation could be
+stated for the first 5000 FEC [[5](#ref-5), §7.1].
 
 Preger et al. cycled the A123 APR18650M1A over 0–100 %, 20–80 % and 40–60 % SoC, that is,
 different depths around the same 50 % midpoint [[9](#ref-9)]. Fade increased with depth of
@@ -221,9 +223,9 @@ discharge for all three chemistries tested, but the SoC range had little effect 
 of the LFP cells at 200 equivalent full cycles in their statistical analysis
 [[9](#ref-9), Fig. 5f].
 
-When the study ended, most LFP cells were still above 80 % capacity. With those extrapolated at
-their final linear fade rate, the cells' cycle life to 80 % ranged from 2500 to 9000 equivalent
-full cycles [[9](#ref-9)].
+Most LFP cells were still above 80 % capacity when the study ended. Extrapolating those at their
+final linear fade rate gives a cycle life to 80 % of 2500 to 9000 equivalent full cycles
+[[9](#ref-9)].
 
 ### 4.3 High-rate results
 
@@ -317,9 +319,9 @@ only "a tiny fraction of capacity"; that is an assertion, not a measurement.
 
 ### 5.2 Time at the top
 
-Sections 3 and 4 show that the time spent at high SoC drives both calendar and cycle aging. A
-full LFP pack loses little charge at rest ([§3.3](#33-manufacturer-data)), so it gains nothing
-from being held full. What shortens its life is spending many hours on the high-SoC plateau,
+The time spent at high SoC drives both [calendar aging](#3-calendar-aging) and
+[cycle aging](#4-cycling). A full LFP pack loses little charge at rest, as the
+[manufacturer data](#33-manufacturer-data) show, so it gains nothing from being held full. What shortens its life is spending many hours on the high-SoC plateau,
 whichever voltage it was charged to.
 
 ### 5.3 Float and CV holds
@@ -384,12 +386,14 @@ harms an LFP cell nor show that it helps.
 
 ### 6.1 Heat
 
-Calendar fade rises strongly with temperature: about 0.2 percentage points per month at 25 °C
-against 0.5 at 50 °C in [[1](#ref-1)], and below 10 % in 450 days at 30 °C against 20 % at 45 °C for full
-cells in [[6](#ref-6)]. In [[9](#ref-9)] the LFP fade rate increased with temperature between 15 and 35 °C. The
-LF280K cycle-life rating drops from at least 6000 cycles at 25 °C to at least 2500 at 45 °C [[8](#ref-8)].
-In [[12](#ref-12)], one cell whose test temperature was raised from 45 to 55 °C aged at about 15.5 % per
-1000 cycles during that period and then developed an aging knee.
+Fade rises with temperature, strongly at rest:
+
+- calendar fade in [[1](#ref-1)]: about 0.2 percentage points per month at 25 °C against 0.5 at 50 °C
+- calendar fade of full cells in [[6](#ref-6)]: below 10 % in 450 days at 30 °C against 20 % at 45 °C
+- cycling in [[9](#ref-9)]: the LFP fade rate increased with temperature between 15 and 35 °C
+- the LF280K cycle-life rating: at least 6000 cycles at 25 °C, at least 2500 at 45 °C [[8](#ref-8)]
+- cycling in [[12](#ref-12)]: one cell whose test temperature was raised from 45 to 55 °C aged at about
+  15.5 % per 1000 cycles during that period and then developed an aging knee
 
 Naumann et al. subtracted modelled calendar aging from their cycle tests at 25 and 40 °C. The
 remaining cycle aging at 80 % depth agreed between the two temperatures up to about 8000 FEC.
@@ -450,7 +454,7 @@ from the testing results", but the stages changed other conditions as well
 The LF280K standard charge current is 0.5 C and the maximum continuous current 1 C [[8](#ref-8), §3 rows
 4 and 5]. At the rates a solar charger typically delivers to a large pack, the reviewed evidence
 does not identify charge current as a significant aging factor, with one exception: at low
-temperature, higher current is what causes plating ([§6.2](#62-cold-and-plating)).
+temperature, higher current is what causes [plating](#62-cold-and-plating).
 No reviewed study isolates the charge rate on large prismatic cells.
 
 ## 8. Charger settings
@@ -492,6 +496,7 @@ After a power loss, or while the data are stale, the charger charges to full.
 
 The temperature limits need a configured BMS temperature topic. Each sensor expires one hour
 after its last report, and with no fresh sensor the temperature policy is off.
+
 With `partial_charge` or `holiday_charge` set, `full_charge_interval` schedules a full charge.
 Whether the BMS balances the cells during it depends on the BMS's own balancing conditions;
 `balance_interval` schedules a longer hold at the top for an active balancer.
@@ -510,14 +515,14 @@ that evidence is.
 
 | setting | default | what the evidence says | strength of evidence |
 |---|---|---|---|
-| `cv_eoc` | 3.5 V | Below the manufacturer's standard 3.65 V CV target [[8](#ref-8)]; matches the practitioner recommendation [[13](#ref-13)]. No reviewed study compares end-of-charge voltages on the same cells ([§5.1](#51-end-of-charge-voltage)), so neither the benefit nor the capacity given up is quantified. | low |
+| `cv_eoc` | 3.5 V | Below the manufacturer's standard 3.65 V CV target [[8](#ref-8)]; matches the practitioner recommendation [[13](#ref-13)]. No reviewed study [compares end-of-charge voltages](#51-end-of-charge-voltage) on the same cells, so neither the benefit nor the capacity given up is quantified. | low |
 | `cv_float` | 3.325 V | Zero-current end of the termination line; with the default `vout_max_fallback` also the per-cell voltage target after termination. Below the 3.37 V rest voltage of a full cell given in [[13](#ref-13)] and below the 3.38 V at which the modelled cathode-lithiation current starts to rise in [[15](#ref-15)]; but in [[15](#ref-15)] the 3.33 V cell lost measured capacity faster than the 3.38 V cell, a comparison the authors caution may be masked by cathode lithiation. A target near the rest voltage ends charging; it does not lower the SoC. | low |
-| `tail_c_rate` | 0.05 | The manufacturer's cutoff current, specified at 3.65 V [[8](#ref-8)]. At `cv_eoc` = 3.5 V, the interpolation in [[13](#ref-13)] for a 3.65 V / 0.05 C pair would terminate at about 0.023 C, so the default line terminates earlier. How much capacity that forgoes was not measured in any reviewed source. | medium for the value at 3.65 V; the rest is inference |
+| `tail_c_rate` | 0.05 | The manufacturer's cutoff current, specified at 3.65 V [[8](#ref-8)]. At `cv_eoc` = 3.5 V, the interpolation in [[13](#ref-13)] for the pair 3.65 V at 0.05 C would terminate at about 0.023 C, so the default line terminates earlier. How much capacity that forgoes was not measured in any reviewed source. | medium for the value at 3.65 V; the rest is inference |
 | `recharge_dod` | 0.20 | Allows charging again once the pack has discharged this fraction of `bat_c` since the last full charge; it does not bound how far the pack discharges. With light loads the pack spends much of its time in its top fifth, the high-SoC regime that aged fastest in [[2](#ref-2)] (tested there as 75–100 %). A larger value means fewer full charges and less time near 100 %. | medium |
 | `partial_charge` | 0 (off) | The direction is well supported: lower average SoC ages LFP/graphite more slowly in calendar storage [[1](#ref-1), [3](#ref-3), [6](#ref-6)] and in low-rate cycling [[2](#ref-2)]. The best ceiling is cell-specific: the calendar step lay above about 70 % SoC in the LFP cell of [[1](#ref-1)] and depends on electrode balancing; it has not been measured for large prismatic cells. The manufacturer's recommended range is 10–90 % [[8](#ref-8)]. Charging stops at `partial_charge` and resumes once the pack has discharged `recharge_dod` below it; prerequisites above. | high for the direction, low for any particular number |
-| `holiday_charge` | 0 (off) | Applies a ceiling automatically after `holiday_days` days in a row whose mean discharge current stays below `holiday_ibat` (a pack that barely cycles); the same calendar-aging evidence as for `partial_charge` applies. With `holiday_charge` = 0.6 and `holiday_band` = 0.1 the pack cycles at about 50–60 % SoC: between 37.5 and 62.5 % SoC storage fade hardly differed [[3](#ref-3)], and the band stays below the step near 70 % SoC [[1](#ref-1)] (see [§3.1](#31-soc-steps)) with several days of base-load reserve. The detection thresholds are engineering choices. | high for the direction, none for the thresholds |
+| `holiday_charge` | 0 (off) | Applies a ceiling automatically after `holiday_days` days in a row whose mean discharge current stays below `holiday_ibat` (a pack that barely cycles); the same calendar-aging evidence as for `partial_charge` applies. With `holiday_charge` = 0.6 and `holiday_band` = 0.1 the pack cycles at about 50–60 % SoC: between 37.5 and 62.5 % SoC storage fade hardly differed [[3](#ref-3)], and the band stays below the [step near 70 % SoC](#31-soc-steps) [[1](#ref-1)] with several days of base-load reserve. The detection thresholds are engineering choices. | high for the direction, none for the thresholds |
 | `full_charge_interval` | 7 d | Full charges are needed for BMS balancing (subject to the BMS's own conditions) and to re-zero the Ah counter. No reviewed source addresses how often an LFP pack needs one. | none (engineering choice) |
-| `balance_interval` | 0 (off) | Each run holds the highest cell near `cv_eoc` for `balance_hold_s` (default 2 h, summed over sessions, one session at most twice that), the time at the top that drives aging ([§5.2](#52-time-at-the-top), [§5.3](#53-float-and-cv-holds)), so runs are infrequent (about monthly) and bounded. They are deferred above 35 °C, the top of the manufacturer's storage range [[8](#ref-8)], because heat multiplies the aging at high SoC ([§6.1](#61-heat)). No reviewed source addresses how often or how long an active balancer needs the pack at the top. | none (engineering choice) |
+| `balance_interval` | 0 (off) | Each run holds the highest cell near `cv_eoc` for `balance_hold_s` (default 2 h, summed over sessions, one session at most twice that), the [time at the top](#52-time-at-the-top) that drives aging (see also [float and CV holds](#53-float-and-cv-holds)), so runs are infrequent (about monthly) and bounded. They are deferred above 35 °C, the top of the manufacturer's storage range [[8](#ref-8)], because [heat](#61-heat) multiplies the aging at high SoC. No reviewed source addresses how often or how long an active balancer needs the pack at the top. | none (engineering choice) |
 | `ibat_max` | 20 A | At or below 0.5 C, charge rate had little influence on aging in [[4](#ref-4)], and at low rates calendar aging dominated [[5](#ref-5)]. Stay at or below the manufacturer's 0.5 C standard charge [[8](#ref-8)]. | medium; transfer to large prismatic cells assumed |
 | `bat_temp_min` | 0 °C | The manufacturer's lower charge limit [[8](#ref-8)]; plating and a drastic loss of cycle life below 0 °C [[20](#ref-20), [21](#ref-21)]. Acts only with fresh BMS temperature reports. | high |
 | `bat_temp_derate` / `bat_temp_max` | 45 / 55 °C | 55 °C is the manufacturer's upper charge limit, and rated cycle life at 45 °C is less than half that at 25 °C [[8](#ref-8)]; calendar fade also rises steeply with temperature [[1](#ref-1), [6](#ref-6)]. Acts only with fresh BMS temperature reports. | medium |
@@ -534,8 +539,8 @@ al. found that it appears after a single cycle of partial charge and discharge, 
 slight voltage change it causes can lead to substantial errors in estimating the SoC
 [[23](#ref-23), Abstract]. That effect concerns the voltage curve, not capacity loss.
 
-None of the aging studies reviewed here tested repeated partial charging with a hold at a fixed
-SoC, so this page can neither confirm nor rule out a capacity effect of the `partial_charge` hold.
+Whether the `partial_charge` hold has a capacity effect stays open: none of the aging
+studies reviewed here tested repeated partial charging with a hold at a fixed SoC.
 
 ## 9. Limitations
 
@@ -555,13 +560,13 @@ LFP cycle lives in [[9](#ref-9)], the high-rate SoC trend in [[10](#ref-10)] and
 Table 5]. Lam et al. show that constant-activation-energy extrapolation can be substantially wrong
 for calendar aging [[7](#ref-7)].
 
-**Where the studies disagree.** Low average SoC was better at C/3 in [[2](#ref-2)] but worse at 4 C in
-[[10](#ref-10)], and in the diagnostic conclusion, though not the measured capacities, of
-[[11](#ref-11)]. Zsoldos et al. suggest that lithium plating at high current could explain the
+**Where the studies disagree.** Low average SoC was better at C/3 in [[2](#ref-2)] but
+[worse at 4 C](#43-high-rate-results) in [[10](#ref-10)]. In [[11](#ref-11)] it was worse by the
+diagnostic conclusion, though not by the measured capacities. Zsoldos et al. suggest that lithium plating at high current could explain the
 difference [[2](#ref-2)]. That has not been tested.
 
 Storage SoC mattered strongly in [[1](#ref-1)] but was "of secondary importance" to temperature in
-[[6](#ref-6)], a difference that is largely one of resolution and temperature.
+[[6](#ref-6)], a difference that is largely one of [resolution and temperature](#32-temperature).
 
 For 20 % cycles, the window around 50 % SoC aged more than the windows around 25 % and 75 % in
 [[4](#ref-4)]; that effect was largely recoverable [[22](#ref-22)] and did not appear in realistic
@@ -571,8 +576,8 @@ automatically the gentlest choice.
 **Independence.** [[1](#ref-1)], [[3](#ref-3)], [[4](#ref-4)], [[5](#ref-5)] and [[22](#ref-22)] come from one research group, and [[3](#ref-3)], [[4](#ref-4)] and [[5](#ref-5)] share
 one data set, so they count as one line of evidence for the calendar-SoC dependence. [[2](#ref-2)] and [[9](#ref-9)]
 are independent of it. The reviews [[7](#ref-7)] and [[18](#ref-18)] are not independent evidence for the studies they
-relay, and the lifetime factor claimed in [[18](#ref-18)] is not supported by its own citations
-([§5.3](#53-float-and-cv-holds)).
+relay, and the lifetime factor claimed in [[18](#ref-18)] is not supported by
+[its own citations](#53-float-and-cv-holds).
 
 **What the sources do not cover.**
 

@@ -425,7 +425,8 @@ would stop the converter.
 An LS turn-off error has a different effect in each direction:
 
 - Late: reverse current. Output charge is pulled back toward the input through the rect
-  switch. This costs efficiency and causes an anti-boost effect that can lift `V_in`.
+  switch. This costs efficiency. The returned charge lowers the net input current, so `V_in` rises when the source
+  cannot sink it (a panel; see [LS minimum pulse near unity ratio](#ls-minimum-pulse-near-unity-ratio)).
 - Early: the body diode conducts the remainder. The only cost is a bounded `V_f · I` loss,
   with no instability.
 

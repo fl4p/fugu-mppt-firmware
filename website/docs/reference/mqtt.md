@@ -177,8 +177,8 @@ effects:
 When `cell_voltages_max_topic` is set, a converter restarting after a stop waits up to 12 s for the BMS termination
 decision before it sweeps. The first sweep after boot starts without this wait, under the
 `charger.conf::vout_max_fallback` cap; when BMS data lifts the cap during a no-MPP backoff, a sweep starts at once. See
-[MPP Tracker](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep) and
-[Charge Termination](../guide/charging/termination.md).
+[sweep gating](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep) on the MPP tracker page and
+[charge termination](../guide/charging/termination.md).
 
 This example `mqtt.conf` subscribes to a BMS that publishes each value on its own topic:
 
