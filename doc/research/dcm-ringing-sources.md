@@ -13,8 +13,9 @@ Checked the uncited claims on `website/docs/internals/dcm-ringing.mdx` against t
 | "onsemi FAN65008, TI LM5146 do this automatically" | FAN65008B: DCM with pulse skipping, selected by the MODE pin. LM5146: selectable diode emulation (DCM) or FPWM, no pulse skipping in the data sheet | FAN65008B as [8], "when its MODE pin selects it"; LM5146 removed |
 | Ref [5] listed, never cited, no author | Walczak, Arch. Electr. Eng. 66(2) 313–323, 2017, DOI 10.1515/aee-2017-0023: the DCM ring can change the effective duty cycle | cited in the DCM-ring bullet; bibliographic data completed |
 
-Still uncited on the page: the 3–10 × `C_sw` range in the DCM "RC snubber" subsection (a design choice there,
-which feeds the 9–30 nF and 1.8–5.9 W board C figures).
+The DCM "RC snubber" subsection used the same uncited 3–10 × `C_sw` (9–30 nF, 1.8–5.9 W on board C). Fab chose
+to recompute it with ADI's 1–4 × (2026-11-26): 3–12 nF, `C·V²·f` at 71 V and 39 kHz = 0.59–2.36 W; at
+`f_r` ≈ 319 kHz the capacitor's impedance is 1.0 × `R` at 1 × and 0.25 × `R` at 4 × (`R = √(L/C)` ≈ 166 Ω).
 
 ## Access log
 

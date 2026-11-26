@@ -127,10 +127,10 @@ possible. For the DCM ring, the tank is the main coil `L` and `C_sw`, both known
 
 - `R` near the tank's characteristic impedance `√(L / C_sw)` damps it critically. Board C
   (83 µH, ~3 nF) gives about 166 Ω.
-- `C_snub` must be several times `C_sw`, so that its impedance at `f_r` is small against `R`.
-  At 3–10 × `C_sw` that is about 9–30 nF on board C.
+- ADI's rule for the HF ring [1], 1–4 × the tank capacitance, gives 3–12 nF on board C. Its impedance at `f_r`
+  then falls from `R` (at 1 ×) to a quarter of `R` (at 4 ×), so the upper end damps better.
 - The snubber capacitor is charged and discharged once per switching cycle, so its loss is about
-  `C_snub · V_in² · f_sw`. On board C (71 V, 39 kHz) that is about 1.8–5.9 W, a large
+  `C_snub · V_in² · f_sw`. On board C (71 V, 39 kHz) that is about 0.6–2.4 W, a large
   loss for damping a ring that is mainly an EMI concern.
 
 The DCM ring stays within the switching voltage: it starts at 0 V with an amplitude of at most
