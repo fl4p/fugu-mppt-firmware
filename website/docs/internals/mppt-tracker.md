@@ -479,7 +479,7 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    and P&O restarts in fast mode towards higher $V_{in}$, with a new MPP record. If no probe wins, the tracker
    continues where it was, in the same mode.
 
-The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ratio> at <V>V[, moving]`.
+The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ratio> at <V>V[, moving][, heat]`; `heat` marks a scan whose higher candidates used the heating exception.
 
 ### Near-point probes
 

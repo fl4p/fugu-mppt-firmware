@@ -48,7 +48,7 @@ struct PeakScan {
     float vc[6]{}, pc[6]{};
     // return pass: probe Vin and the down-pass power there (ascending), probe index of the best, largest probe/down - 1;
     // a scan: its near probes in rv/rp 0 (start point, before), 1, 2; rv[0] NAN: none
-    bool ret = false;
+    bool ret = false, heat = false; // heat: this scan's upward probes used Vin / m0 (heatCut)
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
     float voc = NAN, iEnv = 0, kVmp = kVmpFallback; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
@@ -218,7 +218,8 @@ struct PeakScan {
             // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
             const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
             const float sv = vin / (float) m0, sh = 0.5f * (sv + vs0);
-            const float shUp = kVmp != kVmpFallback && sv < heatCut * vs0 ? sv : sh;
+            heat = kVmp != kVmpFallback && sv < heatCut * vs0;
+            const float shUp = heat ? sv : sh;
             claim();
             nc = 0;
             for (int m = 1; m <= n; ++m) {
@@ -314,8 +315,8 @@ struct PeakScan {
                 if (r > g) g = r, best = i;
             }
             const bool steady = std::fabs(p - p0) < 0.15f * p0, move = steady && g > 1 + margin;
-            ESP_LOGI("mppt", "scan: P %.1f->%.1f W at %.1fV, %u probes, best x%.3f at %.1fV%s", p0, p, v0, (unsigned) nc, g,
-                     vc[best], !steady ? " (light changed)" : move ? ", moving" : "");
+            ESP_LOGI("mppt", "scan: P %.1f->%.1f W at %.1fV, %u probes, best x%.3f at %.1fV%s%s", p0, p, v0, (unsigned) nc, g,
+                     vc[best], !steady ? " (light changed)" : move ? ", moving" : "", heat ? ", heat" : "");
             if (move) {
                 k = (uint8_t) best, phase = Go, pRef = pc[best], vRef = vc[best];
             } else {
