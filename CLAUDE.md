@@ -140,7 +140,8 @@ boot-time stack/cache traps that cause such hangs.
 (github.com/fl4p/idf-devtools — generic ESP-IDF tooling); it keeps that ELF around per flash so a later coredump can
 still be symbolicated. `idf_ext.py` at the repo root is a thin shim delegating to it.
 
-- **OTA** (`etc/ota.py`, `etc/ota_ble.py`) archives automatically after each verified-successful push.
+- **OTA** (`etc/ota.py`, `etc/ota_ble.py`, `etc/ota_mqtt.py`) archives automatically after each successful push;
+  `ota_mqtt.py` also archives a failed one (method `ota-mqtt-failed`), since a rolled-back image may have dumped.
 - **Serial:** `idf.py flash`/`app-flash` archive automatically — the `idf_ext.py` shim wraps the stock flash callback
   (so `idf.py flash monitor` still works; archiving happens before monitor). The device name comes from `$FUGU_DEVICE`,
   else the serial-port basename. `./flash.sh <device-name> [idf.py args]` is a thin wrapper that just sets
@@ -152,7 +153,8 @@ the flash flow; retention keeps the **30** most-recently-flashed builds (`ELF_AR
 device (`ELF_ARCHIVE_KEEP_PER_DEVICE`). The archive is found from any cwd inside the repo. Decode a dump:
 
 ```bash
-python3 etc/idf-devtools/elf_archive.py decode <core.bin>           # auto-matches the ELF by sha bytes in the dump
+python3 etc/idf-devtools/elf_archive.py decode <core.bin>           # auto-matches the ELF by sha bytes in the dump;
+                                                                    # unarchived: searches worktree build/ dirs (--search DIR)
 python3 etc/idf-devtools/elf_archive.py decode --device flat <core.bin>  # fallback: latest build flashed to flat
 python3 etc/idf-devtools/elf_archive.py list                        # flash history
 python3 etc/idf-devtools/elf_archive.py find --device flat -o fw.elf # extract an archived ELF
