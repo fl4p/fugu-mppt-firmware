@@ -370,6 +370,7 @@ class LockGuard:
         self.protected = protected_devices() if protected is None else set(protected)
         self.entries, self.known = load_ro_list(), load_known_verbs()
         self.locks = Locks(0, label='console')
+        self._ota_cache = {}
         self.log_path = log_path
         self._who = who
 
@@ -414,6 +415,27 @@ class LockGuard:
         except Exception as e:
             return f"unknown ({e})"
 
+    def ota_busy(self, host):
+        """Holder line of `ota-<host>` when another owner holds it, else None (cached 10 s)."""
+        n = f"ota-{host}"
+        hit = self._ota_cache.get(n)
+        if hit and time.monotonic() - hit[0] < 10:
+            return hit[1]
+        busy = None
+        if not self.locks.mine(n):
+            try:
+                out = self.run([LOCK_SH, "status", n, "--brief"], capture_output=True, text=True,
+                               timeout=30).stdout
+                held = next((ln for ln in out.splitlines() if ln.startswith("HELD ")), None)
+                if held and self.run([LOCK_SH, "mine", n, "--quiet"], capture_output=True, text=True,
+                                     timeout=30).returncode != 0:
+                    note = next((ln[5:] for ln in out.splitlines() if ln.startswith("note=")), "")
+                    busy = held + (f" ({note})" if note else "")
+            except (OSError, subprocess.SubprocessError):
+                pass
+        self._ota_cache[n] = (time.monotonic(), busy)
+        return busy
+
     def allowed(self, cmd, host, confirmed=True):
         """True if `cmd` may go to `host` (None = hostname not confirmed). Prints why not."""
         kind, why = classify(cmd, self.entries, self.known)
@@ -426,6 +448,11 @@ class LockGuard:
         host = host.lower()
         if host not in self.protected:
             return True
+        busy = self.ota_busy(host)
+        if busy:
+            print(f"⛔ lock guard: refusing {cmd!r}: an OTA to {host} is in progress: {busy}\n"
+                  f"   (a stale OTA lock: --no-lock-guard sends anyway, logged)", file=sys.stderr)
+            return False
         if self.holds(host, cmd):
             return True
         if self.take and self.locks.take(host, self.note or f"fugu_console by {self.who}: {cmd.split()[0]}"):

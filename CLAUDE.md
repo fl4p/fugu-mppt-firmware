@@ -337,7 +337,7 @@ interactive REPL. With no args at all it scans every transport for devices.
 `src/etc/con_guard.h` plus host-side `peek`/`sym`/`coredump info|get`/`pwr` reads; unknown commands
 count as state-changing) to a hostname in `etc/protected-devices` (fry, flat; `$FUGU_PROTECTED`
 overrides) are refused before sending unless the caller holds the device lock (`lock.sh mine fry`;
-`ota-<dev>` counts for `ota`/`ota-ble` only). `--take-lock [--lock-note WHY]` takes it for the run,
+`ota-<dev>` counts for `ota`/`ota-ble` only, and refuses everything else while another caller holds it). `--take-lock [--lock-note WHY]` takes it for the run,
 `--no-lock-guard` sends anyway. Every state-changing command sent to fry/flat is recorded (masked) in
 `elf-archive/console-commands.jsonl` with the same `who` as `ota-owners.jsonl`. `ota_mqtt.py` uses
 `Console` directly with its own `ota-*` locks and is not guarded. The PASS/FAIL/SKIP

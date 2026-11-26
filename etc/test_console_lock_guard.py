@@ -57,14 +57,18 @@ class Classifier(unittest.TestCase):
 class FakeRun:
     """Stands in for subprocess.run on lock.sh: `mine` answers from `mine`, `status` from `holder`."""
 
-    def __init__(self, mine=(), holder="HELD fry by pid 4242, session other-1234"):
-        self.mine, self.holder, self.calls = set(mine), holder, []
+    def __init__(self, mine=(), holder="HELD fry by pid 4242, session other-1234", held=()):
+        self.mine, self.holder, self.held, self.calls = set(mine), holder, dict.fromkeys(held), []
 
     def __call__(self, argv, **kw):
         self.calls.append(argv[1:])
         verb, name = argv[1], argv[2]
         if verb == "mine":
             return types.SimpleNamespace(returncode=0 if name in self.mine else 1, stdout="", stderr="")
+        if name.startswith("ota-"):  # OTA locks are free unless listed in `held`
+            out = (f"HELD {name} by pid 77, session ota-1\nnote=OTA by other\n" if name in self.held
+                   else f"FREE {name}\n")
+            return types.SimpleNamespace(returncode=1 if name in self.held else 0, stdout=out, stderr="")
         return types.SimpleNamespace(returncode=0, stdout=self.holder, stderr="")
 
 
@@ -128,6 +132,29 @@ class Decision(unittest.TestCase):
         with mock.patch.object(g.locks, "take", return_value=True) as take:
             self.assertTrue(g.allowed("dc 0", "fry"))
         take.assert_called_once_with("fry", "test")
+
+    def test_running_ota_blocks_other_commands(self):
+        # 2026-11-26: a sweep nearly went to flat mid-OTA; the guard checked only the device lock.
+        g = guard(FakeRun(mine={"flat"}, held={"ota-flat"}))
+        self.assertFalse(g.allowed("sweep", "flat"))
+        self.assertTrue(g.allowed("status", "flat"))
+        self.assertIn("OTA by other", g.ota_busy("flat"))
+        self.assertFalse(guard(FakeRun(mine={"flat"}, held={"ota-flat"})).allowed("ota http://h/x.bin", "flat"))
+
+    def test_flagged_held_ota_lock_still_blocks(self):
+        run = FakeRun(mine={"flat"}, held={"ota-flat"})
+        orig = run.__call__
+        def flagged(argv, **kw):
+            r = orig(argv, **kw)
+            if argv[1] == "status" and argv[2] == "ota-flat":
+                r.stdout = "FLAGGED ota-flat: bench note\n" + r.stdout
+            return r
+        self.assertFalse(guard(flagged).allowed("sweep", "flat"))
+
+    def test_own_ota_lock_does_not_block(self):
+        g = guard(FakeRun(mine={"flat", "ota-flat"}, held={"ota-flat"}))
+        self.assertTrue(g.allowed("sweep", "flat"))
+        self.assertTrue(g.allowed("ota http://h/f.bin", "flat"))
 
     def test_take_lock_busy_refuses(self):
         g = guard(take=True)
@@ -202,7 +229,7 @@ class Main(unittest.TestCase):
                     f"echo \"$@\" >> {tmp}/calls\n"
                     "case \"$1\" in\n"
                     f"  mine) case \" {' '.join(mine)} \" in *\" $2 \"*) exit 0;; esac; exit 1;;\n"
-                    "  status) echo \"HELD $2 by pid 4242, session other-1234\";;\n"
+                    "  status) case \"$2\" in ota-*) echo \"FREE $2\";; *) echo \"HELD $2 by pid 4242, session other-1234\";; esac;;\n"
                     "  newsession) echo console-abc;;\n"
                     "esac\nexit 0\n")
         os.chmod(lock, 0o755)

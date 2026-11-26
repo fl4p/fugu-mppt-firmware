@@ -254,7 +254,8 @@ Read-only commands are the firmware's read-only console list (`kRoCmds` in `src/
 | `--lock-note "<why>"` | Note stored with the lock that `--take-lock` takes |
 | `--no-lock-guard` | Send without the lock; the command is still recorded |
 
-The lock `ota-<hostname>` also counts, but only for `ota` and `ota-ble`. In the REPL the check runs on every
+The lock `ota-<hostname>` also counts, but only for `ota` and `ota-ble`. While another caller holds it, every
+other state-changing command is refused: the device is mid-update. In the REPL the check runs on every
 line. Each state-changing command sent to a protected device is appended to `elf-archive/console-commands.jsonl`
 with the time, device, command (secrets masked as in the firmware log), transport, caller and whether the lock was
 held. Unlisted hostnames, for example bench boards, are not guarded.
