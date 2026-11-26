@@ -154,7 +154,7 @@ refused, and 2 on a setup error.
 |-----------------------------|----------------------------------------------------------------------------|
 | `--name HOST[,HOST…]`       | Exact hostnames, updated in this order (required)                          |
 | `--bin PATH`                | App image, default `build/fugu-firmware.bin`                               |
-| `-n`, `--dry-run`           | Connect, read `bootinfo`, run the checks and stage the image; do not send `ota` |
+| `-n`, `--dry-run`           | Connect, read `bootinfo`, run the checks and stage the image; do not send `ota`. Without a terminal or `--yes`, a guard prompt the real run would stop at makes it exit 1 |
 | `-f`, `--force`             | Update even when the device already runs the image version                 |
 | `--check CMD`               | Read-only command run before and after, shown as a diff; repeatable        |
 | `--no-verify`               | Skip the `rollback=VALID` wait (`--valid-timeout`, 90 s) and log watch (`--watch`, 120 s) |

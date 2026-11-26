@@ -69,7 +69,15 @@ class Guards(unittest.TestCase):
             self.assertFalse(M.guards(a, None, img, dict(rollback='PENDING_VERIFY')))
             self.assertTrue(M.guards(a, None, img, dict(rollback='VALID')))
             a.dry_run = True
+            a.would_refuse = False
+            self.assertTrue(M.guards(a, None, img, dict(rollback='VALID')))
+            self.assertFalse(a.would_refuse)
             self.assertTrue(M.guards(a, None, img, dict(rollback='PENDING_VERIFY')))
+            self.assertTrue(a.would_refuse)  # -n must not pass where the real run would stop
+            a.would_refuse, a.yes = False, True
+            self.assertTrue(M.guards(a, None, img, dict(rollback='PENDING_VERIFY')))
+            self.assertFalse(a.would_refuse)
+            a.yes = False
             self.assertTrue(M.guards(a, None, dict(version='v1-dirty'), {}))
         finally:
             sys.stdin.close()

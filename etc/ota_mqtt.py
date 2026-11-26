@@ -295,6 +295,9 @@ def parse_hostname(lines):
 
 def confirm(prompt, args):
     if args.dry_run:
+        if not (getattr(args, 'yes', False) or sys.stdin.isatty()):
+            print(f'dry-run: the real run stops here (non-interactive, no --yes): {prompt}')
+            args.would_refuse = True
         return True
     return yes_no(f'{prompt} — proceed? [y/N] ', f'aborting: {prompt} (refused non-interactively)',
                   accept=args.yes and f'{prompt}: accepted (--yes)')
