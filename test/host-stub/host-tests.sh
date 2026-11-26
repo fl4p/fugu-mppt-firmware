@@ -43,7 +43,7 @@ TESTS=(
   "ripple-freq-test|-std=gnu++17 -O2 -I src -I test -I $H/esp||"
   "service-test|-std=gnu++17 -fexceptions -I $H -I src||"
   "settle-test|-std=gnu++20 -O2 -fexceptions $SIM|$H/esp/sim_stubs.cpp $H/esp/sim_alloc.cpp|"
-  "tele-mqtt-test|-std=gnu++20 -fexceptions -DWITH_TELE_BINARY -DWITH_TELE_MQTT -I $H/mqtt-stub -I $H -I src||"
+  "tele-mqtt-test|-std=gnu++20 -fexceptions -DCONFIG_FUGU_WITH_TELE_BINARY -DCONFIG_FUGU_WITH_TELE_MQTT -I $H/mqtt-stub -I $H -I src||"
   "tracker-window-test|-std=gnu++20 -O2 -fexceptions -DMOCK=1 -I $H -I src||"
   "vconv-test|-std=gnu++17 -fexceptions -I $H -I src|$VC|"
   "vedirect-test|-std=gnu++20||"

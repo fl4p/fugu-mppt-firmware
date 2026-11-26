@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 //#include "../adc/sampling.h"
 //#include "../store.h"
 #include <string>
@@ -35,7 +40,7 @@ void wifiLoop(bool connect = false);
 
 #include "line_protocol.h"
 
-#ifdef WITH_TELE_BINARY
+#ifdef CONFIG_FUGU_WITH_TELE_BINARY
 #include <variant>
 #include "sym_line_protocol.h"
 

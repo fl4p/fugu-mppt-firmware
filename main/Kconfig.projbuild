@@ -1,8 +1,8 @@
 menu "Fugu MPPT firmware"
 
 # Build-time feature flags. These replace the old WITH_* env-var build flags; the CMake build
-# reads CONFIG_FUGU_WITH_* and re-emits the matching WITH_* compile define + selects the source
-# files / sdkconfig fragments. Toggle with `idf.py menuconfig` or an sdkconfig(.defaults) fragment.
+# uses CONFIG_FUGU_WITH_* directly to select source files / sdkconfig fragments; firmware
+# uses the same symbols from sdkconfig.h. Toggle with `idf.py menuconfig` or an sdkconfig(.defaults) fragment.
 
 menu "ADC drivers"
 

@@ -1,10 +1,15 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 // BleConsoleService: BLE (NimBLE NUS) serial console, the fallback transport when Wi-Fi is down.
-// Compiled only with -DWITH_BLE; otherwise this header is empty. Disabled by default so the BLE
+// Compiled only with -DCONFIG_FUGU_WITH_BLE; otherwise this header is empty. Disabled by default so the BLE
 // radio only comes up on boards that opt in via ble.conf. No Wi-Fi precondition.
 
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
 
 #include <algorithm>
 
@@ -12,7 +17,7 @@
 #include "console_ble.h"
 #include "tele_ble.h"
 #include "util.h"
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 #include "tele/telemetry.h"
 #else
 #include "storage/key-value.h"
@@ -33,7 +38,7 @@ public:
 protected:
     bool onStart() override {
         ConfFile c{"/littlefs/conf/ble.conf", /*no_warn_if_not_open*/ true};
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
         std::string hn = getHostname();
 #else
         nvs.open();
@@ -55,4 +60,4 @@ protected:
 
 inline BleConsoleService bleConsoleService;
 
-#endif // WITH_BLE
+#endif // CONFIG_FUGU_WITH_BLE

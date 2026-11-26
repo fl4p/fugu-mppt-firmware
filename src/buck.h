@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 #include <cstdint>
 #include <cmath>
 #include <cstdio>
@@ -14,19 +19,19 @@
 
 #include <Arduino.h>
 //#include "pinconfig.h"
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
 #include "pwm/vconv.h"
 using LegacyPwm = PWM_VConv;
 #define HAVE_LEGACY 1
-#elif WITH_LEDC_GATE
+#elif CONFIG_FUGU_GATE_LEDC
 #include "pwm/ledc.h"
 using LegacyPwm = PWM_ESP32_ledc;
 #define HAVE_LEGACY 1
 #endif
-#if WITH_MCPWM
+#if CONFIG_FUGU_WITH_MCPWM
 #include "pwm/mcpwm.h"
 #define HAVE_MCPWM 1
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
 #include <driver/pulse_cnt.h>
 #include "pwm/wsync_usb.h"
 #if CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
@@ -221,7 +226,7 @@ class SynchronousConverter {
     // order-independent); the LEDC path keeps its two-write ordering dance.
     __attribute__((cold)) void drvInit(uint8_t pinCtrl, uint8_t pinRect, const ConfFile &boardConf,
                  const std::string &syncRole, float syncPhaseNs) {
-#if !WITH_WSYNC
+#if !CONFIG_FUGU_WITH_WSYNC
         (void) syncRole; (void) syncPhaseNs;
 #endif
 #if HAVE_MCPWM
@@ -245,7 +250,7 @@ class SynchronousConverter {
             // against THAT period -- take the shorter one here too, or a value accepted at boot can
             // be one count above what `dt` will re-accept later.
             uint32_t ceilPeriod = bestTiming(pwmFrequency).period_ticks;
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
             if (ceilPeriod > MCPWM_SyncLeg::wsyncLeadTicks) ceilPeriod -= MCPWM_SyncLeg::wsyncLeadTicks;
 #endif
             const uint32_t dtCeil = ceilPeriod / 32;
@@ -297,7 +302,7 @@ class SynchronousConverter {
             const uint32_t dtLhTicks = parseDt("pwm_deadtime_lh_ns", false);
             bool syncFollower = false;
             uint8_t faultPin = boardConf.getByte("pwm_fault_pin", 255);
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
             // Role is decided BEFORE mcpwmDrv.init(): syncFollower is not a late detail, it
             // configures the leg (2-tick lead, and period/dead-time/comparator updates on sync).
             std::string role = syncRole;
@@ -361,7 +366,7 @@ class SynchronousConverter {
                 faultBrake.initGpio(0, faultPin, boardConf.getByte("pwm_fault_active_high", 0));
                 faultBrake.bindLeg(mcpwmDrv.oper(), mcpwmDrv.genHS(), mcpwmDrv.genLS());
             }
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
             // Wired inter-chip clock sync, armed before start() so the timer never free-runs with
             // the sync half-configured. Leader: TEZ-locked pulse on pwm_sync_pin, sync_phase_deg
             // shifts the pulse (= follower period start) for interleaving. Follower: pulse edge
@@ -659,7 +664,7 @@ public:
     // the service lifecycle dispatch through the one core-0 network task, which is what actually
     // serialises them.
     std::atomic<bool> bsyncOwnsPeriod{false};
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
     pcnt_unit_handle_t wsyncPcnt_ = nullptr;
     // Why wired sync ended up in the state it did. Without this, `wsync` cannot tell a USB-pad
     // fallback from a configured sync_role=none -- both simply have no edge counter.
@@ -672,7 +677,7 @@ public:
     // A wired-sync edge counter exists (sync_role != none on a WSYNC build). Separate from the
     // count itself: a count is a valid non-negative number, so it cannot double as a sentinel.
     [[nodiscard]] bool wsyncHasCounter() const {
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         return wsyncPcnt_ != nullptr;
 #else
         return false;
@@ -685,14 +690,14 @@ public:
     static constexpr int wsyncCountMax = 32767;
 
     void wsyncClear() {
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         if (wsyncPcnt_) pcnt_unit_clear_count(wsyncPcnt_);
 #endif
     }
 
     [[nodiscard]] int wsyncCount() const {
         int c = 0;
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         if (wsyncPcnt_) pcnt_unit_get_count(wsyncPcnt_, &c);
 #endif
         return c;
@@ -897,7 +902,7 @@ public:
         // mailbox at a time, and stops this validation reading periodTicks (a plain uint16_t owned
         // by the RT core) while core 1 is writing it.
         if (!pwmFreqIdle()) return "a frequency change is still being applied";
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         // The leader's pulse comparators are absolute ticks written once in initSyncOut(), and a
         // follower's period is baked wsyncLeadTicks short in init(); neither has a re-arm path, and
         // the pad qualifier assumes both ends run the same pwm_freq.
@@ -1145,7 +1150,7 @@ public:
     // not. Either way it must not move with the dead-time, or rect_offset_ns and boot_refresh_ns
     // would silently rescale on a runtime `dt`.
     [[nodiscard]] float getPwmTickRate() const {
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
         const uint32_t hz = legacyDrv.resolutionHz;
 #else
         const uint32_t hz = drvDtResolutionHz();
@@ -1268,7 +1273,7 @@ public:
 
         std::string syncRole = "none";
         float syncPhaseNs = 0;
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         syncRole = converterConf.getString("sync_role", "none");
         if (syncRole != "none" && syncRole != "leader" && syncRole != "follower")
             throw std::runtime_error("unrecognized sync_role " + syncRole);

@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "alert.h"
 
 #include <cstdarg>
@@ -7,7 +11,7 @@
 #include <string>
 
 #include "esp_log.h"
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 #include "mqtt.h"
 #include "telemetry.h"
 #endif
@@ -28,7 +32,7 @@ Entry entries[SOURCES]{};
 bool wasConnected = false;
 
 void publish(Entry &e) {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     if (!MQTT.isConnected()) return;
     char buf[128];
     snprintf(buf, sizeof buf, "{\"lvl\":\"%s\",\"msg\":\"%s\",\"t\":%lu}", LVL[(int) e.lvl], e.msg,
@@ -70,7 +74,7 @@ void alert(const char *source, AlertLevel lvl, const char *fmt, ...) {
 }
 
 void alertTick() {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     const bool conn = MQTT.isConnected();
     const bool edge = conn && !wasConnected;
     wasConnected = conn;

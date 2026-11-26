@@ -1,7 +1,12 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 #include "driver/mcpwm_prelude.h"
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
 #include "driver/gpio_filter.h"
 #include "soc/soc_caps.h"
 #endif
@@ -63,7 +68,7 @@ class MCPWM_SyncLeg {
     mcpwm_oper_handle_t  oper_  = nullptr;
     mcpwm_cmpr_handle_t  cmpHS_ = nullptr, cmpLS_ = nullptr;
     mcpwm_gen_handle_t   genHS_ = nullptr, genLS_ = nullptr;
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
     // wired inter-chip sync (see website/docs/development/sync/wired-sync.md): leader pulse out / follower phase-reload in
     mcpwm_oper_handle_t  syncOper_ = nullptr;
     mcpwm_cmpr_handle_t  syncCmp_  = nullptr, syncCmpA_ = nullptr;
@@ -224,7 +229,7 @@ public:
         }
     }
 
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
     // Leader: emit a pulse [offsetTicks, offsetTicks+pulseTicks] each period on `gpio`,
     // phase-rigid to the switching period (own operator, gate dead-time submodule untouched).
     // offsetTicks shifts the follower's period start relative to the leader's for interleaving.
@@ -319,7 +324,7 @@ public:
         (void) gpio;
 #endif
     }
-#endif // WITH_WSYNC
+#endif // CONFIG_FUGU_WITH_WSYNC
 
     // Re-arm the dead-time submodule while the timer runs (console `dt`). Re-issues the same
     // two-call path-claim pattern as init() — see the comment there. The delay registers latch on
@@ -466,7 +471,7 @@ public:
     ~MCPWM_SyncLeg() {
         if (timer_) mcpwm_timer_start_stop(timer_, MCPWM_TIMER_STOP_EMPTY);
         if (timer_) mcpwm_timer_disable(timer_);
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         if (syncGen_)  mcpwm_del_generator(syncGen_);
         if (syncCmp_)  mcpwm_del_comparator(syncCmp_);
         if (syncCmpA_) mcpwm_del_comparator(syncCmpA_);

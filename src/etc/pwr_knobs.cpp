@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "pwr_knobs.h"
 
 #include <Arduino.h>
@@ -12,11 +16,11 @@
 #include "mppt.h"
 #include "adc/mock.h"
 #include "app_state.h"
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 #include <WiFi.h>
 #include <esp_wifi.h>
 #endif
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
 #include "tele/console_ble.h"
 #endif
 #include "idle_profile.h"
@@ -52,7 +56,7 @@ static bool argNum(const char *s, long &out) {
 
 static void pwrStatus() {
     char w[48] = "wifi=off ps=- li=- wtx=-";
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     wifi_ps_type_t ps;
     wifi_config_t wc = {};
     int8_t tx = 0;
@@ -63,7 +67,7 @@ static void pwrStatus() {
                  (unsigned) wc.sta.listen_interval, tx * .25f);
 #endif
     char adv[8] = "-";
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     snprintf(adv, sizeof adv, "%u", (unsigned) bleConsoleAdvMs());
 #endif
     char pm[40] = "-/-/- lock=-";
@@ -390,7 +394,7 @@ static int pwrSet(int argc, const char *const *argv) {
         g_teleMinPointUs = (uint32_t) v * 1000u;
         return 0;
     }
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     if (!strcmp(k, "wifi-ps")) {
         if (argc < 2 || argc > 3) return -1;
         const char *m = argv[1];
@@ -427,7 +431,7 @@ static int pwrSet(int argc, const char *const *argv) {
         return 1;
     }
 #endif
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (!strcmp(k, "ble-adv")) {
         if (argc != 2 || !argNum(argv[1], v) || (v && (v < 20 || v > 10240))) return -1;
         if (!*bleConsoleName()) { UART_LOG("pwr: BLE not started"); return 1; }

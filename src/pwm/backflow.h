@@ -1,12 +1,17 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 #include <cstdint>
 #include <Arduino.h>
 
 #include "etc/pinconfig.h"
 #include "util.h"
 #include <atomic>
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
 #include "sim/vconv.h"
 #endif
 
@@ -31,7 +36,7 @@ public:
             if (!pin.has(n)) throw std::runtime_error("board.conf: " + o + " was renamed to " + n);
             ESP_LOGW("bflow", "board.conf: %s ignored, %s is set; remove %s", o.c_str(), n.c_str(), o.c_str());
         }
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
         // simulated plant: keep the logical state, never drive a real board's switch
         pinEN = pinSD = 0;
 #else
@@ -60,7 +65,7 @@ public:
         enable = false;
 #endif
         if (lockOff.load(std::memory_order_relaxed)) enable = false;
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
         g_vconv.bfOn = enable;
 #endif
         if (pinEN) {
@@ -81,7 +86,7 @@ public:
     bool state() const { return _state; }
 
     explicit operator bool() const {
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
         if (g_vconv.bfModel) return true;
 #endif
         return pinSD != 0 or pinEN != 0;   // init() asserts the two are mutually exclusive

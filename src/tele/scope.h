@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 //#include <sstream>
 #include <cassert>
 #include <cstdio>
@@ -477,10 +482,10 @@ public:
 };
 
 
-// RT/ADC sampling path pushes samples through `scope`. WITH_SCOPE: a pointer aimed at
+// RT/ADC sampling path pushes samples through `scope`. CONFIG_FUGU_WITH_SCOPE: a pointer aimed at
 // scopeService.scopeObj (scope_service.cpp). Otherwise a no-op stub that tests false, so every
 // `if (scope)` call site compiles away (a constexpr nullptr would trip -Werror=nonnull).
-#if WITH_SCOPE
+#if CONFIG_FUGU_WITH_SCOPE
 extern Scope *scope;
 #else
 struct NoScope {

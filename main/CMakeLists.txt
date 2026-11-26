@@ -22,7 +22,7 @@ if ($ENV{RUN_TESTS})
             "../test/test_psu_mode.cpp"
             "../test/test_pv_sim.cpp"
             # vconv plant: gated by CONFIG_FUGU_WITH_VCONV in normal builds (VCONV_SRC), but its
-            # pure-C++ plant is always linked here for test_vconv.cpp. WITH_VCONV defaults off, so
+            # pure-C++ plant is always linked here for test_vconv.cpp. CONFIG_FUGU_WITH_VCONV defaults off, so
             # VCONV_SRC stays empty in test builds -> no duplicate symbol.
             "../src/sim/vconv.cpp"
     )
@@ -57,13 +57,7 @@ set(NETW_SRC
 # CONFIG_FUGU_WITH_NETW (default y) compiles the WiFi/mDNS/MQTT/telemetry/HTTPS-OTA path; off drops
 # all of the above and the firmware runs UART/USB/BLE consoles only. The linker drops the
 # unreferenced network components, so no sdkconfig fragment is needed.
-if (CONFIG_FUGU_WITH_NETW)
-    set(WITH_NETW 1)
-else ()
-    set(WITH_NETW 0)
-endif ()
-
-if (NOT WITH_NETW)
+if (NOT CONFIG_FUGU_WITH_NETW)
     set(NETW_SRC "")
 endif ()
 if (CONFIG_FUGU_WITH_TELNET)
@@ -94,10 +88,7 @@ set(BLE_SRC
 
 # CONFIG_FUGU_WITH_BLE (default y) compiles the NimBLE console + OTA path; the sdkconfig.d/ble layering
 # in the top-level CMakeLists tracks the same symbol.
-if (CONFIG_FUGU_WITH_BLE)
-    set(WITH_BLE 1)
-else ()
-    set(WITH_BLE 0)
+if (NOT CONFIG_FUGU_WITH_BLE)
     set(BLE_SRC "")
 endif ()
 
@@ -105,7 +96,7 @@ endif ()
 # the BLE stream (CONFIG_FUGU_WITH_BLE_TELE, adds src/tele/tele_ble.cpp to BLE_SRC). tamp only with
 # the binary wire (CONFIG_FUGU_WITH_TELE_BINARY).
 set(TELE_CORE_SRC "")
-if (WITH_NETW OR CONFIG_FUGU_WITH_BLE_TELE)
+if (CONFIG_FUGU_WITH_NETW OR CONFIG_FUGU_WITH_BLE_TELE)
     set(TELE_CORE_SRC "../src/tele/tele_core.cpp")
 endif ()
 if (CONFIG_FUGU_WITH_TELE_BINARY)
@@ -128,10 +119,8 @@ endif ()
 # (src/sim/vconv.*); one of the Kconfig gate-driver choices. See
 # doc/superpowers/specs/2026-05-23-virtual-converter-design.md.
 if (CONFIG_FUGU_WITH_VCONV)
-    set(WITH_VCONV 1)
     set(VCONV_SRC "../src/sim/vconv.cpp")
 else ()
-    set(WITH_VCONV 0)
     set(VCONV_SRC "")
 endif ()
 
@@ -178,37 +167,6 @@ idf_component_register(SRCS
 
 target_linker_script(${COMPONENT_LIB} INTERFACE "rtc_pin.ld")
 
-if (WITH_NETW)
-    component_compile_definitions("WITH_NETW=1")
-endif ()
-
-# CONFIG_FUGU_WITH_NETTOOLS (default n, depends on NETW) compiles the `curl`/`ping` console commands.
-if (CONFIG_FUGU_WITH_NETTOOLS)
-    component_compile_definitions("WITH_NETTOOLS=1")
-endif ()
-if (CONFIG_FUGU_WITH_TELNET)
-    component_compile_definitions("WITH_TELNET=1")
-endif ()
-if (CONFIG_FUGU_WITH_TLS_CONSOLE)
-    component_compile_definitions("WITH_TLS_CONSOLE=1")
-endif ()
-if (CONFIG_FUGU_WITH_SCOPE)
-    component_compile_definitions("WITH_SCOPE=1")
-endif ()
-if (CONFIG_FUGU_WITH_FTP)
-    component_compile_definitions("WITH_FTP=1")
-endif ()
-if (CONFIG_FUGU_WITH_HTTP_CONF)
-    component_compile_definitions("WITH_HTTP_CONF=1")
-endif ()
-if (CONFIG_FUGU_WITH_HA)
-    component_compile_definitions("WITH_HA=1")
-endif ()
-if (CONFIG_FUGU_WITH_PSU)
-    component_compile_definitions("WITH_PSU=1")
-endif ()
-
-
 if ($ENV{FUGU_BAT_V})
     # 14.25, 28.5, 57
     component_compile_definitions("FUGU_BAT_V=$ENV{FUGU_BAT_V}")
@@ -227,68 +185,8 @@ if ($ENV{FUGU_FORCE_BFLOW_OFF})
     component_compile_definitions("FUGU_FORCE_BFLOW_OFF=1")
 endif ()
 
-if (WITH_BLE)
-    component_compile_definitions("WITH_BLE=1")
-endif ()
-if (CONFIG_FUGU_WITH_BLE_ADV)
-    component_compile_definitions("WITH_BLE_ADV=1")
-endif ()
-if (CONFIG_FUGU_WITH_IMPROV)
-    component_compile_definitions("WITH_IMPROV=1")
-endif ()
-if (CONFIG_FUGU_WITH_TELE_BINARY)
-    component_compile_definitions("WITH_TELE_BINARY=1")
-endif ()
-if (CONFIG_FUGU_WITH_BLE_TELE)
-    component_compile_definitions("WITH_BLE_TELE=1")
-endif ()
-if (CONFIG_FUGU_WITH_TELE_MQTT)
-    component_compile_definitions("WITH_TELE_MQTT=1")
-endif ()
-
-# Gate-driver back-ends. CONFIG_FUGU_WITH_MCPWM (src/pwm/mcpwm.h): hardware dead-time, GPIO OST brake,
-# glitch-free comparator updates (see website/docs/internals/pwm-drivers.md). CONFIG_FUGU_GATE_LEDC: the LEDC
-# gate driver (src/pwm/ledc.h); one gate driver per build (Kconfig choice). CONFIG_FUGU_WITH_LEDC: the LEDC
-# peripheral for fan PWM + `anaw`; with it off esp32-hal-ledc drops out.
-if (CONFIG_FUGU_WITH_MCPWM)
-    component_compile_definitions("WITH_MCPWM=1")
-endif ()
-if (CONFIG_FUGU_WITH_LEDC)
-    component_compile_definitions("WITH_LEDC=1")
-endif ()
-if (CONFIG_FUGU_GATE_LEDC)
-    component_compile_definitions("WITH_LEDC_GATE=1")
-endif ()
-if (CONFIG_FUGU_WITH_BSYNC)
-    component_compile_definitions("WITH_BSYNC=1")
-elseif (CONFIG_FUGU_WITH_NETW AND NOT CONFIG_FUGU_WITH_MCPWM)
+if (CONFIG_FUGU_WITH_NETW AND NOT CONFIG_FUGU_WITH_MCPWM)
     message(STATUS "bsync compiled out: needs the MCPWM gate driver")
-endif ()
-if (CONFIG_FUGU_WITH_WSYNC)
-    component_compile_definitions("WITH_WSYNC=1")
-endif ()
-
-if (WITH_VCONV)
-    component_compile_definitions("WITH_VCONV=1")
-endif ()
-
-# CONFIG_FUGU_WITH_SPROFILER compiles in the semihosting sampling profiler (sprofiler_initialize,
-# only useful with OpenOCD attached). Off by default; the top-level CMakeLists then
-# EXCLUDE_COMPONENTS the esp32-semihosting-profiler component so its flash + ~8 KB .bss is dropped.
-if (CONFIG_FUGU_WITH_SPROFILER)
-    component_compile_definitions("WITH_SPROFILER=1")
-endif ()
-
-if (CONFIG_FUGU_WITH_RTPROF)
-    component_compile_definitions("WITH_RTPROF=1")
-endif ()
-
-if (CONFIG_FUGU_WITH_MEASURE_COIL)
-    component_compile_definitions("WITH_MEASURE_COIL=1")
-endif ()
-
-if (CONFIG_FUGU_WITH_SCRIPTS)
-    component_compile_definitions("WITH_SCRIPTS=1")
 endif ()
 
 # CONFIG_FUGU_WITH_USB_MSC: CDC console + emulated FAT config drive on espressif/tinyusb (pulled in
@@ -297,7 +195,6 @@ if (CONFIG_FUGU_WITH_USB_MSC)
     if (NOT CONFIG_IDF_TARGET_ESP32S3 OR CONFIG_FUGU_WITH_WSYNC)
         message(FATAL_ERROR "FUGU_WITH_USB_MSC needs an ESP32-S3 and FUGU_WITH_WSYNC off (both use the USB pads)")
     endif ()
-    component_compile_definitions("WITH_USB_MSC=1")
     idf_component_get_property(_tusb_lib espressif__tinyusb COMPONENT_LIB)
     target_include_directories(${_tusb_lib} PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../src/usb")
 elseif (CONFIG_IDF_TARGET_ESP32S3 AND CONFIG_ESP_CONSOLE_SECONDARY_NONE)
@@ -325,10 +222,10 @@ set(_size_opt_srcs
         ../src/etc/rt.cpp
         ../src/math/float16.cpp
 )
-if (WITH_NETW)
+if (CONFIG_FUGU_WITH_NETW)
     list(APPEND _size_opt_srcs ${NETW_SRC})
 endif ()
-if (WITH_BLE)
+if (CONFIG_FUGU_WITH_BLE)
     list(APPEND _size_opt_srcs ${BLE_SRC})
 endif ()
 if (CONFIG_FUGU_WITH_MEASURE_COIL)

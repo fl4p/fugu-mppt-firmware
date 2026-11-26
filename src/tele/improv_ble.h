@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 // Improv Wi-Fi over BLE (improv-wifi.com/ble), a GATT service next to the NUS console.
 // Credentials are accepted only while the device is offline: no network configured, or
 // Wi-Fi down for wifi.conf::improv_offline_s. Online, the state reads "provisioned" and
@@ -13,7 +18,7 @@
 
 class BLEServer;
 
-#ifdef WITH_IMPROV
+#ifdef CONFIG_FUGU_WITH_IMPROV
 
 // writeProps: the console RX write flags; the RPC characteristic takes the same security.
 void improvCreateService(BLEServer *srv, uint32_t writeProps);

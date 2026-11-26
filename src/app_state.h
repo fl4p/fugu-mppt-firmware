@@ -1,4 +1,9 @@
 #pragma once
+
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 // Bundled mode/state flags owned by main.cpp. Single struct so cli.cpp and other consumers see a
 // documented surface (`g_app.manualPwm`) instead of a sprawl of file-scope externs. Components
 // (mppt, converter, adcSampler, sensors, led, nvs) stay as named globals — they're the right
@@ -18,12 +23,12 @@ struct AppState {
     // data race even when each individual byte write happened to be atomic on the ESP32.
     std::atomic<OpMode> opMode{OpMode::Mppt};
     [[nodiscard]] bool manualPwm() const { return opMode.load() == OpMode::Manual; }
-#if WITH_PSU
+#if CONFIG_FUGU_WITH_PSU
     [[nodiscard]] bool psuMode()   const { return opMode.load() == OpMode::Psu; }
 #else
     [[nodiscard]] bool psuMode()   const { return false; }
 #endif
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     bool disableWifi = false;
     time_ms wifiReenableMs = 0; // wallClockMs() deadline to auto re-enable WiFi (0 = never)
 #endif

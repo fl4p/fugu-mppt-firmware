@@ -1,6 +1,10 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "improv_ble.h"
 
-#ifdef WITH_IMPROV
+#ifdef CONFIG_FUGU_WITH_IMPROV
 
 #include <algorithm>
 #include <mutex>
@@ -292,4 +296,4 @@ void improvTick(time_ms now) {
     advTick(now);
 }
 
-#endif // WITH_IMPROV
+#endif // CONFIG_FUGU_WITH_IMPROV

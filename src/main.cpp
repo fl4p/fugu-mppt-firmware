@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 
 #include "logging.h"
 
@@ -25,35 +29,35 @@
 #include "viz/led.h"
 #include "tele/console_ble_service.h"
 #include "etc/network_shim.h"
-#ifdef WITH_NETW
+#include "tele/tele_mqtt.h" // also supplies the no-network tick stub
+#ifdef CONFIG_FUGU_WITH_NETW
 #include "tele/telemetry.h"
-#include "tele/tele_mqtt.h"
-#if WITH_FTP
+#if CONFIG_FUGU_WITH_FTP
 #include "tele/ftp_service.h"
 #endif
-#if WITH_HTTP_CONF
+#if CONFIG_FUGU_WITH_HTTP_CONF
 #include "tele/http_conf_service.h"
 #endif
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
 #include "tele/telnet_service.h"
 #endif
-#if WITH_TLS_CONSOLE
+#if CONFIG_FUGU_WITH_TLS_CONSOLE
 #include "tele/tls_console.h"
 #endif
 #include "tele/telemetry_service.h"
-#if WITH_HA
+#if CONFIG_FUGU_WITH_HA
 #include "tele/home_assistant.h"
 #endif
 #include "etc/ota.h"
 #endif
-#if WITH_SCOPE
+#if CONFIG_FUGU_WITH_SCOPE
 #include "tele/scope_service.h"
 #endif
 #include "sync/bsync.h"
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
 #include "usb/usb_dev.h"
 #endif
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
 #include "selftest/measure_coil.h"
 #endif
 #include "selftest/bflow_test.h"
@@ -61,7 +65,7 @@
 #include "etc/version.h"
 
 #include "etc/perf.h"
-#ifdef WITH_SPROFILER
+#ifdef CONFIG_FUGU_WITH_SPROFILER
 #include <sprofiler.h>
 #endif
 
@@ -92,7 +96,7 @@
 #include "etc/heap_diag.h"
 #include "etc/net_guard.h"
 #include <ota_ble.h>
-#if WITH_RTPROF
+#if CONFIG_FUGU_WITH_RTPROF
 #include "etc/rtprof.h"
 #endif
 #if CONFIG_FUGU_WITH_PWR_KNOBS
@@ -109,7 +113,7 @@ SynchronousConverter converter; // buck or boost
 static void IRAM_ATTR hwOvIsr() { converter.isrForceOff(); }
 LedIndicator led;
 MpptController mppt{adcSampler, sensors, converter, lcdService.lcd}; // lcd owned by lcdService
-#ifdef WITH_TELE_MQTT
+#ifdef CONFIG_FUGU_WITH_TELE_MQTT
 void teleProducePoint() { mppt.telemetry(); }
 #endif
 
@@ -146,11 +150,11 @@ static void loopNetwork_task(void *arg);
 static void loopRT(void *arg); // this is the critical one
 
 static void loopRTNewData(time_ms nowMs);
-#if WITH_RTPROF
+#if CONFIG_FUGU_WITH_RTPROF
 volatile uint8_t g_rtLogTest = 0;
 #endif
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 // arduino-esp32's WiFiGeneric.cpp:298 calls esp_netif_create_default_wifi_ap() unconditionally,
 // but esp_wifi defines it only when CONFIG_ESP_WIFI_SOFTAP_SUPPORT=y. We turn SOFTAP off in
 // sdkconfig.defaults (saves a few KB) and never act as an AP, so stub it inline here so the
@@ -230,10 +234,10 @@ static void setupI2C(const ConfFile &boardConf, bool &noI2C) {
 }
 
 // Bring up WiFi at boot (when enabled) and load tele.conf. Returns a default-constructed TeleConf
-// when WITH_NETW=0 or NO_WIFI is set; mppt.begin tolerates that.
+// when CONFIG_FUGU_WITH_NETW=0 or NO_WIFI is set; mppt.begin tolerates that.
 static TeleConf setupNetworkAtBoot() {
     TeleConf teleConf{};
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 #ifdef NO_WIFI
     g_app.disableWifi = true;
 #endif
@@ -285,7 +289,7 @@ static void setupConverterAndMppt(const ConfFile &boardConf, const Limits &lim, 
     try {
         setupSensors(boardConf, lim);
         mppt.initSensors(boardConf);
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
         scope->addChannel(&mppt, 0, 'u', 12, "vout_filt"); // scope owned by scopeService (scope -> &scopeObj)
 #endif
 
@@ -398,14 +402,14 @@ static void pinGpioIsrToRtCore() {
 // mppt/home-assistant wiring here (out of mqtt.cpp) via preStart, re-run on every start. Network
 // services that aren't Running at boot self-heal on the WiFi-up edge in loopNetwork_task.
 static void registerServices() {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     MQTT.preStart = [](const ConfFile &mqttConf) {
         mppt.charger.beginMqtt(mqttConf);
-#if WITH_HA
+#if CONFIG_FUGU_WITH_HA
         MQTT.onConnected = haMqttSendDiscovery;
 #endif
     };
-#if WITH_HA
+#if CONFIG_FUGU_WITH_HA
     // Periodic HA power publish, throttled inside MqttService::onTick (only ticks while Running).
     MQTT.tickHook = [] {
         if (!mppt.sensorPhysicalI || !mppt.sensorPhysicalU) return; // sensor setup failed, mppt.begin() skipped
@@ -415,16 +419,16 @@ static void registerServices() {
 #endif
     g_services.registerService(&MQTT);
     g_services.registerService(&telemetryService);
-#if WITH_FTP
+#if CONFIG_FUGU_WITH_FTP
     g_services.registerService(&ftpService);
 #endif
-#if WITH_HTTP_CONF
+#if CONFIG_FUGU_WITH_HTTP_CONF
     g_services.registerService(&httpConfService);
 #endif
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
     g_services.registerService(&telnetService);
 #endif
-#if WITH_TLS_CONSOLE
+#if CONFIG_FUGU_WITH_TLS_CONSOLE
     g_services.registerService(&tlsConsoleService);
 #endif
 #endif
@@ -432,10 +436,10 @@ static void registerServices() {
 #if CONFIG_FUGU_WITH_EXTPORT
     g_services.registerService(&extPortService);
 #endif
-#if WITH_SCOPE
+#if CONFIG_FUGU_WITH_SCOPE
     g_services.registerService(&scopeService);
 #endif
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     g_services.registerService(&bleConsoleService);
 #endif
 #ifdef HAVE_BSYNC
@@ -578,7 +582,7 @@ __attribute__((cold)) static void wireGuardLoad() {
 static void idleProfileSetup(const ConfFile &boardConf);
 
 __attribute__((cold)) void setup() {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     bootLogBegin();
 #endif
     consoleInit();
@@ -602,11 +606,11 @@ __attribute__((cold)) void setup() {
     // reveal set-config writes not yet applied by a restart). Read-only, before any conf is parsed.
     confHashCaptureBoot();
 
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     usbDevBegin();
 #endif
 
-#ifdef WITH_SPROFILER
+#ifdef CONFIG_FUGU_WITH_SPROFILER
     try {
         ConfFile pprofConf{"/littlefs/conf/pprof.conf", true};
 
@@ -622,7 +626,7 @@ __attribute__((cold)) void setup() {
         // a malformed pprof.conf must not brick the device — the profiler is purely diagnostic
         ESP_LOGE("main", "error reading pprof.conf, skipping profiler: %s", e.what());
     }
-#endif // WITH_SPROFILER
+#endif // CONFIG_FUGU_WITH_SPROFILER
 
     // A malformed board.conf must not abort setup() (which would reboot and re-read the same bad
     // file → boot loop). Fall back to an empty config and run the safe-idle path via g_app.setupErr.
@@ -666,7 +670,7 @@ __attribute__((cold)) void setup() {
     pinGpioIsrToRtCore();
 #endif
 
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
     // Consume the `wsync arm` one-shot BEFORE the converter can touch the USB pad: clearing it
     // afterwards would repeat the forced probe forever if the probe itself crashed, and clearing
     // it at all is what keeps a power cycle a way back to automatic mode.
@@ -685,7 +689,7 @@ __attribute__((cold)) void setup() {
     if (!g_app.setupErr) {
         // ~2 KB used (log formatting runs on core 0). Heap is the scarcer resource on the S3.
         xTaskCreatePinnedToCore(loopRT, kRtTaskName, 8192, NULL, RT_PRIO, NULL, RT_CORE);
-#if WITH_RTPROF
+#if CONFIG_FUGU_WITH_RTPROF
         rtprofStart(2000);
 #endif
     } else {
@@ -698,7 +702,7 @@ __attribute__((cold)) void setup() {
     // WiFi connects routes the wifi task's connect-time logging burst through vprintf_mux's 300B
     // stack buffer, overflowing the 3072B wifi task stack (this bricked flat). So esp_log lines
     // reach the boot-log backlog from here on; UART_LOG lines since bootLogBegin().
-#if defined(WITH_NETW) || defined(WITH_USB_MSC)
+#if defined(CONFIG_FUGU_WITH_NETW) || defined(CONFIG_FUGU_WITH_USB_MSC)
     enable_esp_log_to_telnet();
 #endif
 
@@ -817,7 +821,7 @@ static void loopRT(void *arg) {
             );
         }
 
-#if WITH_RTPROF
+#if CONFIG_FUGU_WITH_RTPROF
         if (unlikely(g_rtLogTest)) {
             RT_COLD(
             const uint8_t k = --g_rtLogTest;
@@ -975,7 +979,7 @@ static std::string mpptStateStr() {
 // Shut down WiFi when chip temperature gets dangerous. BLE on ESP32-S3 ran the chip hot enough
 // to need this even before the modem-sleep fix; the temperature ceiling here is a last resort.
 static void wifiShutdownIfHot(float chipTempC) {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     if (chipTempC > 95 && wifiIsConnected()) {
         ESP_LOGW("main", "High chip temperature, shut-down WiFi");
         flush_async_uart_log();
@@ -1135,7 +1139,7 @@ static void lfWireGuard(float iout) {
 // Low-frequency control reads (RT-adjacent, not in the ADC fast path): NTC + chip temp,
 // charger termination state, and the thermal-cap WiFi cutoff.
 static void lfControl() {
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     g_app.usbConnected = usbCdcConnected();
 #elif CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     g_app.usbConnected = usb_serial_jtag_is_connected();
@@ -1176,10 +1180,10 @@ static void lfControl() {
     }
 }
 
-// One-line UART/MQTT/telnet status line. WITH_MEASURE_COIL skips it during the coil sweep so the
+// One-line UART/MQTT/telnet status line. CONFIG_FUGU_WITH_MEASURE_COIL skips it during the coil sweep so the
 // measurement output isn't intermixed with the status print.
 __attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     if (!sensors.Vin || isMeasuring()) return;
 #else
     if (!sensors.Vin) return;
@@ -1496,7 +1500,7 @@ static void loopRTNewData(time_ms nowMs) {
 }
 
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 static NetGuard s_guard;
 // Survives esp_restart(): magic | kNgHold (guard reboot, no MQTT connect since) | guard reboots since power-on.
 static RTC_NOINIT_ATTR uint32_t s_ngRtc;
@@ -1535,7 +1539,7 @@ static void netGuardTick(bool wifiUp) {
     in.mqttRunning = st == ServiceState::Running;
     in.mqttConnected = MQTT.isConnected();
     in.rebootOk = esp_timer_get_time() > 300LL * 1000000 && !flashOpActive() && !g_restartBlocked
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
                   && !otaBleActive()
 #endif
             ;
@@ -1562,7 +1566,7 @@ static void netGuardTick(bool wifiUp) {
 }
 #endif
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 static int8_t s_wifiPs = -1; // -1 unset, 0 MIN_MODEM, 1 MAX_MODEM
 #endif
 
@@ -1759,15 +1763,15 @@ static void idleProfileSet(bool on, const char *why) {
     s_idle.on = on;
     if (!on) idleCpuLeave(esp_timer_get_time());
     if (s_idle.teleMs) g_teleMinPointUs = on ? s_idle.teleMs * 1000u : kTeleMinPointUs;
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (s_idle.advMs) bleConsoleSetAdvMs(on ? s_idle.advMs : 0); // with a client: retried by the tick
 #endif
     const char *wifi = "-";
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     if (s_wifiPs >= 0) wifi = s_wifiPs ? "MAX_MODEM" : "MIN_MODEM";
 #endif
     char adv[24] = "-";
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (*bleConsoleName()) {
         const uint16_t a = on ? s_idle.advMs : 0;
         snprintf(adv, sizeof adv, "%u ms%s", (unsigned) bleConsoleAdvMs(), bleConsoleAdvMs() == a ? "" : " (pending)");
@@ -1820,13 +1824,13 @@ static const char *idleBlocker() {
     if (const uint8_t hs = mppt.hsFaultState(); hs && hs != MpptController::HsOff) return "(hs clamp)"; // monitored each sample
     if (converter.bsyncOwnsPeriod) return "(bsync)";
     if (s_idle.hold) return "(ota)";
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (otaBleActive()) return "(ota)";
 #endif
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     if (isMeasuring()) return "(measure-coil)";
 #endif
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     if (usbDriveMounted()) return "(usb drive)";
 #endif
     return nullptr;
@@ -1835,13 +1839,13 @@ static const char *idleBlocker() {
 // work the daily `selftest bflow` must not interrupt
 static bool selftestMaintenance() {
     if (mppt.rectCal.cal.running() || converter.bsyncOwnsPeriod || s_idle.hold) return true;
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (otaBleActive()) return true;
 #endif
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     if (isMeasuring()) return true;
 #endif
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     if (usbDriveMounted()) return true;
 #endif
     return false;
@@ -1861,7 +1865,7 @@ static void idleProfileTick(time_ms nowMs) {
         if (wake && s_idle.force == 2) s_idle.force = 0; // a start ends a forced profile
         const bool want = s_idle.force ? s_idle.force == 2 && !why : nowMs - busyMs > s_idleAfterMs;
         if (want != s_idle.on) idleProfileSet(want, why ? why : s_idle.force ? "(pwr idle)" : nullptr);
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
         else if (s_idle.advMs && bleConsoleAdvMs() != (want ? s_idle.advMs : 0))
             bleConsoleSetAdvMs(want ? s_idle.advMs : 0);
 #endif
@@ -1869,7 +1873,7 @@ static void idleProfileTick(time_ms nowMs) {
     idleCpuTick();
 }
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 static bool s_wifiTorndown = false;
 
 // Stop network services while the netif is still valid, then drop WiFi. Never from inside a telnet
@@ -1886,7 +1890,7 @@ void wifiRelease() {
 // Per-tick WiFi + network-service work for loopNetwork_task. Handles auto-reenable timer, the
 // temp-gated wifiLoop, and self-healing network services on the WiFi-up edge.
 static void networkLoopTick() {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     if (g_app.disableWifi && g_app.wifiReenableMs && !otaBleActive()
         && (int32_t) (wallClockMs() - g_app.wifiReenableMs) >= 0) {
         g_app.wifiReenableMs = 0;
@@ -1939,7 +1943,7 @@ static void networkLoopTick() {
 // True while a TCP scope client is attached and its blocking netLoop() will provide the cooperative
 // yield this iteration; otherwise loopNetwork_task must yield explicitly.
 static bool scopeKeepsAwake() {
-#if WITH_SCOPE
+#if CONFIG_FUGU_WITH_SCOPE
     return scopeService.state() == ServiceState::Running && scopeService.hasClient();
 #else
     return false;
@@ -1968,7 +1972,7 @@ static void loopNetwork_task(void *arg) {
 
     loopUart(nowMs);
     if (mppt.sensorPhysicalI) selftestUrgent(nowMs), bfTestTick((uint32_t) nowMs);
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     switch (usbDevPoll()) {
         case UsbEvent::ConfCommitted:
             mppt.rectCal.discard();
@@ -1990,11 +1994,11 @@ static void loopNetwork_task(void *arg) {
     // ftp / telnet / telemetry / lcd / scope ticks (only the Running ones do work)
     g_services.tickAll();
     teleMqttTick(nowMs);
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (bleOtaRebootDue()) {
         bleConsoleAwaitTxDrain(0, 1000);
         systemRestart();
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
         g_app.disableWifi = false; // restart refused: Wi-Fi was on before the push released it
         connect_wifi_async();
 #endif
@@ -2030,7 +2034,7 @@ static void loopNetwork_task(void *arg) {
 // Give the telnet client a chance to drain a FIN before we wipe the stack. stopAll() would slam
 // the socket shut, so do this ahead of it.
 static void restartCloseTelnet() {
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
     telnetService.beginClose();
     for (int i = 0; i < 200 && telnetService.closePending(); ++i) delay(10);
 #endif

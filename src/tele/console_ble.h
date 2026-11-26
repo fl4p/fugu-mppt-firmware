@@ -7,7 +7,7 @@
 
 // BLE serial console over the Nordic UART Service (NUS). A new transport for handleCommand(),
 // reachable without Wi-Fi. ESP32-S3 supports BLE only (no classic SPP). All functions are
-// no-ops unless the firmware is built with -DWITH_BLE (see main/CMakeLists.txt).
+// no-ops unless the firmware is built with CONFIG_FUGU_WITH_BLE enabled in Kconfig.
 //
 // security: "none" | "justworks" | "passkey".
 //   none      - open, no pairing (any client may issue commands).
@@ -46,7 +46,7 @@ uint16_t bleConsoleAdvMs();
 // Pump the TX FIFO until its backlog drops below `lowWater` bytes (or `timeoutMs` elapses / the client
 // disconnects), yielding so NimBLE can transmit and free mbufs. A long command that emits more than
 // TX_BUF_CAP bytes in one go (e.g. `coredump get`) must call this between writes, else the FIFO
-// overflows and the tail is silently dropped. No-op without a connected BLE client (or -DWITH_BLE).
+// overflows and the tail is silently dropped. No-op without a connected BLE client (or CONFIG_FUGU_WITH_BLE enabled).
 void bleConsoleAwaitTxDrain(unsigned lowWater, unsigned timeoutMs);
 
 bool blePairGated();          // security needs pairing, so the window applies

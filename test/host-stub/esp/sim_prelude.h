@@ -5,8 +5,7 @@
 #define CONFIG_IDF_TARGET_ESP32S3 1
 #define ESP_IDF_VERSION_MAJOR 6
 #define CONFIG_FUGU_WITH_VCONV 1
-#define WITH_VCONV 1
-#define WITH_PSU 1
+#define CONFIG_FUGU_WITH_PSU 1
 #define FUGU_HOST_SIM 1
 #define ARDUINO 10000
 #define likely(x) __builtin_expect(!!(x), 1)

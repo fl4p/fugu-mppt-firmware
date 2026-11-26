@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "logging.h"
 
 #include <atomic>
@@ -5,7 +9,7 @@
 #include <esp_attr.h>
 #include <new>
 #include <Arduino.h>
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
 #include <ESPTelnet.h>
 #endif
 #include <freertos/FreeRTOS.h>
@@ -127,7 +131,7 @@ struct RtLogLine {
 };
 static MpscRing<RtLogLine, 16> s_rtLog;
 
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
 ESPTelnet *log_telnet = nullptr;
 #else
 static constexpr bool log_telnet = false;
@@ -434,7 +438,7 @@ void flush_async_uart_log() {
         const char *str = s_out + off;
         const uint16_t len = s_len[i];
         printf_old("%s", str); // str is data, not a format string (it may contain %)
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
         if (log_telnet) log_telnet->write((uint8_t *) str, len);
 #endif
         LogCallback cbs[kMaxLogCallbacks];
@@ -488,7 +492,7 @@ static int vprintf_mux(const char *fmt, va_list argptr) {
     printf_old("%s", buf); // UART/JTAG console (always)
 
     if (log_telnet or logCallbackCount or s_bootLogOpen) {
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
         if (log_telnet) log_telnet->write((uint8_t *) buf, l);
 #endif
         LogCallback cbs[kMaxLogCallbacks];
@@ -527,7 +531,7 @@ void logCmdResult(bool ok, const char *cmd, int64_t startUs) {
     else UART_LOG("%s: %.*s%s", ok ? "OK" : "ERR", CG_MASKED(cmd, m));
 }
 
-#if WITH_TELNET
+#if CONFIG_FUGU_WITH_TELNET
 void set_logging_telnet(ESPTelnet *telnet) {
     if (telnet && !log_telnet) {
         char r[sizeof(s_retain)];

@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 
 #include <Arduino.h>
 
@@ -19,7 +23,7 @@
 #include "logging.h"
 #include "console.h"
 #include "etc/con_guard.h"
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
 #include "usb/usb_dev.h"
 #endif
 
@@ -145,7 +149,7 @@ int uartWrite(const char *buf, size_t len) {
 }
 
 int console_read_usb(char *buf, size_t len) {
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     return usbCdcRead(buf, len);
 #elif CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG
     return USJ_VFS_READ(buf, len);
@@ -155,7 +159,7 @@ int console_read_usb(char *buf, size_t len) {
 }
 
 int console_write_usb(const char *buf, size_t len) {
-#ifdef WITH_USB_MSC
+#ifdef CONFIG_FUGU_WITH_USB_MSC
     return usbCdcWrite(buf, len);
 #elif CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
     auto r = USJ_VFS_WRITE(buf, len);

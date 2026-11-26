@@ -1,6 +1,11 @@
 #pragma once
 
-// Connectionless telemetry broadcast (WITH_BLE_ADV): a packed snapshot record in the
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
+// Connectionless telemetry broadcast (CONFIG_FUGU_WITH_BLE_ADV): a packed snapshot record in the
 // manufacturer-data AD of the legacy advertisement, so any number of passive observers
 // receive telemetry without connecting (MAX_CONNECTIONS=1 makes the NUS link exclusive).
 // While a client is connected the tick switches to a non-connectable advertisement so
@@ -12,7 +17,7 @@
 
 #include "../util.h"   // time_ms
 
-#ifdef WITH_BLE_ADV
+#ifdef CONFIG_FUGU_WITH_BLE_ADV
 
 void teleAdvInit();                 // read tele.conf (from bleConsoleBegin)
 void teleAdvTick(time_ms nowMs);    // reconcile adv mode + refresh payload (network loop)

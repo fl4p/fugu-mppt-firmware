@@ -1,6 +1,10 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "tele_adv.h"
 
-#ifdef WITH_BLE_ADV
+#ifdef CONFIG_FUGU_WITH_BLE_ADV
 
 #include <BLEDevice.h>
 #include <host/ble_gap.h>
@@ -166,4 +170,4 @@ void teleAdvTick(time_ms nowMs) {
     }
 }
 
-#endif // WITH_BLE_ADV
+#endif // CONFIG_FUGU_WITH_BLE_ADV

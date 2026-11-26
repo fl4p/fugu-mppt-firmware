@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 #include <atomic>
 
 #include "freertos/FreeRTOS.h"
@@ -1498,7 +1503,7 @@ public:
             return;
         }
 
-#if WITH_PSU
+#if CONFIG_FUGU_WITH_PSU
         const float vin = sensors.Vin ? sensors.Vin->ewm.avg.get() : NAN;
         // For a PV curve the no-load operating point IS Voc, so Voc carries the feasibility check.
         auto error = validatePsuSetpoint(requested, limits.Vout_max, converter.boost(), vin,

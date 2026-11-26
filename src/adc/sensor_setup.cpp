@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "sensor_setup.h"
 
 #include <Arduino.h>
@@ -17,7 +21,7 @@
 #include "ina226.h"
 #endif
 #include "sampling.h"
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
 #include "adc/vconv.h"
 #include "sim/vconv.h"
 #endif
@@ -57,7 +61,7 @@ static AsyncADC<float> *createAdcInstance(const std::string &adcName, const Conf
 #if CONFIG_FUGU_WITH_PWR_KNOBS
         g_pwrFakeAdc = (ADC_Fake *) adc;
 #endif
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
     } else if (adcName == "vconv") {
         adc = new ADC_VConv();
 #endif
@@ -76,7 +80,7 @@ static AsyncADC<float> *createAdcInstance(const std::string &adcName, const Conf
     return adc;
 }
 
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
 static void configureVirtualConverter() {
     ConfFile vc{"/littlefs/conf/vconv.conf"};
     if (!vc) {
@@ -150,7 +154,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
     setWallClockUs(esp_timer_get_time());
     heap_caps_check_integrity_all(true);
 
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
     configureVirtualConverter();
 #endif
 
@@ -160,7 +164,7 @@ void setupSensors(const ConfFile &boardConf, const Limits &lim) {
         return LinearTransform{(Rh + rl) / rl, 0.f};
     };
 
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
     // a separate sim sensor map keeps a real board's sensor.conf untouched
     const bool simConf = (bool) ConfFile{"/littlefs/conf/sensor.vconv.conf"};
     ConfFile sensConf{simConf ? "/littlefs/conf/sensor.vconv.conf" : "/littlefs/conf/sensor.conf"};

@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 // BeaconSyncService ("bsync"): frequency/phase-locks the MCPWM switching clock of multiple
 // converters to a shared timebase recovered from sniffed 802.11 beacons. Receive-only: the
 // device never associates or transmits — both boards timestamp the *same* beacon frames of one
@@ -13,7 +18,7 @@
 #include "util.h"
 #include "buck.h"
 
-#if defined(WITH_BSYNC) && defined(HAVE_MCPWM)
+#if defined(CONFIG_FUGU_WITH_BSYNC) && defined(HAVE_MCPWM)
 #define HAVE_BSYNC 1
 
 #include <esp_timer.h>
@@ -113,4 +118,4 @@ private:
 
 extern BeaconSyncService bsyncService;
 
-#endif // WITH_NETW && HAVE_MCPWM
+#endif // CONFIG_FUGU_WITH_NETW && HAVE_MCPWM

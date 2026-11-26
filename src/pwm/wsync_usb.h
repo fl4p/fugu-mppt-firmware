@@ -1,12 +1,17 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 // Wired sync on a USB D-/D+ pad. Boards without a GPIO header (flu) can only reach the sync
 // wire through the USB connector, but that pad is either the USB-Serial-JTAG PHY or a GPIO,
 // never both. Qualify the line first, hand the pad over only if a leader is really driving it.
 //
 // Kept out of buck.h so the USB/PCNT headers don't land in every TU that includes it.
 
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
 
 // Why the run ended up where it did. Reported by `wsync`, which otherwise cannot tell a USB
 // fallback from a configured sync_role=none.
@@ -152,4 +157,4 @@ inline bool wsyncPinIsUsb(uint8_t) { return false; }
 
 #endif // CONFIG_SOC_USB_SERIAL_JTAG_SUPPORTED
 
-#endif // WITH_WSYNC
+#endif // CONFIG_FUGU_WITH_WSYNC

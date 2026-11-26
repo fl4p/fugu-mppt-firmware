@@ -10,7 +10,7 @@
 // PwmDriver replacement that forwards LEDC-style update_pwm calls to the
 // VirtualConverter singleton (g_vconv). Mirrors PWM_Mock / PWM_ESP32_ledc API.
 // MCPWM-only members (setHsOff/setLsOff/forceShutdown/...) are NOT provided;
-// MCPWM-dependent code in buck.h is excluded under #if WITH_MCPWM.
+// MCPWM-dependent code in buck.h is excluded under #if CONFIG_FUGU_WITH_MCPWM.
 #ifdef FUGU_HOST_SIM
 inline void (*g_simPwmStopHook)(int ch) = nullptr; // host sim: another core acting inside a driver call
 #endif

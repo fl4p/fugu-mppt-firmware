@@ -1,8 +1,12 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "mppt.h"
 
 #include "app_state.h"        // g_app.maxLoopLag (peak RT-loop lag for telemetry)
 #include "tele/telemetry.h"   // makeTelePoint / TelePoint (text or binary wire, build-time)
-#ifdef WITH_BLE_TELE
+#ifdef CONFIG_FUGU_WITH_BLE_TELE
 #include "tele/tele_ble.h"    // teleBleStreaming gate
 #endif
 #include "tele/tele_mqtt.h"
@@ -587,7 +591,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     if ((targetPwmCnt || bootManualZero) && (mode == "psu" || mode == "pv")) {
         ESP_LOGE("mppt", "tracker.conf::target_duty_cycle overrides converter.conf mode=%s",
                  mode.c_str());
-#if WITH_PSU
+#if CONFIG_FUGU_WITH_PSU
     } else if (mode == "psu") {
         float vout = converterConf.getFloat("psu_vout", 0.0f);
         if (!requestPsuSetpoint(vout, true)) {
@@ -619,7 +623,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 #else
     } else if (mode == "psu" || mode == "pv") {
         ESP_LOGE("mppt", "converter.conf mode=%s needs CONFIG_FUGU_WITH_PSU, disabling", mode.c_str());
-        g_app.setupFail("converter.conf mode=%s needs WITH_PSU", mode.c_str());
+        g_app.setupFail("converter.conf mode=%s needs CONFIG_FUGU_WITH_PSU", mode.c_str());
 #endif
     } else if (!mode.empty() && mode != "mppt" && !targetPwmCnt && !bootManualZero) {
         ESP_LOGE("mppt", "Unknown converter.conf mode '%s', disabling", mode.c_str());
@@ -688,13 +692,13 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
 }
 
 void MpptController::telemetry() {
-#if defined(WITH_NETW) || defined(WITH_BLE_TELE)
-#ifdef WITH_NETW
+#if defined(CONFIG_FUGU_WITH_NETW) || defined(CONFIG_FUGU_WITH_BLE_TELE)
+#ifdef CONFIG_FUGU_WITH_NETW
     bool netReady = WiFi.isConnected() && tele.influxdbHost && timeSynced;
 #else
     constexpr bool netReady = false;
 #endif
-#ifdef WITH_BLE_TELE
+#ifdef CONFIG_FUGU_WITH_BLE_TELE
     bool bleReady = teleBleStreaming();
 #else
     constexpr bool bleReady = false;

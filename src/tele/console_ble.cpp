@@ -1,6 +1,10 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "console_ble.h"
 
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
 
 #include <algorithm>
 #include <mutex>
@@ -29,8 +33,8 @@
 #include "etc/readerwriterqueue.h"
 #include <ota_ble.h>     // OTA-over-BLE firmware push (esp-ota-ble component; FW char data sink)
 #include "adc/sampling.h" // ADC_Sampler -- halted while flash is busy
-#include "tele_ble.h"    // BLE telemetry stream (TELE characteristic, WITH_BLE_TELE)
-#include "tele_adv.h"    // advertising telemetry broadcast (WITH_BLE_ADV)
+#include "tele_ble.h"    // BLE telemetry stream (TELE characteristic, CONFIG_FUGU_WITH_BLE_TELE)
+#include "tele_adv.h"    // advertising telemetry broadcast (CONFIG_FUGU_WITH_BLE_ADV)
 #include "improv_ble.h"
 
 // esp-ota-ble host hooks. The status sink goes to ESP_LOG* at the level the module asked for, with
@@ -58,7 +62,7 @@ static void otaQuiesceHook(bool halt) {
     // down first, then the sampler.
     if (halt) stopAndBackoff(10);
     adcSampler.halted = halt;
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     // The push keeps Wi-Fi off until the reboot that ends it; a failed push reboots too. Not without
     // a reboot to bring it back (cmdOtaBle refuses those cases), and Wi-Fi the user turned off stays
     // as it is, with no reboot on failure.
@@ -580,7 +584,7 @@ void bleConsoleBegin(const std::string &deviceName, const std::string &security,
     BLECharacteristic *fwChar = svc->createCharacteristic(NUS_FW_CHAR_UUID, fwProps);
     fwChar->setCallbacks(&fwRxCallbacks);
 
-    teleBleCreateChar(svc); // telemetry notify char (no-op unless WITH_BLE_TELE)
+    teleBleCreateChar(svc); // telemetry notify char (no-op unless CONFIG_FUGU_WITH_BLE_TELE)
 
     svc->start();
     improvCreateService(bleServer, writeProps);
@@ -793,7 +797,7 @@ uint32_t blePairRemainingS() { return 0; }
 const char *bleCommand(const char *, const char *) { return "not supported"; }
 #endif
 
-#else // !WITH_BLE — no-op stubs so callers (and the service wrapper) link without the BLE stack
+#else // !CONFIG_FUGU_WITH_BLE — no-op stubs so callers (and the service wrapper) link without the BLE stack
 
 void bleConsoleBegin(const std::string &, const std::string &, uint32_t, uint32_t) {}
 

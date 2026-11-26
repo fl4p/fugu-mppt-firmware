@@ -1,9 +1,13 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "cli.h"
 
 #include <Arduino.h>
 
 #include "tele/telemetry_service.h"
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 #include <WiFi.h>
 #endif
 #include <cmath>
@@ -24,7 +28,7 @@
 #include <esp_flash.h>
 #include <esp_chip_info.h>
 #include "etc/flash_probe.h"
-#if WITH_RTPROF
+#if CONFIG_FUGU_WITH_RTPROF
 #include "etc/rtprof.h"
 extern volatile uint8_t g_rtLogTest;
 #endif
@@ -52,7 +56,7 @@ extern volatile uint8_t g_rtLogTest;
 #include "buck.h"
 #include "mppt.h"
 #include "tele/console_ble.h"
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
 #include "selftest/measure_coil.h"
 #endif
 #include "selftest/bflow_test.h"
@@ -64,7 +68,7 @@ extern volatile uint8_t g_rtLogTest;
 #include "conf_hash.h"
 #include "etc/con_guard.h"
 #include "etc/ota.h"            // doOta, otaPendingVerify
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 #include "tele/telemetry.h"     // connect_wifi_async, add_ap
 #include "etc/network_shim.h"
 #include "etc/rt_task.h"
@@ -72,7 +76,7 @@ extern volatile uint8_t g_rtLogTest;
 #include <lwip/netif.h>
 #include <lwip/pbuf.h>
 #endif
-#ifdef WITH_NETTOOLS
+#ifdef CONFIG_FUGU_WITH_NETTOOLS
 #include <esp_http_client.h>
 #if CONFIG_FUGU_WITH_HTTPS
 #include <esp_crt_bundle.h>
@@ -88,7 +92,7 @@ extern volatile uint8_t g_rtLogTest;
 #include "tele/tele_ble.h"      // teleBleSetStreaming/teleBleStreaming (BLE telemetry stream)
 #include "tele/tele_mqtt.h"
 #include <sys/time.h>
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
 #include "sim/vconv.h"
 #endif
 #if CONFIG_FUGU_WITH_PWR_KNOBS
@@ -129,7 +133,7 @@ static bool s_cmdFailed = false;
 
 // a running measure-coil owns the converter: refuse commands that change its mode or drive
 static bool measBusy(cmd *c) {
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     if (isMeasuring()) {
         ESP_LOGW("main", "%s: refused, measure-coil running", Command(c).getName().c_str());
         s_cmdFailed = true;
@@ -254,7 +258,7 @@ static void cmdMppt(cmd *c) {
 static void cmdDc(cmd *c) {
     if (bfTestBusy())
         CMD_FAIL_RETURN("dc: selftest running (mppt aborts it)");
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     if (isMeasuring())
         CMD_FAIL_RETURN("dc: busy measuring");
 #endif
@@ -294,7 +298,7 @@ static void cmdDeadTime(cmd *c) {
     Command cc(c);
     auto v = cc.getArg(0).getValue();
     if (v.length()) {
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
         // measure-coil snapshots pwmMax/pwmCtrlMax for its duty math and may persist the result
         if (isMeasuring())
             CMD_FAIL_RETURN("dt: busy measuring");
@@ -362,7 +366,7 @@ static void cmdPwmFreq(cmd *c) {
     Command cc(c);
     auto v = cc.getArg(0).getValue();
     if (v.length()) {
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
         // measure-coil snapshots pwmMax/pwmCtrlMax for its duty math and may persist the result
         if (isMeasuring())
             CMD_FAIL_RETURN("pwm-freq: busy measuring");
@@ -602,7 +606,7 @@ static void cmdResetLag(cmd *c) {
     if (!Command(c).countArgs()) rtcount_print(true);
 }
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 static void cmdWifi(cmd *c) {
     Command cc(c);
     auto arg = cc.getArg(0).getValue();
@@ -764,7 +768,7 @@ static void cmdBootinfo(cmd *) {
              (unsigned) esp_get_free_heap_size(), (unsigned) esp_get_minimum_free_heap_size(),
              (unsigned) heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     rtAllocPrint();
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     netGuardPrint();
 #endif
     UART_LOG("uptime: %lu s, app %s", (uint32_t) (esp_timer_get_time() / 1000000), format_version());
@@ -922,7 +926,7 @@ static void cmdLogLevel(cmd *c) {
     UART_LOG("log: %s -> %s", tag.c_str(), lvl.c_str());
 }
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 // without an RT loop nothing can switch, and `dc 0` cannot be applied
 static bool conversionStopped() {
     return converter.disabled() && (!rtLoopRunning() || (g_app.manualPwm() && mppt.getManualTarget() == 0));
@@ -1029,7 +1033,7 @@ static void cmdOta(cmd *c) {
 #endif
 
 
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
 // otab begin <size> <sha256hex> | end | abort  — OTA firmware push over BLE (no WiFi). `begin` arms the
 // receiver (halts the converter, erases the passive partition); the host then streams the image to the
 // NUS FW characteristic; `end` verifies the SHA-256 and reboots. ADC halt/restore lives inside otaBle*.
@@ -1072,7 +1076,7 @@ static void cmdBle(cmd *c) {
 }
 #endif
 
-#if defined(WITH_NETW) || defined(WITH_BLE_TELE)
+#if defined(CONFIG_FUGU_WITH_NETW) || defined(CONFIG_FUGU_WITH_BLE_TELE)
 // set-time <epoch_ms>  — set the wall clock without NTP (BLE-only telemetry). SNTP still runs
 // when WiFi comes up (may step the clock); TZ is set here so localtime-based code works.
 static void cmdSetTime(cmd *c) {
@@ -1088,7 +1092,7 @@ static void cmdSetTime(cmd *c) {
 }
 #endif
 
-#ifdef WITH_BLE_TELE
+#ifdef CONFIG_FUGU_WITH_BLE_TELE
 // tele-ble [0|1]  — start/stop the BLE telemetry stream (NUS TELE notify char). Requires a set
 // clock (`set-time`) and a connected client; no arg prints status.
 static void cmdTeleBle(cmd *c) {
@@ -1103,7 +1107,7 @@ static void cmdTeleBle(cmd *c) {
 }
 #endif
 
-#ifdef WITH_TELE_MQTT
+#ifdef CONFIG_FUGU_WITH_TELE_MQTT
 // tele-mqtt [seconds]  — lease the MQTT telemetry stream (0 stops); no arg prints status.
 static void cmdTeleMqtt(cmd *c) {
     auto v = Command(c).getArg(0).getValue();
@@ -1123,7 +1127,7 @@ static void cmdTeleMqtt(cmd *c) {
 }
 #endif
 
-#ifdef WITH_NETTOOLS
+#ifdef CONFIG_FUGU_WITH_NETTOOLS
 // The lwip TCP/IP thread only exists once WiFi has come up; getaddrinfo / sockets / http post to
 // it, so calling them with the stack down faults in tcpip_send_msg_wait_sem. Gate the net commands.
 static bool nettoolsNetUp() { return WiFi.status() == WL_CONNECTED; }
@@ -1405,7 +1409,7 @@ static void cmdNetstat(cmd *) {
     }
     UART_LOG("  mac=%s", WiFi.macAddress().c_str());
 }
-#endif // WITH_NETTOOLS
+#endif // CONFIG_FUGU_WITH_NETTOOLS
 
 // Runs synchronously (2s): blocks the console task so the `OK:` reply follows the table (scripted
 // callers capture it) and concurrent rt-stats can't pile up. perf.h def; see note there.
@@ -1422,7 +1426,7 @@ static void cmdRtStats(cmd *) {
 // wired-sync diagnostic: edge rate on the sync pin (PCNT). Leader = self-check of its own
 // pulse, follower = wire delivery check. Expect the converter's own pwm_freq.
 static void cmdWsync(cmd *c) {
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
     // Handled before the counter check on purpose: `arm` is only ever needed in the state that
     // has no counter (USB fallback), where the check below would have returned already.
     Command cc(c);
@@ -1443,13 +1447,13 @@ static void cmdWsync(cmd *c) {
 #endif
     if (!converter.wsyncHasCounter()) {
         // Keep the "no edge counter" substring: fugu.py keys role=none off it.
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
         // The one-shot flag is the only way to tell "probed because you armed me" from "probed
         // because no host was attached" -- both reach the same mode.
         UART_LOG("wsync: no edge counter, mode=%s%s", wsyncModeStr(converter.wsyncMode),
                  converter.wsyncArmRequest ? " (armed this boot)" : "");
 #else
-        UART_LOG("wsync: no edge counter (sync_role=none, or WITH_WSYNC off)");
+        UART_LOG("wsync: no edge counter (sync_role=none, or CONFIG_FUGU_WITH_WSYNC off)");
 #endif
         return;
     }
@@ -1457,7 +1461,7 @@ static void cmdWsync(cmd *c) {
     // set-config edits the file live, and a leader counts its own outgoing pulse at exactly
     // pwm_freq -- indistinguishable from a locked follower unless the reply says which this is.
     UART_LOG("wsync role=%s%s", converter.wsyncFollower ? "follower" : "leader",
-#if WITH_WSYNC
+#if CONFIG_FUGU_WITH_WSYNC
              converter.wsyncArmRequest ? " (armed this boot)" : "");
 #else
              "");
@@ -1593,7 +1597,7 @@ static void crashRecurse(volatile int x) {
 static void cmdCrash(cmd *c) {
     auto t = Command(c).getArg(0).getValue();
     if (t != "null" && t != "abort" && t != "stack" && t != "overrun"
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
         && t != "lwip" && t != "pbuf"
 #endif
     )
@@ -1610,7 +1614,7 @@ static void cmdCrash(cmd *c) {
         delay(80);
         esp_restart();
     }
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     if (t == "lwip") { // core API off the tcpip thread: aborts with CONFIG_LWIP_CHECK_THREAD_SAFETY
         netif_find("zz0");
         CMD_FAIL_RETURN("crash lwip: no abort (CONFIG_LWIP_CHECK_THREAD_SAFETY off)");
@@ -1749,7 +1753,7 @@ static void cmdCoredump(cmd *c) {
             b64[bl] = 0;
             UART_LOG("%s", b64);
             done += n;
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
             bleConsoleAwaitTxDrain(2048, 4000); // pace BLE TX FIFO (console_ble.cpp absent when BLE off)
 #endif
         }
@@ -1807,7 +1811,7 @@ static void cmdSensor(cmd *c) {
     ina226PrintInfo();
 }
 
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
 static void cmdIp(cmd *) { UART_LOG("Local IP Address: %s", WiFi.localIP().toString().c_str()); }
 #endif
 
@@ -1829,7 +1833,7 @@ static void cmdAnf(cmd *c) {
 static void cmdHostname(cmd *c) {
     Command cc(c);
     if (cc.countArgs() < 1 || cc.getArg(0).getValue().length() == 0) {
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
         UART_LOG("Hostname: %s", getHostname().c_str());
 #else
         nvs.open();
@@ -2014,7 +2018,7 @@ static void pvLogShade(const PvShade &sh) {
     UART_LOG("  shade %s", b);
 }
 
-#if WITH_PSU
+#if CONFIG_FUGU_WITH_PSU
 static void cmdPsu(cmd *c) {
     Command cc(c);
     auto arg = cc.countArgs() >= 1 ? cc.getArg(0).getValue() : String();
@@ -2369,11 +2373,11 @@ static void cmdService(cmd *c) {
 static void cmdSelftest(cmd *c) {
     auto sub = Command(c).getArg(0).getValue();
     if (sub == "bflow") {
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
         if (isMeasuring())
             CMD_FAIL_RETURN("selftest: measure-coil running");
 #endif
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
         if (otaBleActive())
             CMD_FAIL_RETURN("selftest: OTA running");
 #endif
@@ -2408,7 +2412,7 @@ static void cmdSelftest(cmd *c) {
     }
 }
 
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
 // measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [apply]  — the sweep logic lives in measure_coil.cpp.
 static void cmdMeasureCoil(cmd *c) {
     if (adcSampler.isCalibrating())
@@ -2468,7 +2472,7 @@ static void cmdMeasureCoil(cmd *c) {
         CMD_FAIL_RETURN("measure-coil: start blocked (%s)", mppt.startBlockReason());
     if (mppt.inBackoff())
         CMD_FAIL_RETURN("measure-coil: protection backoff");
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     if (otaBleActive())
         CMD_FAIL_RETURN("measure-coil: OTA running");
 #endif
@@ -2481,9 +2485,9 @@ static void cmdMeasureCoil(cmd *c) {
     if (!measureCoilStart(ls, apply, pos[0], dwellMs, (uint32_t) fHz))
         CMD_FAIL_RETURN("measure-coil: already running");
 }
-#endif // WITH_MEASURE_COIL
+#endif // CONFIG_FUGU_WITH_MEASURE_COIL
 
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
 // vconv                           dump state
 // vconv pv <isc> <voc> [k]        update PV params
 // vconv bat <vbat>                update battery voltage
@@ -2577,7 +2581,7 @@ static void cmdVconv(cmd *c) {
 #endif
 
 // --- Scripts ---------------------------------------------------------------------------------
-#ifdef WITH_SCRIPTS
+#ifdef CONFIG_FUGU_WITH_SCRIPTS
 
 static const char *SCRIPTS_DIR = "/littlefs/scripts";
 
@@ -2711,7 +2715,7 @@ static void cmdScriptSet(cmd *c) {
     fclose(f);
     UART_LOG("script-set: %s '%s' — %d lines", exists ? "overwritten" : "created", path.c_str(), lines);
 }
-#endif // WITH_SCRIPTS
+#endif // CONFIG_FUGU_WITH_SCRIPTS
 
 #if CONFIG_IDF_TARGET_ESP32S3
 // adc-cal: what IDF's ADC1 calibration is built from on this chip. Read-only, no reset.
@@ -2772,7 +2776,7 @@ void setupCli() {
     cli.addBoundlessCmd("rect-cal", bfGuarded<cmdRectCal>); // rect-cal [force|status|abort]
     cli.addCommand("intr", cmdIntr);
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
-#if WITH_RTPROF
+#if CONFIG_FUGU_WITH_RTPROF
     cli.addCommand("rtlog-test", [](cmd *) { g_rtLogTest = 4; }); // formatted and raw-captured RT log lines
     cli.addBoundlessCmd("rtprof", [](cmd *c) { // rtprof [clear|all]
         const String a = Command(c).countArgs() ? Command(c).getArg(0).getValue() : String();
@@ -2800,7 +2804,7 @@ void setupCli() {
     cli.addCommand("uptime", cmdUptime);
     cli.addBoundlessCmd("wsync", bfGuarded<cmdWsync>); // `wsync` edge rate; `wsync arm [off]` one-shot USB-pad probe
     cli.addBoundlessCmd("sensor", cmdSensor); // `sensor` full dump; `sensor avg` compact EWM line
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     cli.addCommand("ip", cmdIp);
 #endif
     cli.addCommand("adc-restart", bfGuarded<cmdAdcRestart>);
@@ -2864,7 +2868,7 @@ void setupCli() {
                  (unsigned) converter.getPeriodTicks(), (unsigned) pwmMax,
                  (unsigned) hs_off, (unsigned) ls_on, (unsigned) ls_off);
     });
-#if WITH_LEDC
+#if CONFIG_FUGU_WITH_LEDC
     cli.addBoundlessCmd("anaw", [](cmd *c) {
         if (bfTestBusy()) CMD_FAIL_RETURN("anaw: refused, selftest bflow running (selftest abort)");
         Command cc(c);
@@ -2883,12 +2887,12 @@ void setupCli() {
     });
 #endif
 #endif
-#ifdef WITH_NETW
+#ifdef CONFIG_FUGU_WITH_NETW
     cli.addBoundlessCmd("wifi", cmdWifi); // wifi on | off [minutes]
     cli.addSingleArgCmd("wifi-add", cmdWifiAdd);
     cli.addSingleArgCmd("ota", bfGuarded<cmdOta>);
 #endif
-#ifdef WITH_NETTOOLS
+#ifdef CONFIG_FUGU_WITH_NETTOOLS
     cli.addBoundlessCmd("curl", cmdCurl);   // curl [-X M] [-H k:v] [-d data] <url>
     cli.addBoundlessCmd("ping", cmdPing);   // ping <host> [count]
     cli.addSingleArgCmd("nslookup,resolve", cmdNslookup);
@@ -2898,7 +2902,7 @@ void setupCli() {
     cli.addSingleArgCmd("vset", bfGuarded<cmdVset>);
     cli.addSingleArgCmd("iset", cmdIset);
     cli.addSingleArgCmd("ovset", bfGuarded<cmdOvset>);
-#if WITH_PSU
+#if CONFIG_FUGU_WITH_PSU
     cli.addBoundlessCmd("psu", cmdPsu);
     cli.addBoundlessCmd("pv", cmdPv); // pv <isc> <voc> [k] | scale <s> | shade <g,..> | off
 #endif
@@ -2915,30 +2919,30 @@ void setupCli() {
     cli.addCommand("conf-hash,confhash", cmdConfHash);
     cli.addBoundlessCmd("conf-check,confcheck", cmdConfCheck);
     cli.addBoundlessCmd("service,svc", cmdService);
-#ifdef WITH_SCRIPTS
+#ifdef CONFIG_FUGU_WITH_SCRIPTS
     cli.addSingleArgCmd("sleep", bfGuarded<cmdSleep>);
     cli.addSingleArgCmd("run", cmdRun);
     cli.addCommand("scripts", cmdScripts);
     cli.addBoundlessCmd("script-set,script", cmdScriptSet);
 #endif
-#ifdef WITH_BLE
+#ifdef CONFIG_FUGU_WITH_BLE
     cli.addBoundlessCmd("ota-ble", bfGuarded<cmdOtaBle>);
     cli.addBoundlessCmd("ble", cmdBle);
 #endif
-#if defined(WITH_NETW) || defined(WITH_BLE_TELE)
+#if defined(CONFIG_FUGU_WITH_NETW) || defined(CONFIG_FUGU_WITH_BLE_TELE)
     cli.addSingleArgCmd("set-time", cmdSetTime);
 #endif
-#ifdef WITH_BLE_TELE
+#ifdef CONFIG_FUGU_WITH_BLE_TELE
     cli.addSingleArgCmd("tele-ble", cmdTeleBle);
 #endif
-#ifdef WITH_TELE_MQTT
+#ifdef CONFIG_FUGU_WITH_TELE_MQTT
     cli.addSingleArgCmd("tele-mqtt", cmdTeleMqtt);
 #endif
     cli.addBoundlessCmd("selftest", cmdSelftest); // selftest [bflow|abort|clear]
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     cli.addBoundlessCmd("measure-coil", bfGuarded<cmdMeasureCoil>); // measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [apply]
 #endif
-#if WITH_VCONV
+#if CONFIG_FUGU_WITH_VCONV
     cli.addBoundlessCmd("vconv", bfGuarded<cmdVconv>); // vconv [pv|bat|set ...]
 #endif
 #if CONFIG_FUGU_WITH_PWR_KNOBS
@@ -2990,7 +2994,7 @@ bool handleCommand(const String &inp, const char *ro) {
             ESP_LOGW("main", "+-N: selftest bflow running");
             return false;
         }
-#ifdef WITH_MEASURE_COIL
+#ifdef CONFIG_FUGU_WITH_MEASURE_COIL
         if (isMeasuring()) {
             ESP_LOGW("main", "+-N: refused, measure-coil running");
             return false;

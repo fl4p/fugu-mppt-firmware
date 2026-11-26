@@ -1,3 +1,7 @@
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
 #include "telemetry.h"
 #include "telemetry_service.h"   // transport methods (flushTask/flushQueue) are defined here
 
@@ -333,7 +337,7 @@ static void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 // Cache the UDP wire's compressor at service start (after teleLoadWireConf). The binary
 // wire is always tamp-compressed; on text the compressor stays null.
 void teleUdpLoadCompressor() {
-#ifdef WITH_TELE_BINARY
+#ifdef CONFIG_FUGU_WITH_TELE_BINARY
     s_teleCompressor = g_teleBinary ? &compressorByName("tamp") : nullptr;
 #ifdef CONFIG_FUGU_WITH_TELE_PMINI
     if (g_teleBinary && telePminiConfigured()) {

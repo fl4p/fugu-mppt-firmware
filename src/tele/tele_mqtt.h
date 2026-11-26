@@ -1,6 +1,11 @@
 #pragma once
 
-// MQTT telemetry sink (WITH_TELE_MQTT): while a lease runs, binary sym_line_protocol frames are
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
+// MQTT telemetry sink (CONFIG_FUGU_WITH_TELE_MQTT): while a lease runs, binary sym_line_protocol frames are
 // published uncompressed on pv/tele/<hostname>. Each message is <cid=0><payload>, the same bytes
 // as one UDP telemetry datagram. All state runs on the network loop.
 
@@ -8,7 +13,7 @@
 #include <string>
 #include "../util.h"   // time_ms
 
-#ifdef WITH_TELE_MQTT
+#ifdef CONFIG_FUGU_WITH_TELE_MQTT
 
 // seconds=0 stops; else starts the lease or re-sets its end to now+seconds (capped at 3600 s). nullptr on success,
 // else a static error message.

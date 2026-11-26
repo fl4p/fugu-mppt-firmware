@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 // TelemetryService: governs the core-0 InfluxDB point flush over UDP (connectionless, so onStart
 // only needs Wi-Fi up). Touches the `mppt` global (defined in main.cpp).
 
@@ -36,7 +41,7 @@ protected:
         // symbol table; burst the full table so it isn't blind until the 120 s heartbeat.
         // (g_symtab is shared: the burst also lands on a concurrent BLE stream — harmless,
         // the decoder tolerates repeated tables; costs it a few hundred bytes.)
-#ifdef WITH_TELE_BINARY
+#ifdef CONFIG_FUGU_WITH_TELE_BINARY
         g_symtab.forceResend();
 #endif
         if (xTaskCreatePinnedToCore(flushTask, "teleflush", 4096, this, 1, &_flushTask, 0) != pdPASS) {

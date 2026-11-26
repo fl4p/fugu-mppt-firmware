@@ -2,7 +2,7 @@
 // client: refusals, lease, record format, expiry, stop, service stop, reconnect, lease cap.
 //
 // Build & run:
-//   clang++ -std=gnu++20 -fexceptions -DWITH_TELE_BINARY -DWITH_TELE_MQTT -I test/host-stub/mqtt-stub \
+//   clang++ -std=gnu++20 -fexceptions -DCONFIG_FUGU_WITH_TELE_BINARY -DCONFIG_FUGU_WITH_TELE_MQTT -I test/host-stub/mqtt-stub \
 //       -I test/host-stub -I src -o /tmp/tele-mqtt-test test/host-stub/tele-mqtt-test.cpp && /tmp/tele-mqtt-test
 
 #include <cassert>

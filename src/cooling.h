@@ -1,5 +1,10 @@
 #pragma once
 
+#ifdef ESP_PLATFORM
+#include "sdkconfig.h"
+#endif
+
+
 #include <Arduino.h>
 //#include "etc/pinconfig.h"
 
@@ -60,7 +65,7 @@ public:
 
         auto dc = (uint16_t) (((2 << (FAN_PWM_BITS - 1)) - 1) * duty * 0.01f);
         if (driverDC != dc) {
-#if WITH_LEDC
+#if CONFIG_FUGU_WITH_LEDC
             ledcWrite(FAN_PWM_CH, dc);
 #endif
             driverDC = dc;

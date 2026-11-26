@@ -44,7 +44,7 @@ static LCD s_lcd{};
 MpptController mppt{s_adcSampler, s_sensors, s_converter, s_lcd};
 
 // RT/ADC path (temperature.h, mppt) reaches the scope streamer through this pointer; null = off.
-#if WITH_SCOPE
+#if CONFIG_FUGU_WITH_SCOPE
 Scope *scope = nullptr;
 #endif
 
@@ -794,7 +794,7 @@ void setup() {
     RUN_TEST(test_gpio_isr_lands_on_install_core_rt);
 
     // PWM/MCPWM tests need the MCPWM peripheral; without it they ESP_ERROR_CHECK-abort the runner.
-#if WITH_MCPWM
+#if CONFIG_FUGU_WITH_MCPWM
     // pwm — rig self-test first; if it fails, downstream MCPWM tests are suspect
     RUN_TEST(test_pwm_rig_freq_path);
     RUN_TEST(test_pwm_rig_pulsewidth_path);
@@ -821,7 +821,7 @@ void setup() {
     RUN_TEST(test_mcpwm_boot_safe_low);
     RUN_TEST(test_mcpwm_enlogic_reenable);
     RUN_TEST(test_mcpwm_endpoint_duty_scope);
-#endif // WITH_MCPWM
+#endif // CONFIG_FUGU_WITH_MCPWM
 
     UNITY_END();
 }
