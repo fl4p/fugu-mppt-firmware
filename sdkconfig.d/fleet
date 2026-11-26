@@ -18,3 +18,6 @@ CONFIG_FUGU_WITH_BLE_TELE=y
 # lwIP API calls off the tcpip thread abort (a wrong-thread call is a heap-corruption race)
 CONFIG_LWIP_CHECK_THREAD_SAFETY=y
 CONFIG_FUGU_PBUF_PROBE=y
+# image size: error codes print as numbers, arduino-esp32 logs errors only (-16 KB together, binary-size.md)
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL_ERROR=y

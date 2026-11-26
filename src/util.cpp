@@ -1,6 +1,8 @@
 #include "util.h"
 #include <Wire.h>
+#include <atomic>
 #include <cmath>
+#include <cstdio>
 #include <cctype>
 #include <cstring>
 #include <stdexcept>
@@ -102,3 +104,15 @@ bool bootloaderInfo(uint32_t offset, char *buf, unsigned n, uint32_t *len) {
                  md.image_digest[6], md.image_digest[7]);
     return true;
 }
+
+#if !CONFIG_ESP_ERR_TO_NAME_LOOKUP
+// esp_err_to_name without IDF's name table returns "UNKNOWN ERROR"; give the code instead (main/CMakeLists --wrap)
+extern "C" const char *__wrap_esp_err_to_name(esp_err_t code) {
+    if (code == ESP_OK) return "ESP_OK";
+    static char buf[4][16];
+    static std::atomic<uint8_t> n{0};
+    char *b = buf[n.fetch_add(1, std::memory_order_relaxed) & 3];
+    snprintf(b, sizeof buf[0], code < 0 ? "err %d" : "err 0x%x", (int) code);
+    return b;
+}
+#endif

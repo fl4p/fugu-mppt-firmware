@@ -28,6 +28,7 @@ The `WITH_*` names in it are the former environment flags, now `CONFIG_FUGU_WITH
 | + rtcount `unordered_map` → fixed array (2026-05-30)                                        |              |    −80 KB | 8 %* |
 | + `std::filesystem` → POSIX dirent (2026-05-30)                                             |              |    −62 KB | 12 %* |
 | + `-Os` on 3 more cold TUs, component info logs off (2026-11-25, production config)         |  1,789,488 B |    −12 KB |  4.4 % |
+| + error-name table off, arduino-esp32 logs errors only (2026-11-26, production config)     |  1,781,024 B |    −16 KB |  5.0 % |
 
 Total saved: 133 KB (2026-05-25) + 142 KB (2026-05-30) = 275 KB (~14 % of the OTA slot).
 
@@ -120,6 +121,15 @@ banner (app version, chip revision, segment list) and the info lines of Wi-Fi, l
 Errors and warnings stay, and so does every `ESP_LOGI` of the firmware itself (`main`), which forms the console log.
 `espcoredump` is exempt so that the dump-save lines (`Save core dump to flash...`, the coredump stack margin) still
 appear on a panic. The `log <tag> info` console command cannot raise a capped component above `warn`.
+
+### Error names and arduino logs
+
+The production config (`sdkconfig.d/fleet`) sets `CONFIG_ESP_ERR_TO_NAME_LOOKUP=n` and
+`CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL_ERROR=y`, 16 KB together. Without the name table, ESP-IDF's `esp_err_to_name()`
+returns `UNKNOWN ERROR` for every code, so the link wraps it (`-Wl,--wrap=esp_err_to_name`, `src/util.cpp`) to return
+the code instead: `err 0x105`, `err -1` for `ESP_FAIL`, and `ESP_OK`. The wrapper covers every caller, IDF components
+included, and keeps the last four results in static buffers, so a log line stays readable as long as it formats at
+most four codes. arduino-esp32's `log_w` warnings are compiled out; its errors stay.
 
 These files keep `-O2` (`CONFIG_COMPILER_OPTIMIZATION_PERF`): `main.cpp` (hosts `loopRT`), `mppt.cpp`
 (`mppt.update` per ADC sample), and `adc/adc_esp32_cont.cpp` (DMA ISR helpers).
@@ -220,15 +230,14 @@ Measured one at a time on the production config (`sdkconfig.d/fleet`, 1,802,032 
 |---|---|---|
 | `CONFIG_FUGU_WITH_FTP=n` | 15.9 KB | No FTP access to littlefs |
 | `CONFIG_FUGU_WITH_LEDC=n` | 11.4 KB | No fan PWM, no `anaw` |
-| `CONFIG_ESP_ERR_TO_NAME_LOOKUP=n` | 8.4 KB | Error codes print as numbers |
-| `CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL_ERROR=y` | 8.3 KB | arduino-esp32 warnings gone |
 | `CONFIG_FUGU_WITH_SCOPE=n` | 7.9 KB | No ADC scope stream |
 
 Compiling out the IDF info logs (11.5 KB in this series) has since been applied, see
 [Component info logs](#component-info-logs). A global `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y` saves 41.6 KB but also compiles
 out every `ESP_LOGI` of the firmware, so `svc log <name> info` has nothing left to show.
 
-Remeasured on the production config with the info logs off (1,794,160 B, 2026-11-26):
+The two smaller config levers, remeasured with the info logs off (1,794,160 B, 2026-11-26), are both applied now
+(see [Error names and arduino logs](#error-names-and-arduino-logs)):
 
 | Option | Saved | IROM |
 |---|---|---|

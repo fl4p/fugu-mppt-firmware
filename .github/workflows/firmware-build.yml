@@ -30,7 +30,7 @@ jobs:
             defaults: sdkconfig.defaults;sdkconfig.d/fleet
             # IROM header offset pinned: a move churns every IROM sector of a differential OTA.
             # When a change moves it on purpose, update the offset here.
-            layout: --expect-irom 0x60018 --min-free 32768
+            layout: --expect-irom 0x50018 --min-free 32768
           - name: esp32
             target: esp32
             defaults: sdkconfig.defaults
