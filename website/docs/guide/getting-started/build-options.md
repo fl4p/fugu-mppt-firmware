@@ -59,7 +59,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_WITH_SPROFILER` | off | Semihosting [sampling profiler](../../development/debugging/profiling.md); only useful with OpenOCD attached. Off excludes its component. |
 | `CONFIG_FUGU_WITH_RTPROF` | off | Core-1 call-stack sampler (`rtprof` command), a 2 kHz timer ISR counting return addresses. `CONFIG_FUGU_RTPROF_SLOTS` (default 4096) sizes its table. |
 | `CONFIG_FUGU_WITH_EXTPORT` | off | `extport` service: [VE.Direct text output](../../reference/config/extport.md) on a UART pin pair (about 10 KB of flash, mostly the UART driver). |
-| `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md) (`measure-coil`). It starts only from a converter stopped with `dc 0`; on in the `sdkconfig.d/fleet` build. |
+| `CONFIG_FUGU_WITH_MEASURE_COIL` | off | On-device [coil inductance measurement](../../lab/coil-inductance.md) (`measure-coil`). It starts only from a converter stopped with `dc 0`; on in the `sdkconfig.d/fleet` build, together with `CONFIG_LWIP_CHECK_THREAD_SAFETY`. |
 | `CONFIG_FUGU_WITH_SCRIPTS` | off | On-device [console scripts](../../reference/console.md#scripts) (`run`, `sleep`, `scripts`, `script-set`). |
 | `CONFIG_FUGU_WITH_PSU` | on | PSU (constant-voltage) and PV emulator output modes: `psu`/`pv` commands, `converter.conf` `mode=psu`/`pv`. A board config using either mode fails setup when off; off saves ~10 KB flash. |
 | `CONFIG_FUGU_WITH_PWR_KNOBS` | off | `pwr` console command for power experiments (CPU frequency, power management, Wi-Fi and BLE radio settings); changes are not persisted. `sdkconfig.d/pwr` turns it on, `sdkconfig.d/pm` adds power-management and light-sleep support. |
@@ -70,7 +70,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
 | `CONFIG_FUGU_RT_ALLOC_COUNT` | on (S3) | Count heap allocations and frees made by the control-loop task; `rt-stats` and `bootinfo` print them. Selects `CONFIG_HEAP_USE_HOOKS`. |
 | `CONFIG_FUGU_RT_ALLOC_TRACE` | off | Also record the call stacks of the first 8 distinct control-loop heap operations. Layer `sdkconfig.d/rt_alloc_trace` to enable. |
-| `CONFIG_FUGU_PBUF_PROBE` | off | Wraps lwIP `pbuf_free`. When a pbuf is freed with a reference count of 0, the probe first copies 384 bytes around it, the caller, the task and a heap integrity check into `g_pbufProbe`, which is part of the core dump (`p/x g_pbufProbe` in gdb). lwIP then aborts. Costs one compare per free and about 0.6 KB of RAM. `crash pbuf` tests it. Needs `NETW`; on in the `sdkconfig.d/fleet` build. |
+| `CONFIG_FUGU_PBUF_PROBE` | off | Wraps lwIP `pbuf_free`. When a pbuf is freed with a reference count of 0, the probe first copies 384 bytes around it, the caller, the task and a heap integrity check into `g_pbufProbe`, which is part of the core dump (`p/x g_pbufProbe` in gdb). lwIP then aborts. Costs one compare per free and about 0.6 KB of RAM. `crash pbuf` tests it. Needs `NETW`; on in the `sdkconfig.d/fleet` build, together with `CONFIG_LWIP_CHECK_THREAD_SAFETY`. |
 
 \* The Kconfig default is off, but `sdkconfig.defaults` enables `WSYNC`, so a fresh MCPWM build of this
 repository has it on.

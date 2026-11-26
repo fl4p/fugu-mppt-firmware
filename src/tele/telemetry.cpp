@@ -9,7 +9,7 @@
 //#include <WiFiUdp.h>
 #include <ESPmDNS.h>
 
-#include <AsyncUDP.h>
+#include <lwip/sockets.h>
 #include <esp_sntp.h>
 
 //#include <Preferences.h>
@@ -62,8 +62,18 @@ static wl_status_t wifiRun() {
     WiFi.scanDelete();
     return (wl_status_t) WiFi.waitForConnectResult(5000);
 }
-//WiFiUDP udp;
-AsyncUDP asyncUdp;
+// BSD socket, not AsyncUDP: its writeTo() calls udp_new() off the tcpip thread
+static int s_udpSock = -1;
+
+static size_t udpSend(const void *d, size_t n, const IPAddress &host, uint16_t port) {
+    if (s_udpSock < 0 && (s_udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) return 0;
+    sockaddr_in a{};
+    a.sin_family = AF_INET;
+    a.sin_port = htons(port);
+    a.sin_addr.s_addr = (uint32_t) host;
+    int r = sendto(s_udpSock, d, n, 0, (sockaddr *) &a, sizeof a);
+    return r > 0 ? r : 0;
+}
 
 bool noSsid = true;
 static bool sntpSynced = false;   // SNTP ran to completion; separate from timeSynced, which a
@@ -292,11 +302,7 @@ static void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
         return;
     }
 
-    bytesSent += asyncUdp.writeTo((uint8_t *) msg.c_str(), msg.length(), host, port);
-
-    //udp.beginPacket(host, port);
-    //udp.print(msg);
-    //udp.endPacket();
+    bytesSent += udpSend(msg.c_str(), msg.length(), host, port);
 
     msg.clear();
 }
@@ -317,13 +323,13 @@ static void sendBinaryBatch(const IPAddress &dst, uint16_t port, Compressor &com
     if (comp.packet((const uint8_t *) raw.data(), raw.size(), out)) {
         if (out.size() > CONFIG_TCP_MSS)
             ESP_LOGW("tele", "binary datagram %u B > MSS (raw %u)", (unsigned) out.size(), (unsigned) raw.size());
-        bytesSent += asyncUdp.writeTo((const uint8_t *) out.data(), out.size(), dst, port);
+        bytesSent += udpSend(out.data(), out.size(), dst, port);
     }
     raw.clear();
 }
 
 // TelemetryService transport lives here (where the queue/UDP/compressor statics are file-local);
-// the header stays free of AsyncUDP/compress includes. Producers stay decoupled: they only call
+// the header stays free of socket/compress includes. Producers stay decoupled: they only call
 // the free telemetryAddPoint() above.
 
 // Drains/compresses/sends the point queue on its own core-0 task, so compression (tens of ms with
