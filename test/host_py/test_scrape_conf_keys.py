@@ -251,7 +251,9 @@ def test_repo_guard_reads_stay_out(repo_scan):
 
 def test_write_roundtrip_on_copy(repo_scan, tmp_path):
     html = tmp_path / "conf-editor.html"
-    shutil.copy(ROOT / "etc" / "config-tool" / "conf-editor.html", html)
+    # empty every scraper block so a block main() no longer emits cannot parse back from the committed copy
+    src = (ROOT / "etc" / "config-tool" / "conf-editor.html").read_text()
+    html.write_text(sck.MARKER_RE.sub(lambda m: m.group(1) + m.group(4), src))
     assert sck.main(["--repo", str(ROOT), "--html", str(html), "--write"]) == 0
     fk, tk, df = sck.parse_tables(html.read_text())
     assert fk == repo_scan.file_keys
