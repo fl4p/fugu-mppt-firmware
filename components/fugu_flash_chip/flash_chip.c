@@ -84,7 +84,9 @@ static esp_err_t wStart(void *arg, uint32_t flags) {
     esp_err_t e = s_orig->start(arg, flags);
     if (e == ESP_OK) {
         fugu_flash_seq |= 1;
-        const char *t = pcTaskGetName(NULL);
+        // no current task before the scheduler starts (esp_flash_init_main); pcTaskGetName(NULL) asserts there
+        TaskHandle_t h = xTaskGetCurrentTaskHandle();
+        const char *t = h ? pcTaskGetName(h) : NULL;
         int i = 0;
         if (t) for (; i < 15 && t[i]; ++i) fugu_flash_task[i] = t[i];
         fugu_flash_task[i] = 0;
