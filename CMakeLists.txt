@@ -237,6 +237,13 @@ foreach (_c ${FUGU_OS_COMPONENTS})
         endif ()
     endif ()
 endforeach ()
+# More targets at -Os for size experiments, e.g. -DFUGU_OS_TARGETS="tfpsacrypto;mbedx509" (etc/size-variants.sh OS=)
+foreach (_t ${FUGU_OS_TARGETS})
+    if (NOT TARGET ${_t})
+        message(FATAL_ERROR "FUGU_OS_TARGETS: no target '${_t}'")
+    endif ()
+    target_compile_options(${_t} PRIVATE -Os)
+endforeach ()
 # Compile out ESP_LOGI/D/V of every component but main (our console log) and espcoredump (dump-save lines
 # parsed by etc/e2e-test/test_coredump.py); runtime `log <tag> info` can't raise them
 foreach (_c ${_fugu_comps})

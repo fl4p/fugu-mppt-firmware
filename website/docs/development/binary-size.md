@@ -199,7 +199,8 @@ These options need verification before they are applied.
   comes from libmain and 30 KB from the components still at `-O2` (measured with `-DFUGU_MAIN_COPTS=-O2`). Those
   components include the RT-path code that the `-Os` component list leaves out on purpose: `freertos`, the ADC and
   GPIO drivers, the HAL, and arduino-esp32's I2C sources. The safer form adds `-Os` only to core-0-only components
-  still missing from `FUGU_OS_COMPONENTS`, mbedtls being the largest. Before flipping the global default, measure
+  still missing from `FUGU_OS_COMPONENTS`. mbedtls is not one of them: its libraries already build with `-Os`, and
+  adding it again changed the image by 16 B. Before flipping the global default, measure
   `rtcount` numbers before and after, and override `-O2` on `main.cpp / mppt.cpp / adc/adc_esp32_cont.cpp` plus any
   IDF code on the sample-to-PWM path (likely `esp_adc/esp_adc_continuous.c`, parts of `freertos`, the ADC continuous
   ISR).
@@ -218,17 +219,25 @@ Measured one at a time on the production config (`sdkconfig.d/fleet`, 1,802,032 
 | Option | Saved | Cost |
 |---|---|---|
 | `CONFIG_FUGU_WITH_FTP=n` | 15.9 KB | No FTP access to littlefs |
-| `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y`, libmain `-DLOG_LOCAL_LEVEL=3` | 11.5 KB | IDF info logs gone |
 | `CONFIG_FUGU_WITH_LEDC=n` | 11.4 KB | No fan PWM, no `anaw` |
 | `CONFIG_ESP_ERR_TO_NAME_LOOKUP=n` | 8.4 KB | Error codes print as numbers |
 | `CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL_ERROR=y` | 8.3 KB | arduino-esp32 warnings gone |
 | `CONFIG_FUGU_WITH_SCOPE=n` | 7.9 KB | No ADC scope stream |
 
-A global `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y` without the libmain override saves 41.6 KB but compiles out every
-`ESP_LOGI` of the firmware, so `svc log <name> info` has nothing left to show.
+Compiling out the IDF info logs (11.5 KB in this series) has since been applied, see
+[Component info logs](#component-info-logs). A global `CONFIG_LOG_MAXIMUM_LEVEL_WARN=y` saves 41.6 KB but also compiles
+out every `ESP_LOGI` of the firmware, so `svc log <name> info` has nothing left to show.
 
-On that config DROM could shrink by only 7,296 B before IROM moves. A cut that removes more rodata moves IROM down a
-page, and the next OTA rewrites the whole [image layout](#image-layout) once. Both log-level builds crossed it.
+Remeasured on the production config with the info logs off (1,794,160 B, 2026-11-26):
+
+| Option | Saved | IROM |
+|---|---|---|
+| `CONFIG_ESP_ERR_TO_NAME_LOOKUP=n` | 7.9 KB | moves down a page |
+| `CONFIG_ARDUHAL_LOG_DEFAULT_LEVEL_ERROR=y` | 7.8 KB | stays, 928 B shrink margin left |
+| both | 16.2 KB | moves down a page, 6.8 KB growth margin left |
+
+DROM could shrink by only 5,104 B there before IROM moves. A cut that removes more rodata moves IROM down a page, and
+the next OTA rewrites the whole [image layout](#image-layout) once.
 
 ## Measuring variants
 
@@ -244,7 +253,8 @@ A variant is `name:ITEM,ITEM...`, each item a `CONFIG_*=value` line for an sdkco
 (`--base`, default `sdkconfig.defaults;sdkconfig.d/fleet`) or `COPTS=<options>` for libmain only. `COPTS` sets the
 CMake cache variable `FUGU_MAIN_COPTS` (a `;` list), which any build accepts:
 `idf.py -B build/x -DFUGU_MAIN_COPTS="-O2;-DLOG_LOCAL_LEVEL=3" build`. Per-file options in `main/CMakeLists.txt`
-come later on the command line and still win.
+come later on the command line and still win. `OS=<targets>` puts more CMake targets at `-Os` through the cache
+variable `FUGU_OS_TARGETS` (configure fails on a name that is not a target).
 
 ## Image layout
 

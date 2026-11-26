@@ -2,6 +2,7 @@
 # Build config variants and compare image size, app partition free space and the DROM page margins.
 #   etc/size-variants.sh [-j N] [--base 'sdkconfig.defaults;sdkconfig.d/fleet'] VARIANT ...
 #   VARIANT = name:ITEM[,ITEM...]    ITEM = CONFIG_X=value | COPTS=<main component options, space separated>
+#                                         | OS=<CMake targets to build at -Os, space separated>
 #   etc/size-variants.sh os:CONFIG_COMPILER_OPTIMIZATION_SIZE=y,COPTS=-O2 noftp:CONFIG_FUGU_WITH_FTP=n
 # Builds the base first (variant "base"), each into build/sz/<name>, with ninja -j N (default 4).
 # The fragment is written to build/sz/<name>/variant.defaults; logs to build/sz/<name>/build.log.
@@ -13,22 +14,23 @@ while [ $# -gt 0 ]; do
   case $1 in
     -j) J=$2; shift 2 ;;
     --base) BASE=$2; shift 2 ;;
-    -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
     *) break ;;
   esac
 done
-[ $# -gt 0 ] || { sed -n '2,7p' "$0"; exit 2; }
+[ $# -gt 0 ] || { sed -n '2,8p' "$0"; exit 2; }
 command -v idf.py >/dev/null || . ./idf-export.sh >/dev/null 2>&1; command -v idf.py >/dev/null || exit 2
 PY=python3; [ -x .venv/bin/python3 ] && PY=.venv/bin/python3
 LAYOUT=etc/idf-devtools/image_layout.py
 
 build() { # name items
-  local name=$1 items=$2 d=build/sz/$1 copts= frag
+  local name=$1 items=$2 d=build/sz/$1 copts= os= frag
   mkdir -p "$d"; frag=$d/variant.defaults; : > "$frag"
   local IFS=,
   for it in $items; do
     case $it in
       COPTS=*) copts=$(printf %s "${it#COPTS=}" | tr ' ' ';') ;;
+      OS=*) os=$(printf %s "${it#OS=}" | tr ' ' ';') ;;
       CONFIG_*=*) printf '%s\n' "$it" >> "$frag" ;;
       '') ;;
       *) echo "size-variants: bad item '$it' in $name" >&2; return 2 ;;
@@ -37,7 +39,7 @@ build() { # name items
   unset IFS
   rm -f "$d/sdkconfig"  # an existing sdkconfig would win over the defaults
   { idf.py -B "$d" -DSDKCONFIG="$d/sdkconfig" "-DSDKCONFIG_DEFAULTS=$BASE;$ROOT/$frag" \
-      "-DFUGU_MAIN_COPTS=$copts" reconfigure && ninja -C "$d" -j "$J"; } > "$d/build.log" 2>&1
+      "-DFUGU_MAIN_COPTS=$copts" "-DFUGU_OS_TARGETS=$os" reconfigure && ninja -C "$d" -j "$J"; } > "$d/build.log" 2>&1
 }
 
 row() { # name
