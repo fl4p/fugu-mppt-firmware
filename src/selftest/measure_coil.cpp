@@ -192,16 +192,25 @@ static float sweepL0(const MeasArgs &a) {
              mppt.limits.reverse_current_paranoia ? "LSmin+diode" : "sync");
     const uint32_t zDwell = max<uint32_t>(a.dwellMs, 2000);
     if (boost) { // the battery feeds the coil through the backflow switch; the output charges to it through the HS diode
-        // the switch's gate pump runs off the bootstrap supply: switch at one refresh pulse (2 us LS) per period
+        // The switch's gate pump runs off the bootstrap (refreshed only while the LS is on) and needs a board-dependent
+        // minimum duty: fry 11-26 failed 3 s at a fixed 7.8 %, its PSU cold ramps closed it at 15-17 %. Ramp like PSU,
+        // from the minimum to 18 % (under boost-no-input's 22 %) in 1 s, then hold; no step while Vout climbs.
         mppt.bflow.enable(true);
-        const auto hPre = (uint16_t) max(2, min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8));
+        const int hTop = converter.pwmCtrlMax / 5;
         auto up = [] { return sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3.0f; };
-        if (!up()) mppt.setManualTarget(hPre);
-        for (const time_ms dl = wallClockMs() + 3000; !up() && wallClockMs() < dl && waitMs(20);) {}
+        int hPre = 0;
+        float v = INFINITY;
+        for (const time_ms dl = wallClockMs() + 3000; !up() && wallClockMs() < dl;) {
+            const float vo = sensors.Vout->ewm.avg.get();
+            if (hPre < hTop && !(vo > v + 0.25f)) mppt.setManualTarget(hPre = min(hTop, hPre + max(1, hTop / 50)));
+            v = vo;
+            if (!waitMs(20)) break;
+        }
         vout0 = sensors.Vout->ewm.avg.get();
         if (!up() || s_tripped) {
-            UART_LOG("measure-coil: Vout %.2f did not follow Vin %.2f with the backflow switch on, 3 s at duty %u; "
-                     "switch not conducting?", vout0, sensors.Vin->ewm.avg.get(), (unsigned) hPre);
+            UART_LOG("measure-coil: Vout %.2f did not follow Vin %.2f with the backflow switch on, 3 s ramping to duty "
+                     "%u (%u reached); switch not conducting?", vout0, sensors.Vin->ewm.avg.get(), (unsigned) hPre,
+                     (unsigned) converter.getCtrlOnPwmCnt());
             return NAN;
         }
     }

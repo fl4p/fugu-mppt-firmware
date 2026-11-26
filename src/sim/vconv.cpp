@@ -126,8 +126,18 @@ void VirtualConverter::stepOneCycle(float T) {
     vbNow_ = vBatEff;
     // the gate pump runs off the bootstrap supply: the gate rises only while the converter switches, then holds
     if (inBf && !bfConducts()) bfVg_ = 0.0f;
-    else if (inBf && (ctrl || rect || bfStuck == 2))
-        bfVg_ += (pv_.voc + 5.0f - bfVg_) * (inBfTau > T ? T / inBfTau : 1.0f);
+    else if (inBf && (ctrl || rect || bfStuck == 2)) {
+        float r = inBfTau > T ? T / inBfTau : 1.0f;
+        if (inBfIq > 0.0f && bfStuck != 2) {
+            // VDDB refreshed from 8.8 V through R19 22 ohm only while the LS is on, inBfIq drawn all period; it pumps
+            // the gate through D8 (0.6 V) and R21 200k only while the LS is off, R24 1M leaks: Vgs settles at
+            // (VDDB - 0.6) 5(1-d)/(5(1-d)+1). The follower's slew scales with the overdrive above Vth 2.5 V.
+            const float d = (float) (boost_ ? ctrl : rect) * invPmax_;
+            const float vgs = (8.8f - inBfIq * 22.0f / std::max(d, 1e-6f) - 0.6f) * 5.0f * (1.0f - d) / (6.0f - 5.0f * d);
+            r *= std::min(1.0f, std::max(0.0f, (vgs - 2.5f) * (1.0f / 3.5f)));
+        }
+        bfVg_ += (pv_.voc + 5.0f - bfVg_) * r;
+    }
     struct HsRestore { uint16_t &r; uint16_t v; ~HsRestore() { r = v; } } hsRestore{pwm_.pwmCtrl, ctrl}, lsRestore{pwm_.pwmRect, rect};
     if (hsShort && !boost_ && ctrl < pmax && pmax) {
         if (rect && hsShort != 2) { // shorted HS + LS on: C_in dumps, the node sees ground

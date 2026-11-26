@@ -184,6 +184,7 @@ public:
     // Vin senses the battery side.
     bool inBf = false;
     float inBfTau = 5e-3f;
+    float inBfIq = 0.0f; // A drawn from the bootstrap (VDDB); > 0: the gate pump needs a minimum LS duty (vconv.cpp)
     [[nodiscard]] bool srcOff() const { return inBf && !(vIn_ < bfVg_); }
     [[nodiscard]] float getVinSense() const { return inBf && bfVg_ < pv_.voc ? pv_.voc : vIn_; }
 

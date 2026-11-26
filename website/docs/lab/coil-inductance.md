@@ -415,10 +415,14 @@ The run:
    diode carries the coil current to the output. The battery reaches the coil only through the
    backflow switch, whose gate pump runs off the bootstrap supply, so the switch conducts only once
    the converter switches. The command turns the switch on. While `Vout` is more than 3 V below
-   `Vin`, it switches at a precharge duty of one 2 µs low-side pulse per period (7.8 % at 39 kHz).
-   The battery then charges the output through the coil and the body diode, at a rate set by the
-   switch's gate ramp rather than by the duty. If `Vout` is still more than 3 V below `Vin` after
-   3 s, the command takes the switch as not conducting and aborts.
+   `Vin`, it ramps the duty from the minimum to 18 % over 1 s and then holds it, and it pauses the
+   ramp while `Vout` rises faster than about 12 V/s. The pump needs a board-dependent minimum duty:
+   the bootstrap supply that feeds it recharges only while the low side is on, and it pumps only
+   while the low side is off. One board did not close the switch at a fixed 7.8 % (one 2 µs pulse
+   per period at 39 kHz), but closed it at 15 to 17 % on a ramp. Once the switch conducts, the
+   battery charges the output through the coil and the body diode, at a rate set by the switch's
+   gate ramp rather than by the duty. If `Vout` is still more than 3 V below `Vin` after 3 s, the
+   command takes the switch as not conducting and aborts, and reports the duty it reached.
 2. It reads the `Iin` zero, then raises the duty until `Vout` is 2 V above `Vin`. Below that the
    coil current does not return to zero in each period, so no row is taken.
 3. It steps through the duty band and ends the sweep at the first row that reaches one of these:

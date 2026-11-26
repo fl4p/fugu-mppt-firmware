@@ -37,6 +37,8 @@
 //                              # mc-boost-virt: the firmware task with Iin computed from Iout: refused
 //                              # mc-flat-trip-late: a shutdown after 20 DCM rows: fitted, nothing for coil.conf
 //                              # mc-flat-ring: mc-flat with flat's switch-node ring on: the clean run writes L
+//                              # mc-boost-weakpump: a gate pump that needs > 8.6 % LS duty (fry 11-26): the ramp closes it;
+//                              #   -old: the fixed 7.8 % probe duty aborts
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
@@ -2290,17 +2292,27 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
     printf("  measure: boost fsw %.0f Hz pwmMax %u band %d..%d step %d Vin %.2f Vout %.2f\n", fsw, pwmMax, lo, hi, step,
            vin0, vout0);
     mppt.bflow.enable(true);
-    const auto hPre = (uint16_t) std::max(2, std::min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8));
+    // SIM_MC_PRE=old: the fixed probe duty of cb342b34 (one 2 us LS pulse per period) in place of the ramp
+    const bool preOld = getenv("SIM_MC_PRE") && !strcmp(getenv("SIM_MC_PRE"), "old");
+    const int hTop = converter.pwmCtrlMax / 5;
     auto up = [] { return sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3; };
-    if (!up()) mppt.setManualTarget(hPre);
+    int hPre = 0;
+    if (preOld && !up()) mppt.setManualTarget(hPre = std::max(2, std::min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8)));
     const double tPre = tNow();
     g_vconv.takeIinMax(), g_preImax = g_preIewm = 0, g_tickHook = [] {
         g_preImax = std::max(g_preImax, g_vconv.takeIinMax()), g_preIewm = std::max(g_preIewm, sensors.Iin->ewm.avg.get());
     };
-    for (const double dl = tNow() + 3; !up() && tNow() < dl && wait(0.02);) {}
+    float v = INFINITY;
+    for (const double dl = tNow() + 3; !up() && tNow() < dl;) { // mirrors sweepL0()
+        const float vo = sensors.Vout->ewm.avg.get();
+        if (!preOld && hPre < hTop && !(vo > v + 0.25f)) mppt.setManualTarget(hPre = std::min(hTop, hPre + std::max(1, hTop / 50)));
+        v = vo;
+        if (!wait(0.02)) break;
+    }
     g_tickHook = nullptr;
-    printf("  measure: precharge at duty %u: Vout %.2f after %.3f s, plant Iin max %.2f A, Iin ewm max %.2f A\n", hPre,
-           sensors.Vout->ewm.avg.get(), tNow() - tPre, g_preImax, g_preIewm);
+    printf("  measure: precharge %s to duty %d (%u reached): Vout %.2f after %.3f s, plant Iin max %.2f A, Iin ewm max %.2f A\n",
+           preOld ? "fixed" : "ramp", hPre, converter.getCtrlOnPwmCnt(), sensors.Vout->ewm.avg.get(), tNow() - tPre,
+           g_preImax, g_preIewm);
     if (!up() || tripped) {
         printf("  measure: Vout %.2f did not follow Vin %.2f\n", sensors.Vout->ewm.avg.get(), sensors.Vin->ewm.avg.get());
         stop = "Vout did not follow";
@@ -2386,6 +2398,8 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
 // mc-boost-virt: the firmware task (not the replica above) with a physical HV shunt and Iin computed from it: refused.
 // All start from the night state: C_in and the string at 6.85 V, the battery behind its open backflow switch (in_bf), whose
 // gate pump runs only while the converter switches. mc-boost-bfopen: that switch stuck open, the start must abort.
+// mc-boost-weakpump: a pump that needs an LS duty above ~8.6 % (in_bf_iq 20 mA, SIM_BF_IQ), as fry on 11-26: the ramp
+//   closes the switch; -old: the fixed 7.8 % probe duty of cb342b34 never does and aborts.
 static float g_mcVinOfs[2] = {0, 0};
 static int runMcBoostVirt(const std::string &name);
 static int runMcBoost(const std::string &name) {
@@ -2423,7 +2437,7 @@ static int runMcBoost(const std::string &name) {
            " Ipk up to %.2f A (plant %.2f), Vout max %.2f V, Iin max %.2f A, stop: %s, %.0f s\n", name.c_str(), r.L * 1e6f,
            lPlant * 1e6f, g_mcIpkMean, (r.L / lPlant - 1) * 100, r.k * 100, r.kse * 100, -k * 100, r.n,
            r.f > 0 ? "fit" : "none", g_mcIpk, g_mcIpkPlant, g_mcVmax, g_mcImax, stop.c_str(), secs);
-    if (name == "mc-boost-bfopen") { // the backflow switch never conducts: the start aborts, nothing reaches the output
+    if (name == "mc-boost-bfopen" || name == "mc-boost-weakpump-old") { // the switch does not conduct: the start aborts
         chk(stop == "Vout did not follow", "aborted at the start");
         chk(g_mcVmax < 26.6f && g_mcImax < 2.f, "Vout below Vin, Iin < 2 A");
         chk(g_trips.size() == trips0, "no protection trip");
@@ -4692,6 +4706,8 @@ static int simMain(int argc, char **argv) {
         ov = {{"pv_isc", "200"}, {"pv_voc", "26.6"}, {"pv_k", "0.95"}, {"v_bat", "0"}, {"r_bat", "207.5e3"}, {"plant_c_in", "470e-6"},
               {"plant_c_out", "1.2e-3"}, {"out_d_i0", "2.3e-8"}, {"out_d_vt", "4.45"}, {"noise_iin", "0.02"}, {"noise_vin", "0.02"},
               {"noise_vout", "0.05"}, {"in_bf", "1"}, {"bflow_stuck", sc == "mc-boost-bfopen" ? "1" : "0"}};
+    if (sc.rfind("mc-boost-weakpump", 0) == 0) ov.push_back({"in_bf_iq", getenv("SIM_BF_IQ") ? getenv("SIM_BF_IQ") : "20e-3"});
+    if (sc == "mc-boost-weakpump-old") setenv("SIM_MC_PRE", "old", 1);
     g_batAuto = sc.rfind("bat-auto", 0) == 0;
     if (const char *e = getenv("SIM_MC_TON")) ov.push_back({"t_on_ofs", e});
     boot(ov, p0);

@@ -44,6 +44,7 @@ The file accepts the following keys.
 | `bflow_stuck`   |      | int   | 0       | Fault on that switch: 0 none, 1 stuck open, 2 stuck closed (`bflow_model` and `in_bf`) |
 | `in_bf`         |      | int   | 0       | 1 = boost fed from a battery behind its backflow switch (`pv_isc`/`pv_voc` model the battery): C_in charges only up to the switch's gate, and Vin senses the battery side. The switch follows the firmware's backflow switch output and `bflow_stuck` |
 | `in_bf_tau`     | s    | float | 0.005   | Time constant of that gate after turn-on (charge pump into the gate capacitance), so the battery connects as a soft start. The pump runs off the bootstrap supply: the gate rises only while the converter switches and holds while it is idle. It drops to 0 while the switch is off, and rises without switching when `bflow_stuck=2` |
+| `in_bf_iq`      | A    | float | 0       | Load on the bootstrap supply that runs that gate pump (0 = ideal). The supply recharges from 8.8 V through 22 Ω only while the low side is on and the pump charges the gate only while it is off, so above 0 the gate settles at a duty-dependent `Vgs` and rises only above 2.5 V, at a rate that scales with the overdrive. 20 mA needs about 8.6 % low-side duty, 42 mA about 18 % |
 | `i_unidir`      |      | int   | 0       | 1 = the Iout channel clips at 0, like a one-direction current amplifier: `selftest bflow` runs its toggle variant and `hs_clamp` is ignored. `vconv set i_unidir` at runtime |
 | `hs_short`      |      | int   | 0       | 1 = buck high side conducts permanently; with the low side on as well, the input capacitor is shorted to ground. 2 = the same, and the low side never turns on. For the [high-side short check](../../internals/protection.md#high-side-short-check) |
 | `adc_freq`      | Hz   | int   | 3000    | Sampling tick (falls back to `board.conf::adc_freq`, then 3000)        |
@@ -127,7 +128,7 @@ The firmware reads `vconv.conf` once at boot. The console changes part of the pl
 - `vconv pv <isc> <voc> [k]` sets the PV curve, `vconv bat <V|open|short>` the battery.
 
 The other keys (`ring_v`, `ring_cexp`, `ring_ct`, `t_dead`, `t_hs_ext`, `t_on_ofs`, `r_hs`, `r_ls`, `t_sw`,
-`pwm_clk`, `adc_freq`, `noise_*`, `out_d_i0`, `out_d_vt`, `in_bf`, `in_bf_tau`) need a reboot. See [Console](../console.md).
+`pwm_clk`, `adc_freq`, `noise_*`, `out_d_i0`, `out_d_vt`, `in_bf`, `in_bf_tau`, `in_bf_iq`) need a reboot. See [Console](../console.md).
 
 ## Switch-node ring
 
