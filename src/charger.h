@@ -1114,8 +1114,12 @@ public:
                     _cvIlim = sweep ? params.tail_c_rate * params.Cbat
                               : std::isfinite(ioutNow) ? fmaxf(ioutNow, IOUT_LIM_FLOOR) : params.Ibat_lim;
                 if (!cut) _lastBmsFrameUs = ~batSt.vcell_high_t, _cvVprev = _cvRise = NAN; // target from this frame
-                ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.2f A",
-                         batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
+                if (const uint32_t heldS = termCond.cvHoldS()) // a stale pause's resume keeps the clock
+                    ESP_LOGW("charger", "cv hold resumed after %u s: vcHigh %.3f @ iBat %.2f, ilim %.2f A",
+                             (unsigned) heldS, batSt.vcell_high, ibat, _cvIlim);
+                else
+                    ESP_LOGW("charger", "cv hold: vcHigh %.3f > line %.3f @ iBat %.2f, ilim %.2f A",
+                             batSt.vcell_high, termCond.v_term(), ibat, _cvIlim);
             } else {
                 // a latch glides to float from the bus as read now: no output step
                 if (nowTerm && std::isfinite(voutNow)) vpack_pin = fminf(voutNow, params.Vbat_max);

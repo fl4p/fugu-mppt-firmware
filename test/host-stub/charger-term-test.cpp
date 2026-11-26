@@ -885,6 +885,49 @@ static void test_bal_stale_gap(int gapS, bool bal = true) {
     CHECK(vmax <= 3.5f + 0.02f, "short gap: cell held at cv_eoc after the resume (max %.3f)", vmax);
 }
 
+// stdout of f(), where the host ESP_LOG* lines go
+template<class F> static std::string captured(F f) {
+    fflush(stdout);
+    int fd = dup(1);
+    FILE *tf = tmpfile();
+    dup2(fileno(tf), 1);
+    f();
+    fflush(stdout);
+    dup2(fd, 1);
+    close(fd);
+    rewind(tf);
+    std::string out;
+    char line[256];
+    while (fgets(line, sizeof line, tf)) out += line;
+    fclose(tf);
+    return out;
+}
+
+// fry/flat 11-25 11:26: the resume after a stale pause logged "cv hold: vcHigh 3.391 > line 3.491", a false entry
+static void test_bal_stale_resume_log() {
+    BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    Plant pl;
+    pl.untilHold(c);
+    pl.run(c, 600);
+    pl.bms.cells = pl.bms.ibatOn = false;
+    pl.run(c, 240);
+    CHECK(c.termCond.stalePaused(), "resume log: paused");
+    pl.bms.cells = pl.bms.ibatOn = true;
+    const std::string out = captured([&] { pl.run(c, 30); });
+    CHECK(c.balanceRunning(), "resume log: resumed");
+    const char *r = strstr(out.c_str(), "cv hold resumed after ");
+    unsigned heldS = 0;
+    CHECK(r && sscanf(r, "cv hold resumed after %u s", &heldS) == 1 && heldS >= 840, "resume logged as a resume (%u s)",
+          heldS);
+    for (const char *e = strstr(out.c_str(), "cv hold: vcHigh "); e; e = strstr(e + 1, "cv hold: vcHigh ")) {
+        float v = 0, line = 0;
+        CHECK(sscanf(e, "cv hold: vcHigh %f > line %f", &v, &line) == 2 && v > line, "entry log: %.3f > line %.3f", v,
+              line);
+    }
+}
+
 static void test_bal_partial_hold_suspended() {
     BatteryCharger c; c.params = balParams(); c.params.partial_charge = 0.8f; setWallClockUs(1'000'000ULL);
     latch(c, true);
@@ -1593,6 +1636,7 @@ int main() {
     test_bal_stale_gap(240);
     test_bal_stale_gap(1200);
     test_bal_stale_gap(240, false);
+    test_bal_stale_resume_log();
     test_bal_partial_hold_suspended();
     test_bal_rtc();
     test_cloud_dip_does_not_latch();

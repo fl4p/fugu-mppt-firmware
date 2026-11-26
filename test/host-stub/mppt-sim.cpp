@@ -186,6 +186,7 @@
 //     SIM_VOUT_ERR=u:idle,both,alone[;u:...]  SIM_LOAD=W,on_s,off_s,from_s (W,1,0,0: constant)  SIM_REBOOT_AT=t
 //     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_BASE_A=A  SIM_T
 //     SIM_TR  SIM_PACK_RP=x (scales the pack's polarization, lfp_pack.h topOfCharge())
+//     SIM_CLOUD=t,len,light,ramp_s  (cv-hold-* but -day: one cloud on both units, light 0..1, linear edges)
 //
 #include <algorithm>
 #include <cmath>
@@ -4139,7 +4140,9 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     bool wasHold[2] = {}, early = false;
     float peakHold = 0;
     std::vector<std::string> holds;
-    if (day) wx.cloud = {{0.f, 1.f}};
+    float cl[4] = {-1, 0, 1, 15}; // SIM_CLOUD=t,len,light,ramp s: one cloud on both units' PV
+    if (const char *e = getenv("SIM_CLOUD")) sscanf(e, "%f,%f,%f,%f", cl, cl + 1, cl + 2, cl + 3);
+    if (day || cl[0] >= 0) wx.cloud = {{0.f, 1.f}};
     for (double nextTr = 0; tNow() < tEnd && (endAt < 0 || tNow() < endAt);) {
         const double tb = tNow();
         if (day) {
@@ -4168,6 +4171,10 @@ static int runCvHold(const std::string &name, const std::string &sc) {
             }
             if (tE1 >= 0 && tb < tE1 + 300) g = 1 - 0.8f * edge({tE1, 300, 0}), w = std::max(180 - wBase, 0.f);
             wx.cloud[0].second = g, T.pv = pv0 * g, T.loadW = w;
+        }
+        if (!day && cl[0] >= 0) {
+            const float g = 1 - (1 - cl[2]) * (float) std::clamp(std::min(tb - cl[0], cl[0] + cl[1] - tb) / cl[3], 0.0, 1.0);
+            wx.cloud[0].second = g, T.pv = pv0 * g;
         }
         if (rebootAt >= 0 && tb >= rebootAt) {
             printf("%9.2f >>> unit 2 reboots (cell %.3f)\n", tb, T.vcell);
