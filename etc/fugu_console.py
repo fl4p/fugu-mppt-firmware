@@ -47,6 +47,7 @@ import re
 import signal
 import socket
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -111,26 +112,50 @@ def free_port(start=None):
 class Tunnel:
     """`ssh -N -L <free port>:host:port dest`, owned and closed by this process."""
 
-    def __init__(self, dest, host, port, timeout=20.0):
+    def __init__(self, dest, host, port, timeout=20.0, attempts=2):
+        atexit.register(self.close)
+        why = ''
+        for attempt in range(1, attempts + 1):
+            why = self._open(dest, host, port, timeout)
+            if not why:
+                return
+            print(f'ssh tunnel to {host}:{port} via {dest}, attempt {attempt}/{attempts}: {why}', file=sys.stderr)
+            if attempt < attempts:
+                time.sleep(2)
+        raise RuntimeError(f'ssh tunnel to {host}:{port} via {dest} did not come up: {why}')
+
+    def _open(self, dest, host, port, timeout):
+        """Start ssh and wait for the forward; '' when up, else why not (ssh's exit code and last stderr line)."""
         self.port = free_port()
+        err = tempfile.TemporaryFile()
         self.proc = subprocess.Popen(
             ['ssh', '-N', '-o', 'ExitOnForwardFailure=yes', '-o', 'BatchMode=yes',
-             '-L', f'{self.port}:{host}:{port}', dest], stdin=subprocess.DEVNULL)
-        atexit.register(self.close)
+             '-L', f'{self.port}:{host}:{port}', dest], stdin=subprocess.DEVNULL, stderr=err)
         deadline = time.monotonic() + timeout
         while not tcp_ok('127.0.0.1', self.port, 1.0):
-            if self.proc.poll() is not None or time.monotonic() > deadline:
+            rc = self.proc.poll()
+            if rc is not None or time.monotonic() > deadline:
                 self.close()
-                raise RuntimeError(f'ssh tunnel to {host}:{port} via {dest} did not come up')
+                err.seek(0)
+                last = (err.read().decode(errors='replace').strip().splitlines() or [''])[-1]
+                return (f'ssh exited {rc}' if rc is not None else f'no forward after {timeout:.0f} s') + \
+                    (f': {last}' if last else '')
             time.sleep(0.3)
+        self._err = err
+        return ''
 
     def close(self):
-        if self.proc.poll() is None:
+        if getattr(self, 'proc', None) and self.proc.poll() is None:
             self.proc.terminate()
             try:
                 self.proc.wait(5)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
+        err, self._err = getattr(self, '_err', None), None
+        if err:  # what ssh reported while the tunnel was up
+            err.seek(0)
+            for ln in err.read().decode(errors='replace').splitlines():
+                print(f'ssh: {ln}', file=sys.stderr)
 
 
 def relay_ssh_dest():
