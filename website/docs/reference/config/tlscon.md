@@ -49,14 +49,17 @@ The server accepts one client at a time:
   version) and from then on the muxed log, like a telnet client.
 - Each line it sends runs as a console command; `exit` closes the session.
 - A line longer than 128 bytes is discarded and answered with `ERR: line too long`.
-- A second client is refused while a session is open, and so is any client while the free heap is below
-  24 000 bytes, or below the session cost plus 2 KB with static buffers (about 27 KB at the defaults). With static
-  buffers the largest free block must also hold the input buffer.
+- A second client is refused while a session is open, and so is any client while the free heap is below the
+  session's peak need plus 4 KB, and at least 24 000 bytes: 24 000 bytes with dynamic buffers, about 37.6 KB with
+  the default static buffers.
+  With static buffers the largest free block must also hold the 16 KB input buffer.
 - A handshake that has not completed after 10 s is dropped.
 
 The TLS context is allocated only while a client is connected. The listening socket and the PSK configuration stay
 allocated while the service runs. An open session costs about 2 KB of heap with `CONFIG_MBEDTLS_DYNAMIC_BUFFER=y` and
 about 24.6 KB with the default static buffers (see [TLS heap](../../guide/getting-started/build-options.md#tls-heap)).
+The handshake needs more at its peak, about 11 KB with dynamic and 29–33.5 KB with static buffers. The log reports
+the free heap when a client connects and the lowest free heap during its handshake.
 
 ## Client
 

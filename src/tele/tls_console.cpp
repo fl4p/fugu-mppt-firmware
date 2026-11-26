@@ -22,18 +22,18 @@
 namespace {
 constexpr uint16_t kOutCap = 1024;
 constexpr uint8_t kLineCap = 128;
+// peak heap of a session, handshake included (bench: ~10.8 KB dynamic; 29-33.5 KB static at 16 KB in / 4 KB out)
 #if CONFIG_MBEDTLS_DYNAMIC_BUFFER
-constexpr uint32_t kSessionHeap = 2000, kMinBlock = 0;
+constexpr uint32_t kSessionPeak = 11000, kMinBlock = 0;
 #else
 #ifdef CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN
 constexpr uint32_t kInLen = CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN, kOutLen = CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN;
 #else
 constexpr uint32_t kInLen = CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN, kOutLen = CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN;
 #endif
-// static record buffers + ~4.7 KB context (24.6 KB measured at 16 KB in / 4 KB out)
-constexpr uint32_t kSessionHeap = kInLen + kOutLen + 4800, kMinBlock = kInLen + 512;
+constexpr uint32_t kSessionPeak = kInLen + kOutLen + 13000, kMinBlock = kInLen + 512;
 #endif
-constexpr uint32_t kMinHeap = std::max<uint32_t>(24000, kSessionHeap + 2048);
+constexpr uint32_t kMinHeap = std::max<uint32_t>(24000, kSessionPeak + 4096);
 constexpr time_ms kHandshakeMs = 10000;
 
 struct Session {
@@ -79,9 +79,15 @@ static int bioRecv(void *ctx, unsigned char *b, size_t n) {
     return errno == EAGAIN || errno == EWOULDBLOCK ? MBEDTLS_ERR_SSL_WANT_READ : MBEDTLS_ERR_NET_RECV_FAILED;
 }
 
+static void hsHeapEnd() {
+    size_t m = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    if (heap_caps_monitor_local_minimum_free_size_stop() == ESP_OK) ESP_LOGI(TAG, "handshake heap min %u", (unsigned) m);
+}
+
 static void closeSession() {
     Session *x = s_sess;
     if (!x) return;
+    if (!x->up) hsHeapEnd();
     removeLogCallback(sink);
     portENTER_CRITICAL(&s_mux);
     s_sess = nullptr;
@@ -98,8 +104,9 @@ static void acceptClient() {
     socklen_t al = sizeof(a);
     int fd = accept(s_listen, (sockaddr *) &a, &al);
     if (fd < 0) return;
+    const size_t fr = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     const char *why = s_sess ? "busy"
-                    : heap_caps_get_free_size(MALLOC_CAP_8BIT) < kMinHeap
+                    : fr < kMinHeap
                       || heap_caps_get_largest_free_block(MALLOC_CAP_8BIT) < kMinBlock ? "low heap" : nullptr;
     Session *x = why ? nullptr : new(std::nothrow) Session{};
     if (!x) {
@@ -122,7 +129,8 @@ static void acceptClient() {
     portENTER_CRITICAL(&s_mux);
     s_sess = x;
     portEXIT_CRITICAL(&s_mux);
-    ESP_LOGI(TAG, "client %s", inet_ntoa(a.sin_addr));
+    heap_caps_monitor_local_minimum_free_size_start();
+    ESP_LOGI(TAG, "client %s, heap %u", inet_ntoa(a.sin_addr), (unsigned) fr);
 }
 
 static bool feed(Session *x, const char *b, int n) {
@@ -248,6 +256,7 @@ void TlsConsoleService::onTick() {
             sink(v, strlen(v));
             sink("\n(exit to disconnect.)\n", 23);
             addLogCallback(sink, false);
+            hsHeapEnd();
             lastTimeOutUs = 0;
         } else if ((r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) ||
                    millis() - x->t0 > kHandshakeMs) {

@@ -102,7 +102,9 @@ little, because the handshake still needs room for the server's full certificate
 verification (wrong `ca_file`) makes the client retry the handshake every few seconds, and each attempt drives the
 minimum free heap down to about 9 KB.
 
-An open `tlscon` session costs about 2 KB with dynamic buffers and about 24.6 KB with static buffers.
+An open `tlscon` session costs about 2 KB with dynamic buffers and about 24.6 KB with static buffers. Its handshake
+peaks at about 11 KB with dynamic and 29–33.5 KB with static buffers, so with the default static buffers the service accepts a client only above
+about 37.6 KB of free heap.
 
 ### Static or dynamic buffers
 
