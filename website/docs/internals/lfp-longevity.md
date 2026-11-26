@@ -288,28 +288,31 @@ discharge to 2.5 V, under a 300 kgf clamp [[8](#ref-8), §5.1 rows 4 and 5].
 A same-cell comparison of a lower end-of-charge voltage, such as 3.50 or 3.55 V with tail-current
 termination, against 3.65 V at the same depth of cycle is absent from the reviewed sources.
 
-Cao et al. aged 100 Ah prismatic LFP cells at 23 °C in stages whose voltage window and current
-changed during the test [[12](#ref-12), §2.1 and §3.1.1]:
+Cao et al. aged four prismatic LFP cells labelled 100 Ah, taking the 107 Ah measured on the new
+cells as nominal capacity [[12](#ref-12), §2.1]. Cells 01 and 02 were new; cells 03 and 04 had been
+retired from electric forklifts after four years. Cells 01, 02 and 04 stayed at 23 °C, and cell 03
+was also run at 45–55 °C [[12](#ref-12), §3.1.1]. The voltage window and current changed between
+stages [[12](#ref-12), §2.1 and §3.1.1]:
 
-- the first stage cycled between 3.10 and 3.45 V (60 A charge, 95–100 A discharge)
+- all four cells started between 3.10 and 3.45 V (60 A charge, 95–100 A discharge)
 - later stages used windows such as 2.80–3.45 V and 2.80–3.60 V
-- one cell had stages with discharge cutoffs of 2.6 and 2.5 V
+- cell 01 had discharge cutoffs of 2.6 V (cycles 5100–5700) and 2.5 V (cycles 8400–8760)
 
-For that new cell the paper is internally inconsistent
+For the new cell 01 the paper's capacity figures do not fully agree
 [[12](#ref-12), §3.1.1, Table 4 and Conclusions]:
 
 - the results give 33.3 % loss after 10 390 cycles (about 8000 FEC) at 3.275 % per 1000 cycles
 - the conclusions give 33.9 % after 10 000 cycles at 3.26 %
-- the capacities in its Table 4 (107.1 Ah to 70.69 Ah) correspond to about 34 %
+- the capacities in its Table 4 (107.1 Ah to 70.69 Ah) correspond to about 34 %, and to the stated
+  3.275 % per 1000 cycles when the loss is taken against the 107 Ah nominal capacity
+
+So the 33.3 % (66.7 % retained) is the figure that does not match the measured capacities.
 
 The authors observed that raising the charge cutoff voltage within 3.60 V did not speed up aging,
 but that was a change of conditions during the test, not a controlled comparison
 [[12](#ref-12), §3.1.1]. Their second-life recommendation of 2.80–3.55 V (10–90 % SoC), 0.5 C
-charge and no high temperature [[12](#ref-12), Conclusions] matches the manufacturer's recommended
+charge and no high temperature [[12](#ref-12), §3.3 and Conclusion 3] matches the manufacturer's recommended
 SoC window for that cell [[12](#ref-12), Table 1].
-
-Because the upper part of the LFP charge curve is short, a lower end-of-charge voltage mainly
-changes the current at which the cell counts as full.
 
 A practitioner article, which is the origin of this firmware's termination line, interpolates the
 manufacturer's termination pair (3.65 V at 0.033 C or 0.05 C) linearly down to about 3.37 V at
@@ -422,10 +425,11 @@ the authors conclude that charging at sub-zero temperatures "should be avoided i
 applications" [[20](#ref-20), §3.1 and Conclusions].
 
 Petzl et al. cycled 2.5 Ah 26650 graphite/LFP cells at −22 °C with 1 C or C/2 charging to full
-or 80 % SoC [[21](#ref-21)]. Plating appeared as loss of cyclable lithium, was strongest early, and limited
-itself because the lost lithium shifted the electrode balance. Part of the loss was reversible,
-and the ohmic resistance rose as electrolyte was consumed on the plated lithium [[21](#ref-21), Abstract and
-§3].
+or 80 % SoC [[21](#ref-21), §2.1 and §2.2]. The cells reached 80 % capacity after about 90–140 cycles
+[[21](#ref-21), §3.1]. Plating appeared as loss of cyclable lithium and limited itself because the lost
+lithium shifted the electrode balance; the aging rate first rose to a maximum, then fell. Part of the
+loss recovered during later cycling at 25 °C, and the ohmic resistance rose as electrolyte was
+consumed on the plated lithium [[21](#ref-21), Abstract and §3.1–3.4].
 
 Preger et al. relay earlier reports of a temperature at which LFP cycle aging is lowest, between
 5 and 10 °C, with faster aging both above and below it [[9](#ref-9), Temperature dependence]. The work
@@ -446,7 +450,7 @@ the authors suggest may be lithium plating [[4](#ref-4), §3.1.2 and Conclusions
 Preger et al. varied only the discharge rate, with charging fixed at 0.5 C, and found little rate
 dependence for LFP [[9](#ref-9), Discharge rate dependence].
 
-Cao et al. changed the current between test stages on 100 Ah prismatic cells at 23 °C and
+Cao et al. changed the current between test stages on their prismatic cells (mostly at 23 °C) and
 reported that "the effect of the charge and discharge current on the aging speed is less evident
 from the testing results", but the stages changed other conditions as well
 [[12](#ref-12), §2.1 and §3.1.1].
@@ -524,7 +528,7 @@ that evidence is.
 | `full_charge_interval` | 7 d | Full charges are needed for BMS balancing (subject to the BMS's own conditions) and to re-zero the Ah counter. No reviewed source addresses how often an LFP pack needs one. | none (engineering choice) |
 | `balance_interval` | 0 (off) | Each run holds the highest cell near `cv_eoc` for `balance_hold_s` (default 2 h, summed over sessions, one session at most twice that), the [time at the top](#52-time-at-the-top) that drives aging (see also [float and CV holds](#53-float-and-cv-holds)), so runs are infrequent (about monthly) and bounded. They are deferred above 35 °C, the top of the manufacturer's storage range [[8](#ref-8)], because [heat](#61-heat) multiplies the aging at high SoC. No reviewed source addresses how often or how long an active balancer needs the pack at the top. | none (engineering choice) |
 | `ibat_max` | 20 A | At or below 0.5 C, charge rate had little influence on aging in [[4](#ref-4)], and at low rates calendar aging dominated [[5](#ref-5)]. Stay at or below the manufacturer's 0.5 C standard charge [[8](#ref-8)]. | medium; transfer to large prismatic cells assumed |
-| `bat_temp_min` | 0 °C | The manufacturer's lower charge limit [[8](#ref-8)]; plating and a drastic loss of cycle life below 0 °C [[20](#ref-20), [21](#ref-21)]. Acts only with fresh BMS temperature reports. | high |
+| `bat_temp_min` | 0 °C | The manufacturer's lower charge limit [[8](#ref-8)]; plating and a severe loss of cycle life at −18 °C [[20](#ref-20), Table 2] and −22 °C [[21](#ref-21), §3.1]. Acts only with fresh BMS temperature reports. | high |
 | `bat_temp_derate` / `bat_temp_max` | 45 / 55 °C | 55 °C is the manufacturer's upper charge limit, and rated cycle life at 45 °C is less than half that at 25 °C [[8](#ref-8)]; calendar fade also rises steeply with temperature [[1](#ref-1), [6](#ref-6)]. Acts only with fresh BMS temperature reports. | medium |
 
 For a pack that will not be used for weeks, the manufacturer's storage guidance applies: 30–50 %
@@ -682,7 +686,7 @@ relay, and the lifetime factor claimed in [[18](#ref-18)] is not supported by
 21. <Ref n="21" />M. Petzl, M. Kasper, M. A. Danzer, "Lithium plating in a commercial lithium-ion battery –
     A low-temperature aging study," *Journal of Power Sources* 275, 799–807 (2015).
     [doi:10.1016/j.jpowsour.2014.11.065](https://doi.org/10.1016/j.jpowsour.2014.11.065).
-    Protocol: §2.2.
+    Cell: §2.1; protocol: §2.2; findings: §3.1–3.4.
 22. <Ref n="22" />F. B. Spingler, M. Naumann, A. Jossen, "Capacity recovery effect in commercial LiFePO4 /
     graphite cells," *Journal of The Electrochemical Society* 167(4), 040526 (2020).
     [doi:10.1149/1945-7111/ab7900](https://doi.org/10.1149/1945-7111/ab7900). Abstract.
