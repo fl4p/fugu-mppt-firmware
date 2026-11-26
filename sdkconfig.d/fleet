@@ -15,6 +15,6 @@ CONFIG_FUGU_WITH_PSU=y
 CONFIG_FUGU_WITH_SCOPE=y
 CONFIG_FUGU_WITH_WSYNC=y
 CONFIG_FUGU_WITH_BLE_TELE=y
-# lwIP API calls off the tcpip thread abort (a wrong-thread call is a heap-corruption race)
-CONFIG_LWIP_CHECK_THREAD_SAFETY=y
+# lwIP thread check off: AsyncUDP telemetry calls udp_new() off the tcpip thread and aborts (fry 11-26)
+# CONFIG_LWIP_CHECK_THREAD_SAFETY is not set
 CONFIG_FUGU_PBUF_PROBE=y

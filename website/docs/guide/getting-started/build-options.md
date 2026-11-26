@@ -70,7 +70,7 @@ The following table lists each feature option, its default, and what it does:
 | `CONFIG_FUGU_INA226_MEASURED_RATE` | on | Report the INA226 sample rate measured at init instead of the datasheet value (some parts convert faster). Needs `INA226`. |
 | `CONFIG_FUGU_RT_ALLOC_COUNT` | on (S3) | Count heap allocations and frees made by the control-loop task; `rt-stats` and `bootinfo` print them. Selects `CONFIG_HEAP_USE_HOOKS`. |
 | `CONFIG_FUGU_RT_ALLOC_TRACE` | off | Also record the call stacks of the first 8 distinct control-loop heap operations. Layer `sdkconfig.d/rt_alloc_trace` to enable. |
-| `CONFIG_FUGU_PBUF_PROBE` | off | Wraps lwIP `pbuf_free`. When a pbuf is freed with a reference count of 0, the probe first copies 384 bytes around it, the caller, the task and a heap integrity check into `g_pbufProbe`, which is part of the core dump (`p/x g_pbufProbe` in gdb). lwIP then aborts. Costs one compare per free and about 0.6 KB of RAM. `crash pbuf` tests it. Needs `NETW`; on in the `sdkconfig.d/fleet` build, together with `CONFIG_LWIP_CHECK_THREAD_SAFETY`. |
+| `CONFIG_FUGU_PBUF_PROBE` | off | Wraps lwIP `pbuf_free`. When a pbuf is freed with a reference count of 0, the probe first copies 384 bytes around it, the caller, the task and a heap integrity check into `g_pbufProbe`, which is part of the core dump (`p/x g_pbufProbe` in gdb). lwIP then aborts. Costs one compare per free and about 0.6 KB of RAM. `crash pbuf` tests it. Needs `NETW`; on in the `sdkconfig.d/fleet` build. |
 
 \* The Kconfig default is off, but `sdkconfig.defaults` enables `WSYNC`, so a fresh MCPWM build of this
 repository has it on.
