@@ -195,7 +195,11 @@ def test_disagreeing_defaults_left_out(bare):
     """})
     assert not s.errors
     assert "port" not in s.defaults and "L0" not in s.defaults
-    assert any("'port'" in w for w in s.warnings) and any("'L0'" in w for w in s.warnings)
+    # disagreeing across files: kept per file, no warning
+    assert s.file_defaults == {("http.conf", "port"): "80", ("tlscon.conf", "port"): "992"}
+    assert not any("'port'" in w for w in s.warnings)
+    # disagreeing within one file (required read vs a default): left out there, with a warning
+    assert ("coil.conf", "L0") not in s.file_defaults and any("'L0'" in w for w in s.warnings)
 
 
 def test_main_exits_nonzero_on_unresolved(bare, tmp_path, capsys):
@@ -252,4 +256,4 @@ def test_write_roundtrip_on_copy(repo_scan, tmp_path):
     fk, tk, df = sck.parse_tables(html.read_text())
     assert fk == repo_scan.file_keys
     assert tk == {t: repo_scan.type_keys.get(t, set()) for t in ("byte", "long", "float", "string")}
-    assert set(df) == set(repo_scan.defaults)
+    assert set(df) == set(repo_scan.defaults) | {f"{c}|{k}" for c, k in repo_scan.file_defaults}
