@@ -121,3 +121,26 @@ Rise factor (same matrix): 1.25 gave wrong-peak 248 s (def), 348 s (big), 693 s 
 - A cloud edge that makes the power jump > 15 % after the reference triggers one unbounded scan.
 
 Driver scripts (not in the repo): `/tmp/scanfix/{gen.py,batch.sh,run1.sh,cmp.py,agg.py}`; results `/tmp/scanfix/res/`.
+
+### One close retry per rise (after the re-review of 8373dbc8)
+
+Keeping `pLo` after a close scan (best probe within 2 margins) repeated a full rising-light scan every ~70 s below
+50 W when the light then froze with the lower peak at 0.94-1.03 x the operating point (the 0.97 m s probe never reads
+above x1.03). Now `rt` allows one such retry per rise: a rising-light scan that ends steady and close again raises
+`pLo`. `rt` clears at the sweep start.
+
+Freeze repro `SIM_RISE=0.03,g,0.04,60,300` (light frozen at 300 s, ~26 W), pgx93, 7 runs each, dHarvest pts vs base
+mean (min), scans:
+
+| g | f88142ab | 8373dbc8 | this |
+|---|---|---|---|
+| 0.067 | -0.01 (-0.07), 1 | -0.31 (-0.60), 20.1 | -0.04 (-0.11), 2 |
+| 0.068 | -0.01 (-0.04), 1 | +0.25 (-0.45), 15.4 | +0.14 (-0.06), 2 |
+| 0.069 | +0.31 (-0.08), 1 | +0.96 (-0.25), 13.1 | +0.90 (-0.05), 2 |
+
+Rising-shade matrix with this change: def, big, dim, p300, sh04, sh06 unchanged from 8373dbc8; slow +8.0 (+4.0),
+wrong-peak 204 s (8373dbc8 75 s, f88142ab 395 s); small +11.2 (+6.2), 308 s (140 s, 423 s). Default wx-shade-rise
+99.0 % / 27.8 s (pgx93), Mac 99.0 % / 26.5 s; the 0.04 case on the Mac 98.5 % / 136 s. Regression cells unchanged
+from 8373dbc8, all exit codes and PASS/FAIL lines as base.
+
+Image: 1754805 B (base +336 B); IRAM .text -84 B vs base.

@@ -504,7 +504,8 @@ sweep). A scan that moves raises it to the power of the probe it moves to. A sca
 
 A scan in rising light that the light change check rejected, or whose best probe came within 6 %, keeps the
 reference: the re-scan 60 s later (see [schedule and cost](#schedule-and-cost)) runs in rising light again, also
-below 5 % of `p_max`. Outside rising light no scan runs below 5 %, so neither does that re-scan.
+below 5 % of `p_max`. That holds once per rise: if the re-scan also ends steady with a probe within 6 %, it raises
+the reference. Outside rising light no scan runs below 5 %, so neither does that re-scan.
 
 Its probes count as currents seen in step 2. A lower maximum that a probe found about as bright as the operating
 point, or brighter, therefore stays a candidate in the following scans once the light stops rising.
