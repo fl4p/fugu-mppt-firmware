@@ -338,3 +338,19 @@ With minutes at the Vout limit dropped (either device > 5 % of its `cv_lim_idx`-
 1.14 and 0.99: the result moves with the cap filter, so it is not separable from noise yet. The report runs daily on
 havan for the previous UTC day (user timer `comb-load-report`, 00:30) and appends to `~/pv/comb-report/report.jsonl`;
 days with < 20 load minutes say `too few load minutes`.
+
+## Update 2026-11-27: the sim's tracking loss with fry-inv is a noise cliff the field does not show
+
+`wx-mid` with `fry-inv` loses 28.7 % (notch) / 19.4 % (both) to tracking; the tracker wanders (Vin rms 6.5 V, mean
+34.6 V vs 49.8 V without the inverter). It is a cliff, not a slope: at `SIM_NOISE_GAIN` 0.5 both filters keep
+99.2 / 99.4 %, at 0.25 99.6 / 99.6 %. Halving one channel of the profile: Vin 96.3 / 97.9, Iout 98.0 / 99.4,
+Vout 69.1 / 76.7, so the Vin and Iout noise together push it over; Vout noise does not matter here.
+
+Field check, per-minute stddev of fry's telemetry `Ui` (minutes > 50 W, no limiter), median / p90:
+sim without inverter 1.1 V rms matches fry's no-load minutes (0.7–1.2 V). Under load > 60 A: 11-20 (notch) n=217,
+274 W, 0.80 / 2.50 V; 11-26 (both) n=92, 371 W, 0.79 / 1.56 V; no wander. Only 11-14 (n=13, 85 W, older firmware)
+shows 3.70 / 8.83 V. So at 270–380 W the real inverter noise sits below the cliff, and the comb's tracking gain there
+is the below-cliff difference (≤ 0.2 pp). Low power with a heavy inverter load is untested beyond those 13 minutes.
+
+Consequence: expected field gain of the comb on fry is ≤ 0.2 pp × 15 % of energy, i.e. not measurable. Sims with the
+`fry-inv` profile at gain 1 overstate fry's November conditions; use gain 0.5 or check the field Vin spread first.
