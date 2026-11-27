@@ -92,10 +92,9 @@ inline variable in `src/service.h`. It provides these methods:
 - `findByName(const char*)`: case-insensitive lookup.
 - `all()`: the registered services, for status listing.
 - `startEnabledAtBoot(bool networkUp)`: starts enabled services; network ones only if `networkUp`.
-- `startEnabledNetworkServices()`: restarts enabled network services that are not `Running`;
-  called on the Wi-Fi-up edge.
-- `retryFailedNetworkServices()`: starts enabled network services that are `Failed` or `Stopped`
-  again; called every 30 s while Wi-Fi is up (see [Network watchdog](#network-watchdog)).
+- `startEnabledNetworkServices()`: (re)starts enabled network services that are not `Running` and
+  returns how many were tried; called on the Wi-Fi-up edge and every 30 s while Wi-Fi is up
+  (see [Network watchdog](#network-watchdog)).
 - `stopNetworkServices()`: stops the network services while the netif is still valid; called on the
   Wi-Fi-down edge, before `WiFi.disconnect()`.
 - `tickAll()`: ticks every service.

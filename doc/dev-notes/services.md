@@ -93,7 +93,7 @@ void registerService(Service *s);   // push_back + s->loadConf()
 Service *findByName(const char *n) const;
 const std::vector<Service*> &all() const;
 void startEnabledAtBoot();           // for each enabled(): start()
-void startEnabledNetworkServices();  // self-heal: start enabled+Stopped net services
+int startEnabledNetworkServices();   // self-heal/retry: start enabled non-Running net services; returns count tried
 void tickAll();                      // for each Running: tick()
 };
 inline ServiceManager g_services;

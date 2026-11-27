@@ -1562,7 +1562,7 @@ static void netGuardTick(bool wifiUp) {
                  (unsigned long) in.largest);
         MQTT.restart();
     }
-    if (a & NG_RETRY_FAILED) g_services.retryFailedNetworkServices();
+    if (a & NG_RETRY_FAILED) g_services.startEnabledNetworkServices();
 }
 #endif
 

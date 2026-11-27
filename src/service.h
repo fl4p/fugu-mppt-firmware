@@ -205,15 +205,9 @@ public:
             if (s->enabled() && (networkUp || !s->requiresNetwork())) s->start();
     }
 
-    // Self-heal: (re)start enabled network services that aren't Running. Called when WiFi connects.
-    void startEnabledNetworkServices() {
-        for (auto *s: _services)
-            if (s->requiresNetwork() && s->enabled() && s->state() != ServiceState::Running)
-                s->start();
-    }
-
-    // Start enabled network services that are Failed or Stopped again; returns how many were tried.
-    int retryFailedNetworkServices() {
+    // Self-heal: (re)start enabled network services that aren't Running. Called on the WiFi-up
+    // edge and every 30 s while WiFi is up (the net guard's retry). Returns how many were tried.
+    int startEnabledNetworkServices() {
         int n = 0;
         for (auto *s: _services)
             if (s->requiresNetwork() && s->enabled() && s->state() != ServiceState::Running) {

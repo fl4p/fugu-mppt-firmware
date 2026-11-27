@@ -155,7 +155,7 @@ void test_init_fails_once() {
     assert(MQTT.configured()); // the network guard still counts it as down
     ServiceManager mgr;
     mgr.registerService(&MQTT);
-    assert(mgr.retryFailedNetworkServices() == 1);
+    assert(mgr.startEnabledNetworkServices() == 1);
     assert(MQTT.state() == ServiceState::Running && MQTT.client);
     connect();
     assert(MQTT.isConnected() && g_live == 1);

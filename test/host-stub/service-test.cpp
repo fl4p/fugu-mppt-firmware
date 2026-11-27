@@ -201,7 +201,7 @@ void test_retry_after_failed_start() {
     mgr.startEnabledAtBoot(true);
     assert(net.state() == ServiceState::Failed);
     net.startResult = true;
-    assert(mgr.retryFailedNetworkServices() == 1);
+    assert(mgr.startEnabledNetworkServices() == 1);
     assert(net.state() == ServiceState::Running);
 }
 
@@ -227,7 +227,7 @@ void test_retry_starts_stopped_enabled() {
     mgr.registerService(&loc);
     mgr.startEnabledAtBoot(false); // net stays Stopped
     assert(net.state() == ServiceState::Stopped);
-    int n = mgr.retryFailedNetworkServices();
+    int n = mgr.startEnabledNetworkServices();
     std::printf("retry with an enabled Stopped service: %d started\n", n);
     assert(n == 1 && net.state() == ServiceState::Running);
     assert(off.startCount == 0 && loc.startCount == 1);

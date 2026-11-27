@@ -1,5 +1,5 @@
 // Host-side tests for src/etc/net_guard.h (NetGuard, LogLimiter) and
-// ServiceManager::retryFailedNetworkServices().
+// ServiceManager::startEnabledNetworkServices().
 //
 // Build & run:
 //   clang++ -std=gnu++20 -fexceptions -I test/host-stub -I src \
@@ -89,23 +89,23 @@ void test_failed_service_retried() {
         if (g.step(base(t)) & NG_RETRY_FAILED) { at = t; break; }
     assert(at == 229 * S); // 30 s after the last Wi-Fi-down sample
 
-    assert(mgr.retryFailedNetworkServices() == 1);
+    assert(mgr.startEnabledNetworkServices() == 1);
     assert(net.startCount == 2 && net.stopCount == 0); // a Failed service is started without onStop
     assert(loc.startCount == 1);                      // not a network service
     assert(off.startCount == 0);                      // disabled
     assert(ok.startCount == 1);                       // Running: untouched
 
     net.startResult = true;
-    assert(mgr.retryFailedNetworkServices() == 1);
+    assert(mgr.startEnabledNetworkServices() == 1);
     assert(net.state() == ServiceState::Running);
-    assert(mgr.retryFailedNetworkServices() == 0);
+    assert(mgr.startEnabledNetworkServices() == 0);
     assert(net.startCount == 3);
 
     // Stopped but enabled (e.g. a restart whose stop ran but whose start never did) is started too
     net.stop();
-    assert(mgr.retryFailedNetworkServices() == 1 && net.state() == ServiceState::Running);
+    assert(mgr.startEnabledNetworkServices() == 1 && net.state() == ServiceState::Running);
     off.stop();
-    assert(mgr.retryFailedNetworkServices() == 0); // disabled stays Stopped
+    assert(mgr.startEnabledNetworkServices() == 0); // disabled stays Stopped
 }
 
 void test_retry_period() {
