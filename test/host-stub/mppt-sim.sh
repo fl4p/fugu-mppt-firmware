@@ -14,6 +14,7 @@ DEFAULT="sanity a b c d-cloud d-cloud-ramp d-bus04 d-bus08 d-bus12 d-noise e e-b
     dcd-stop-flat dcd-stop-fry dcd-slow-flat dcd-slow-fry dcd-ccm-flat dcd-ccm-fry dcd-hv-step-flat dcd-hv-step-fry dcd-hv-train-flat dcd-hv-train-fry 
     cv-hold-pair cv-hold-offset cv-hold-gap cv-hold-load cv-hold-reboot cv-hold-mask cv-hold-day psu-boost-dark psu-boost-cold mc-boost-dark mc-boost-dark-lowf mc-boost-dark-ton mc-boost-dark-f20 mc-boost-open mc-boost-bfopen"
 [ "$1" = --list ] && { printf "%s\n" $DEFAULT; exit 0; }
+mkdir -p "$(dirname "$OUT")"
 clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
     -include "$ROOT/test/host-stub/esp/sim_prelude.h" -I "$ROOT/test/host-stub/esp" -I "$ROOT/src" \
     -DSIM_REPO_ROOT="\"$ROOT\"" \
