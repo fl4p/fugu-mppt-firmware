@@ -59,6 +59,20 @@ Rejected fix: a single-frame ceiling latch. At cv_ceiling + 10 mV (3.560 V) it d
 continuous measurement; at cv_eoc + 10 mV (3.510 V) normal entry peaks (3.518/3.526 V in sim) trip it and defer
 balancing by 20 h or more.
 
+## 3. Sparse cell frames after a re-entry
+
+Status: open, existing on origin/main (21626ec2), field cadence does not reach it so far.
+
+With cell frames alternating 12 s / 60 s from the cloud on, the cell climbs from 3.47 V to 3.54 V between two
+frames and the re-entry check fails; a ceiling rule on frames cannot see it (same blind spot as issue 2):
+
+    SIM_CELL_DT=12,60@800 <mppt-sim> cv-hold-recloud     # 3.5437 V, FAIL (cv_ceiling - 10 mV)
+
+Field-like cadences pass: `12@800` 3.5120 V, `4,12@800` 3.5085 V, `12,24@800` 3.5120 V. Measured 2026-11-27 17:0x
+UTC (discharging, 300 s of MQTT arrivals): cell frames every 4-12 s (mostly 12 s, also when the value repeats),
+ibat every ~4 s with some 8-12 s. The batmon InfluxDB series is no proxy for frame spacing: it holds points only
+on a value change (3.500 -> 3.500 V gaps of 20-45 s during the 11-25 hold).
+
 ## Rejected: hold-current re-entry cap
 
 Commits a90e17c4 ("cv hold re-entry: cap ibat at the last current held at cv_eoc until the cell is back there") and
@@ -82,3 +96,15 @@ Codex review of 5bd42fb8 (second round) found:
 
 Decision (2026-11-27): the cap is dropped. The re-entry scenarios, the 11-25 record and its replay are kept as tests
 of the current firmware.
+
+## Evaluated: post-dip cap (neutral, not landed)
+
+A simpler cap (not the one above): while the highest cell is more than cv_hold_band below cv_eoc in a hold, the
+pack-current target is capped at max(tail current, ibat at the last cell frame at cv_eoc); no learning, no growth,
+released at the band. Evaluated 2026-11-27 against origin/main 21626ec2, record in
+`2026-11-27-postdip-cap-eval.md`. It passes every objection above (worst return 168 s with +-1.2 A ibat noise,
+no sibling-reboot asymmetry, tail timer untouched), but it almost never binds: its floor is the tail current
+(12.25 A at 245 Ah), the re-entry ramps stay below it, so it clipped 5-7 frames per unit by <= 2.8 A and the
+re-entry peaks moved a few mV either way. It acts only on ramps above the tail current (host test: crossing
+cv_eoc at 9.7 A instead of 19.4 A, 3.504 vs 3.509 V). Not landed: one more member for no measured re-entry gain.
+Sim knobs from that evaluation are kept: `SIM_IBAT_NOISE=A`, `SIM_CELL_DT=s[,s..][@t]`.

@@ -202,6 +202,7 @@
 //     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_BASE_A=A  SIM_T
 //     SIM_TR  SIM_PACK_RP=x (scales the pack's polarization, lfp_pack.h topOfCharge())
 //     SIM_CLOUD=t,len,light,ramp_s  (cv-hold-* but -day: one cloud on both units, light 0..1, linear edges)
+//     SIM_IBAT_NOISE=A (alternating +-A on the BMS ibat frames)  SIM_CELL_DT=s[,s..][@t] (cell frame intervals from t)
 //
 #include <algorithm>
 #include <cmath>
@@ -4192,6 +4193,17 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     if (const char *e = getenv("SIM_LOAD")) sscanf(e, "%f,%f,%f,%f", T.load, T.load + 1, T.load + 2, T.load + 3);
     if (const char *e = getenv("SIM_BMS_GAP")) sscanf(e, "%lf,%lf,%lf,%lf", T.gap, T.gap + 1, T.gap + 2, T.gap + 3);
     if (const char *e = getenv("SIM_REBOOT_AT")) rebootAt = atof(e);
+    if (const char *e = getenv("SIM_IBAT_NOISE")) T.bms.noiseI = atof(e);
+    static float cellDt[8];
+    if (const char *e = getenv("SIM_CELL_DT")) { // s[,s..][@t]: cell frame intervals (cycled) from t (default 0)
+        int n = 0;
+        for (char *q = (char *) e; n < 8 && *q && *q != '@';) {
+            cellDt[n++] = strtof(q, &q);
+            if (*q == ',') ++q;
+        }
+        if (const char *at = strchr(e, '@')) T.bms.tC2 = atof(at + 1);
+        T.bms.cycC2 = cellDt, T.bms.nCyc2 = n;
+    }
     if (const char *e = getenv("SIM_BMS")) {
         int lag = 0;
         sscanf(e, "%f,%f,%d", &T.bms.phaseI, &T.bms.phaseC, &lag);

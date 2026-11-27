@@ -110,6 +110,10 @@ struct BmsFeed {
     bool lagI = false, cells = true, ibatOn = true;
     bool dueI = false, dueC = false;
     float ibat = 0.f, vcell = 0.f;
+    float noiseI = 0.f; // [A] sim: alternating +-noiseI on the ibat frames
+    const float *cycC2 = nullptr; // sim: cell frame intervals from tC2 on
+    int nCyc2 = 0;
+    double tC2 = 0;
 
     void poll(double t, float iNow, float vNow) {
         if (nextI < 0) nextI = phaseI + periodI, nextC = phaseC + periodC;
@@ -117,11 +121,11 @@ struct BmsFeed {
         if (t >= nextI) {
             nextI += periodI;
             dueI = ibatOn;
-            ibat = q(lagI ? iPrev : iNow, qI);
+            ibat = q((lagI ? iPrev : iNow) + ((nI++ & 1) ? -noiseI : noiseI), qI);
             iPrev = iNow;
         }
         if (t >= nextC) {
-            nextC += nCyc ? cycC[kC++ % nCyc] : periodC;
+            nextC += nCyc2 && t >= tC2 ? cycC2[kC2++ % nCyc2] : nCyc ? cycC[kC++ % nCyc] : periodC;
             dueC = cells;
             vcell = q(vNow, qV);
         }
@@ -135,7 +139,8 @@ struct BmsFeed {
 
 private:
     double nextI = -1, nextC = -1;
-    int kC = 0;
+    int kC = 0, kC2 = 0;
+    unsigned nI = 0;
     float iPrev = 0.f;
     static float q(float v, float step) { return step > 0 ? std::round(v / step) * step : v; }
 };
