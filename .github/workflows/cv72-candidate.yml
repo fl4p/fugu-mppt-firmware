@@ -4,12 +4,12 @@ name: cv72 candidate validation
 # Runs ALL 10 cv-hold scenarios across 4 shards, plus charger-term-test. Keeps full
 # logs / env / sha / rc artifacts. No source or threshold edits.
 #
-# PREPARED, NOT PUSHED. Set env.CANDIDATE_SHA to the parent-supplied candidate SHA,
-# then push investigate/cv72-baseline to trigger.
+# PREPARED. Candidate validated on run 46019362503 (all 10 cv-hold PASS; charger-term
+# failed on a stale test expectation). Dispatch-only now: the host-unit workflow
+# (cv72-host-units.yml) owns the push trigger, so pushing the branch does not re-run
+# the CV sim.
 
 on:
-  push:
-    branches: [investigate/cv72-baseline]
   workflow_dispatch:
 
 concurrency:

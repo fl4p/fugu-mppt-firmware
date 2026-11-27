@@ -1,0 +1,70 @@
+name: cv72 host unit validation
+
+# Host unit tests only (no CV sim). Runs ALL host-tests at -j4 on the actual CI
+# image, pinned to the SHA in env.CANDIDATE_SHA. Keeps env + actual rc + per-test
+# logs as artifacts.
+#
+# PREPARED, NOT PUSHED. When the exact tests/report SHA is ready:
+#   set env.CANDIDATE_SHA below, then push investigate/cv72-baseline to trigger.
+
+on:
+  push:
+    branches: [investigate/cv72-baseline]
+  workflow_dispatch:
+
+concurrency:
+  group: cv72-host-units-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: "FILL_HOST_TESTS_SHA"
+
+jobs:
+  host-units:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: checkout candidate
+        run: |
+          if [ "$CANDIDATE_SHA" = "FILL_HOST_TESTS_SHA" ]; then
+            echo "ERROR: CANDIDATE_SHA is not set"; exit 1
+          fi
+          git checkout --detach "$CANDIDATE_SHA"
+          echo "checked_out_sha=$(git rev-parse HEAD)"
+
+      - name: runner and toolchain identity
+        run: |
+          mkdir -p out
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "checked_out_sha=$(git rev-parse HEAD)"
+            echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+            echo "arch=$(uname -m)"
+            echo "os=$(head -2 /etc/os-release | tr '\n' ' ')"
+            echo "clang=$(clang++ --version | head -1)"
+            echo "gcc=$(g++ --version | head -1)"
+            echo "glibc=$(ldd --version | head -1)"
+          } | tee out/env.txt
+
+      - name: run all host unit tests
+        run: |
+          set -o pipefail
+          OUT="$PWD/out/ht" bash test/host-stub/host-tests.sh -j 4 > out/host-tests.log 2>&1 && rc=0 || rc=$?
+          echo "$rc" > out/rc.txt
+          echo "HOST_TESTS_RC=$rc"
+          tail -80 out/host-tests.log || true
+
+      - name: assert host unit result
+        run: |
+          rc="$(cat out/rc.txt)"
+          echo "host-tests rc=$rc"
+          exit "$rc"
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv72-host-units
+          path: out/
