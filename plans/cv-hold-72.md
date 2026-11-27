@@ -3,9 +3,10 @@
 # CV hold current regulation
 
 Issue [#72](https://github.com/fl4p/fugu-mppt-firmware/issues/72) concerns CV-hold
-simulation failures that depend on BMS sampling phase. The final candidate changes
-only the output-current controller's error reference. Charger logic, PWM timing,
-configured gains, protections and simulation thresholds stay unchanged.
+simulation failures that depend on BMS sampling phase. The candidate changes the
+output-current controller's error reference and reduces the CV hold's per-frame
+battery-current correction. Forecast logic, PWM timing, configured converter PD
+gains, protections and simulation thresholds stay unchanged.
 
 ## Current-error reference
 
@@ -34,8 +35,8 @@ gap removed the high pulse but left a low excursion. Reducing Iout-controller
 gain removed the latter in the tested fixture.
 
 The fixed reference passes the two initial cases with the original charger and
-normal PWM timing, so neither the experimental LH reservation nor the earlier
-charger gain-scheduling candidate is included.
+normal PWM timing. Neither the experimental LH reservation nor the earlier
+forecast gain-scheduling candidate is included.
 
 | Mac `cv-hold-pair` | Hold band (V) | Entry peak (V) | Verdict |
 |---|---|---|---|
@@ -55,6 +56,40 @@ from the earlier scratch checkout. Final validation uses the candidate on curren
 
 Local evidence: `/tmp/cv72-current-main-baseline-phase1.log`,
 `/tmp/cv72-lh/RESULTS.md`, and `/tmp/cv72-lh/logs/cand_preA_lh0_{default,phase1}.log`.
+
+## Delayed battery-current feedback
+
+The larger timing grid found residual failures with `lagI=1`: the BMS sends the
+previous current frame's value, four seconds old in this fixture, while cell
+voltage is current. Arrival timestamps do not expose that sample age.
+
+At cell phase 4 s, the fixed-reference candidate reaches 3.522028 V at 210.1279 s.
+Both converters closely track their commanded limits at that peak. Excursions
+above 3.515 V last about nine seconds and recur about 24 seconds apart. This is
+different from the earlier millisecond converter pulse.
+
+The paired diagnostic changes only the battery-current correction `G` from 0.4
+to 0.2. The delayed case then passes at 3.499..3.501 V with a 3.510 V entry peak;
+the default case also passes, at 3.498..3.503 V with a 3.508 V entry peak. The
+roughly 24-second recurrence disappears. These two cases support a candidate,
+not acceptance of the full timing grid.
+
+For two converters with ideal current tracking, a fixed target and inactive
+caps, a one-frame delay gives `x[k+1] = x[k] + 2G*(target - x[k-1])`. The pole
+magnitude falls from about 0.894 to 0.632 when G is halved. This explains why the
+old stability condition `2G < 1` did not guarantee adequate damping. It is an
+approximation, not a stability proof of the coupled cell loop, converter dynamics,
+caps or asynchronous updates. The remaining slow excursion is not explained by
+that inner-loop model.
+
+The production candidate retains the fixed reference and uses G = 0.2. A new
+stock `cv-hold-pair-lag` case fixes cell phase at 4 s and delays current by one
+frame, sharing the original pair's entry, band and latch assertions. Its empty
+steady-window check rejects a run with no samples after `holdAt + 300 s`.
+
+Diagnostic logs and traces: `/tmp/fugu-cv72-lag/`, including `lag_pC4.csv`,
+`g02_pC4.log` and `build_g02.log`. No instrumented getters or trace hooks are
+included in the production candidate.
 
 ## Validation
 
@@ -82,9 +117,35 @@ Local evidence: `/tmp/cv72-current-main-baseline-phase1.log`,
   fails low at 3.486 V; phases 3, 4, 5, 7 and 8 exceed the entry limit, peaking at
   3.521–3.524 V. These runs use Ubuntu 26.04, Clang 21.1.8, x86_64, glibc 2.43,
   image `20261122.9.1`, and candidate `f0ebdf43`.
-- The macOS 26-case candidate grid and diagnosis of the delayed-current cases
-  remain in progress. A corresponding baseline grid has not been run, so these
-  six failures have not been classified as pre-existing or introduced.
+- macOS at `f0ebdf43`: 23 PASS, three FAIL (delayed-current phases 3, 4 and 5).
+  One case reused the root's run with captured exit 0; the worker ran the other
+  25. A corresponding baseline grid has not been run, so the residual failures
+  have not been classified as pre-existing or introduced.
+- The G = 0.2 candidate passes the default pair and new delayed pair locally.
+  Restoring G = 0.4 in an isolated copy makes the same delayed-pair harness fail
+  at a 3.522 V entry peak. The focused charger and PD host tests pass.
+- Both 26-case grids, the full stock suite, host units and the firmware build
+  after integration with the latest `main` remain pending.
+
+### Empty-window guard review
+
+The pair assertions now require `lo <= hi` before accepting the steady band.
+The unobserved window retains the reversed sentinels (9, 0), which fail this
+check; NaN bounds also fail the comparison. This is a nonempty-window check,
+not validation of every plant sample. Adding this requirement cannot convert an
+existing failure to a pass, and the voltage limits remain unchanged.
+
+Both pair scenarios invoke it. A shortened `SIM_T=300` delayed-pair run fails
+with `no steady hold samples`; a full run passes. There is no result cache.
+Final validation records the candidate revision, including the simulator and
+BMS producer, alongside the controller; diagnostic and reused logs remain
+identified separately. The guard exposes missing evidence rather than relaxing
+the voltage assertions.
+
+The host benchmark could not resolve its incremental cost above noise (largest
+observed delta 0.097 ns/iteration, not a latency upper bound). The verified pass
+path is a comparison and conditional branch, executed once at simulator shutdown;
+it adds no firmware RT work. Evidence: `/tmp/cv72-needbench/README.md`.
 
 No test threshold was widened. Stock simulator cases include report-only cases;
 completion of the suite does not assert every reported statistic or every limiter

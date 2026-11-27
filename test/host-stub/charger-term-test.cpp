@@ -1333,10 +1333,15 @@ static void test_hold_rise_frame_spacing() {
             c.update(28.f, 30.f, true); // iout 30 A: the headroom does not cap the limit
         }
         const float after = c.Iout_max();
+        const float S = c.params.tail_c_rate * c.params.Cbat / (c.params.cv_eoc - c.params.cv_min);
+        // mode 0 sees the 12 s rise: forecast error -0.020 V with K_DOWN -> -G*K_DOWN*0.020*S
+        // modes 1/2 miss it: error +0.010 V with K_UP -> +G*K_UP*0.010*S
+        const float expect = mode ? 0.2f * 0.5f * 0.010f * S : -0.2f * 1.5f * 0.020f * S;
         printf("  rise look-ahead, cell frames %d s apart%s: limit %.2f -> %.2f A at 3.490 V\n", per,
                mode == 2 ? " (republished)" : "", before, after);
         CHECK(c.termCond.cvHold(), "in hold (mode %d)", mode);
-        CHECK(mode ? after > before + 0.1f : after < before - 0.5f, "mode %d: limit %.2f -> %.2f A", mode, before, after);
+        CHECK(std::fabs((after - before) - expect) < 1e-3f, "mode %d: step %+.4f A != %+.4f A", mode, after - before,
+              expect);
     }
 }
 
