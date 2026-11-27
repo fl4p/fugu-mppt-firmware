@@ -128,7 +128,7 @@ struct Rnd { // random board and source
 // coilfit::persistL(); also builds against the former persistL(r0, r, st), so the known-bad cases can be run there
 template<class R> static float persist(const R &r0, const R &r, int st) {
     if constexpr (requires { coilfit::persistL(r0, r, st); }) return coilfit::persistL(r0, r, st);
-    else return coilfit::persistL(r0, st);
+    else if constexpr (requires { coilfit::persistL(r0, st, r.L); }) return coilfit::persistL(r0, st, r.L); else return coilfit::persistL(r0, st);
 }
 
 static float rmsOf(const std::vector<float> &e) {
@@ -380,7 +380,7 @@ static int testOnTimeTail() {
 }
 
 // missing evidence persists nothing: 48.6 uH, 80/26.6 V, 39 kHz, D 0.075..0.215, on-time +600 ns (out of range) over
-// 3, 15, 16 and 48 points (under kMinFitPts the offset is not estimated; persisting the uncorrected L there wrote
+// 3, 15, 16 and 48 points, and +150 ns (in bounds, biases the uncorrected L ~-9 %: the 2-sigma shift rule refuses) (under kMinFitPts the offset is not estimated; persisting the uncorrected L there wrote
 // ~36 uH), with a 10 % 320 kHz node ring (resolved from 16 points: the offset bound refuses) and without (no stated L
 // error); without an offset the ringing 48-point sweep is written, within 1 %
 static int testPersist() {
@@ -388,7 +388,7 @@ static int testPersist() {
     float d[48], vi[48], vo[48], io[48];
     int fail = 0;
     for (float a: {0.1f, 0.f})
-        for (float dl: {600e-9f, 0.f})
+        for (float dl: {600e-9f, 150e-9f, 0.f})
             for (int n: {3, 15, 16, 48}) {
                 for (int i = 0; i < n; ++i) {
                     d[i] = 0.075f + (float) i * 0.14f / (float) (n - 1), vi[i] = vi0, vo[i] = vo0;
@@ -402,10 +402,10 @@ static int testPersist() {
                 const float l = persist(r0, r, st);
                 const bool want = a > 0 && dl == 0 && n == 48, never = n < 16 || dl > 0 || a == 0;
                 const bool bad = want ? !(std::fabs(l / L - 1) < 0.01f)
-                                      : never && (l == l || (a > 0 && dl > 0 && n >= 16 && !r0.nh)); // offset gate refuses
+                                      : never && (l == l || (a > 0 && dl > 500e-9f && n >= 16 && !r0.nh)); // offset gate refuses
                 fail += bad;
-                printf("persist: ring %.0f %%, %+.0f ns, %d pts, %s: status %d, uncorrected %.2f uH, %s%.2f uH%s\n",
-                       a * 100, dl * 1e9f, n, r0.nh ? "ring fit" : "no ring fit", st, r0.L * 1e6f,
+                printf("persist: ring %.0f %%, %+.0f ns, %d pts, %s: status %d, uncorrected %.2f uH +-%.1f/%.1f %%, corrected %.2f uH, %s%.2f uH%s\n",
+                       a * 100, dl * 1e9f, n, r0.nh ? "ring fit" : "no ring fit", st, r0.L * 1e6f, r0.se * 100, r0.sys * 100, r.L * 1e6f,
                        l == l ? "persisted " : "nothing persisted ", l * 1e6f, bad ? "  FAIL" : "");
             }
     return fail;

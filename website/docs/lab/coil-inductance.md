@@ -278,13 +278,15 @@ agreed with the script to within ~2 % on board A of §9.
 | Sweep | a protection trip, shutdown or disable ended it (a planned stop at the current, peak-current, CCM or voltage limit is fine) |
 | Current zero (`Iout`, on a boost `Iin`) | it moved by more than 0.02 A (`DISTURBED`) or was not read |
 | Fit | under 16 points, or no ring resolved: the median fallback states no error |
-| On-time offset | not estimated (under 16 points), or it fails the ±400 ns bound |
+| Fit error | the stated `L` error (noise and systematic, 1σ) exceeds 3 % |
+| On-time offset | not estimated (under 16 points), or it fails the ±400 ns bound, or the corrected `L` differs from the uncorrected one by more than twice the stated error |
 | Value | not finite between 1 µH and 2 mH |
 
 A single run never writes the on-time corrected `L`. Over one sweep the offset is nearly collinear
 with a slope of the coil's own `L(Ipk)` (see [On-time offset](#on-time-offset)), so one run cannot
 tell which of the two it measured. When an offset is present, the written uncorrected value carries
-its bias, about −3 % per +100 ns on the converter model. Agreement of the offset fitted at two
+its bias, about −3 % per +100 ns on the converter model; the shift check refuses the larger offsets,
+and also a coil whose own slope reaches about −1 %/A. Agreement of the offset fitted at two
 switching frequencies (`f=`) would identify it; that pair rule is not implemented. A run that
 reaches the fit ends its log with either `-> coil.conf L0=<L> uncorrected` or
 `not for coil.conf: <reason>`. A run that stops earlier (too few points, a failed precharge or

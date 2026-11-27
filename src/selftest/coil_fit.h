@@ -31,6 +31,7 @@ constexpr float kGainTol = 0.01f;    // assumed Iout gain tolerance (shunt), rel
 constexpr float kSlopeTol = 0.005f;  // coil L(Ipk) slope tolerance of the on-time estimate, 1/A
 constexpr float kDlMax = 400e-9f;    // plausible on-time offset (s): beyond it the DCM model does not fit
 constexpr float kLMin = 1e-6f, kLMax = 2e-3f; // plausible coil L (H) to persist
+constexpr float kLErrMax = 0.03f;              // max stated L error (relative 1 sigma) to persist
 constexpr float kDlTol = 80e-9f;     // on-time offset error (s, noise and systematic) up to which it is applied
 
 // A boost (vin the LV input, vout the HV output, its input current the coil current) is the buck with input vout and
@@ -338,10 +339,12 @@ inline Result fitOnTime(const float *d, const float *vin, const float *vout, con
 
 // the L to persist from fit r0 (offset 0) and fitOnTime() status st (NAN: none). One run does not separate the on-time
 // offset from an L(Ipk) slope, so a corrected L is never returned; r0's only with the offset evaluated in bounds (st 0, 2,
-// 3) and r0 itself: kMinFitPts points, ring resolved (finite errors), L plausible.
-inline float persistL(const Result &r0, int st) {
-    return (st == 0 || st == 2 || st == 3) && r0.n >= kMinFitPts && std::isfinite(r0.se + r0.sys) && r0.L > kLMin &&
-           r0.L < kLMax ? r0.L : NAN;
+// 3) and r0 itself: kMinFitPts points, ring resolved, error <= kLErrMax, L plausible, and the offset-corrected L lc (if
+// any) within 2 sigma of r0: a larger shift means the offset biases r0.
+inline float persistL(const Result &r0, int st, float lc = NAN) {
+    const float e = std::hypot(r0.se, r0.sys);
+    return (st == 0 || st == 2 || st == 3) && r0.n >= kMinFitPts && e <= kLErrMax && r0.L > kLMin && r0.L < kLMax &&
+           !(std::fabs(lc / r0.L - 1) > 2 * e) ? r0.L : NAN;
 }
 
 }

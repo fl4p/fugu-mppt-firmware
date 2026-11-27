@@ -2146,7 +2146,7 @@ static coilfit::Result mcFit(const float *d, const float *vi, const float *vo, c
     printf("  measure: uncorrected L %.2f uH slope %+.2f %%/A | on-time %+.0f +-%.0f noise +-%.0f syst ns, span %.2f, status %d"
            " | corrected L %.2f uH +-%.1f/%.1f %% slope %+.2f %%/A | ring %.0f kHz %.1f periods\n", a.L * 1e6f, a.k * 100, b.dl * 1e9f, b.dlse * 1e9f,
            b.dlsys * 1e9f, b.dspan, g_mcSt, b.L * 1e6f, b.se * 100, b.sys * 100, b.k * 100, a.f * 1e-3f, a.periods);
-    if (coilfit::persistL(a, g_mcSt) != coilfit::persistL(a, g_mcSt)) printf("  measure: L not persisted\n");
+    if (coilfit::persistL(a, g_mcSt, b.L) != coilfit::persistL(a, g_mcSt, b.L)) printf("  measure: L not persisted\n");
     return g_mcSt ? a : b;
 }
 // -ton scenarios: the plant's on-time offset (vconv.conf t_on_ofs) against the estimate; L vs lPlant

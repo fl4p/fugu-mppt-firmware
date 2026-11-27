@@ -291,9 +291,11 @@ static float sweepL0(const MeasArgs &a) {
              disturbed ? "; DISTURBED: moved > 0.02 A, L not for coil.conf" : "");
     if (!st) logSplit(ft, " at the fitted on-time offset (slope 0 assumed)");
     logSplit(f0, st ? "" : " uncorrected");
-    const float l = coilfit::persistL(f0, st);
+    const float l = coilfit::persistL(f0, st, ft.L);
     const char *no = fault ? "sweep aborted (trip or shutdown)" : disturbed ? "zero moved" : st == 4 ? "on-time FAIL"
                      : st == 1 || !std::isfinite(f0.se + f0.sys) ? "fit not evaluated (too few points or no ring)"
+                     : !(std::hypot(f0.se, f0.sys) <= coilfit::kLErrMax) ? "L error over 3 %"
+                     : std::fabs(ft.L / f0.L - 1) > 2 * std::hypot(f0.se, f0.sys) ? "on-time correction shifts L beyond 2 sigma"
                      : l != l ? "L implausible" : nullptr;
     if (no) { UART_LOG("measure-coil: not for coil.conf: %s", no); return NAN; }
     UART_LOG("  -> coil.conf L0=%.6e uncorrected (one run does not validate the on-time offset)   note: scales with %s "
