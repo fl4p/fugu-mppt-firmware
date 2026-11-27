@@ -11,7 +11,7 @@ H=test/host-stub
 SIM="-include $H/esp/sim_prelude.h -I $H/esp -I src -DSIM_REPO_ROOT=\"$ROOT\" -Wno-format -Wno-deprecated-volatile"
 VC=src/sim/vconv.cpp
 
-# name | compile flags | extra sources | run args
+# name | compile flags | extra sources | run args | primary source (default test/host-stub/<name>.cpp)
 TESTS=(
   "bms-cutoff-test|-std=gnu++17 -fexceptions -I $H -I src|$VC|"
   "calib-noise-test|-std=gnu++20 -O1 -fexceptions $SIM|$H/esp/sim_stubs.cpp|"
@@ -48,6 +48,7 @@ TESTS=(
   "vconv-test|-std=gnu++17 -fexceptions -I $H -I src|$VC|"
   "vedirect-test|-std=gnu++20||"
   "vfat-test|-std=gnu++20 -I components/virtual-fat12/include -I src|components/virtual-fat12/src/vfat.cpp|"
+  "vfat-core-test|-std=gnu++20 -I components/virtual-fat12/include|components/virtual-fat12/src/vfat.cpp||components/virtual-fat12/test/test_vfat.cpp"
   "wire-guard-test|-std=gnu++20 -O2 -fexceptions -I src||"
 )
 
@@ -71,10 +72,11 @@ J=4
 mkdir -p "$OUT"
 
 one() {
-  IFS='|' read -r name flags srcs args <<< "$1"
+  IFS='|' read -r name flags srcs args primary <<< "$1"
+  [ -n "$primary" ] || primary="$H/$name.cpp"
   local log="$OUT/$name.log" t0=$SECONDS
   # shellcheck disable=SC2086
-  if ! eval "$CXX $flags $H/$name.cpp $srcs -o $OUT/$name" > "$log" 2>&1; then
+  if ! eval "$CXX $flags $primary $srcs -o $OUT/$name" > "$log" 2>&1; then
     echo "BUILD-FAIL $name"; return 1
   fi
   # shellcheck disable=SC2086

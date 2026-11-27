@@ -25,7 +25,12 @@ of them except `scope-test` (an endless streaming prototype), `converter-test` (
 `conf-hash-test` (a helper that `test/host_py/test_conf_hash.py` builds), in parallel (`-j N`, default 4) or the ones named, and exits non-zero if any fails; `--list` prints the names.
 Known failures are reported as `XFAIL` with their reason. The header comment of each test gives its compile command. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`
 (`esp/`, `freertos/`, `mqtt-stub/`, and the `arduino-shim` submodule). Some tests also compile firmware sources, for
-example `src/sim/vconv.cpp` or `components/virtual-fat12/src/vfat.cpp`. The following command builds and runs one test:
+example `src/sim/vconv.cpp` or `components/virtual-fat12/src/vfat.cpp`.
+
+The `vfat-core-test` entry runs the `virtual-fat12` package's own core suite
+(`components/virtual-fat12/test/test_vfat.cpp`) alongside the firmware-side `vfat-test`, so the standard host run
+keeps the FAT12 core coverage without a second copy of it in `test/host-stub/`. The following command builds and
+runs one test:
 
 ```bash
 clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \
@@ -36,7 +41,7 @@ Tests that link more of the firmware have a wrapper script in `test/host-stub/` 
 `calib-noise-test.sh`, `izero-test.sh`, `settle-test.sh` and `vconv-spice-check.sh`.
 
 The `Host tests` GitHub workflow runs `host-tests.sh` and the closed-loop scenarios on Linux for every push to `main`
-and every pull request that changes `src/`, `test/host-stub/` or `config/`.
+and every pull request that changes `src/`, `test/host-stub/`, `config/` or `components/virtual-fat12/`.
 
 ### Closed-loop simulation
 

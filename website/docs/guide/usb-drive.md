@@ -30,7 +30,7 @@ The device applies the changes only if all of them pass the following checks. Ot
 
 - File names must match `[A-Za-z0-9_-]+.conf`, at most 64 characters. Other files (editor backups, `.DS_Store`,
   `._*`) are ignored. A non-hidden entry ending in `.conf` that breaks the rule blocks the commit as
-  `invalid conf entry`, for example Finder's `charger copy.conf` (space) or `charger.old.conf` (extra dot), and so
+  `invalid name`, for example Finder's `charger copy.conf` (space) or `charger.old.conf` (extra dot), and so
   does a directory named `*.conf`.
 - Every line must be blank, a `#` comment, or `key=value` with a key of letters, digits, `_`, `.`, or `-`, in
   printable ASCII, and at most 254 characters long. A changed file may be at most 16 KiB; a larger one fails the
@@ -65,6 +65,8 @@ The drive has the following limits:
 - Only the root directory of `conf/` is shown. Files whose names break the naming rule are hidden from the drive.
   Subdirectories created on the drive are ignored.
 - If `conf/` holds more than 32 KiB of files, or a file cannot be read, the drive does not appear.
+- If two `conf/` files differ only in case (`a.conf` and `A.conf`), the drive does not appear: FAT compares names
+  without case, so it cannot hold both. The console names the pair and asks to rename or remove one.
 - Edits made over another console (`set-config`, FTP) while the drive is mounted are not merged. On eject, every
   file changed on the drive overwrites the device's copy.
 - After an eject the drive stays absent until the device is plugged in again or restarts, or until the host asks

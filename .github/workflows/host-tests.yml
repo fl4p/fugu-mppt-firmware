@@ -3,9 +3,9 @@ name: Host tests
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'test/host-stub/**', 'config/**', '.github/workflows/host-tests.yml']
+    paths: ['src/**', 'test/host-stub/**', 'config/**', 'components/virtual-fat12/**', '.github/workflows/host-tests.yml']
   pull_request:
-    paths: ['src/**', 'test/host-stub/**', 'config/**', '.github/workflows/host-tests.yml']
+    paths: ['src/**', 'test/host-stub/**', 'config/**', 'components/virtual-fat12/**', '.github/workflows/host-tests.yml']
   workflow_dispatch:
 
 concurrency:

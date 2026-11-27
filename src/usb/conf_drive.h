@@ -5,6 +5,7 @@
 // tests can include it.
 
 #include <string>
+#include <vector>
 
 #include "vfat/vfat.h"
 
@@ -74,6 +75,21 @@ inline bool validConfText(const std::string &t, std::string &err) {
         }
     }
     return true;
+}
+
+// Volume::build() returns false when it skips a name that differs only in case from one already
+// laid out, and the firmware caller must not mount a drive that drops a .conf the user can see.
+// buildVolume() calls this over the same validName() candidates it feeds build() and refuses the
+// whole drive instead. Returns true and names both files (with the fix) when such a pair exists;
+// the caller must already have filtered `files` with validName(), exactly as buildVolume() does.
+inline bool caseAliasConflict(const std::vector<vfat::File> &files, std::string &err) {
+    for (size_t i = 0; i < files.size(); ++i)
+        for (size_t j = i + 1; j < files.size(); ++j)
+            if (detail::iequals(files[i].name, files[j].name)) {
+                err = files[i].name + " and " + files[j].name + " differ only in case; rename or remove one";
+                return true;
+            }
+    return false;
 }
 
 inline vfat::Naming naming() { return {".conf", validName}; }

@@ -156,6 +156,11 @@ static void buildVolume() {
             budget -= f.data.size();
             files.push_back(std::move(f));
         }
+        std::string alias;
+        if (confdrive::caseAliasConflict(files, alias)) {
+            ESP_LOGE(TAG, "drive: cannot mount: %s", alias.c_str());
+            return;
+        }
         std::unique_ptr<vfat::Volume> vol(new vfat::Volume(OVERLAY_MAX, confdrive::naming()));
         if (!vol->build(std::move(files), (uint32_t) esp_random())) {
             ESP_LOGE(TAG, "drive: conf files don't fit");

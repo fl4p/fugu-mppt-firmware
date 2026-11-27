@@ -61,8 +61,10 @@ off); restart after a successful commit if `!mppt.active()`; root of `conf/` wit
 ## Verification
 
 - Done:
-  - `test/host-stub/vfat-test.cpp`: unit cases including broken LFN, cross-link, size mismatch, overlay cap and
-    strict conf text.
+  - `test/host-stub/vfat-test.cpp`: firmware-side `.conf` naming/content policy, the case-alias diagnostic, and
+    the real-policy build/collect integration, plus the `gen`/`apply` commands `vfat-hdiutil.sh` uses. The FAT12 core cases (broken LFN,
+    cross-link, size mismatch, overlay cap) live in the package suite `components/virtual-fat12/test/test_vfat.cpp`,
+    which the same host run executes as `vfat-core-test`.
   - `test/host-stub/vfat-hdiutil.sh`: macOS FAT driver round trip with fsck, edit, atomic save, create, delete
     and junk.
   - Flag-on builds on IDF 5.5 (+32.7 KB vs. the same config without the flag) and IDF 6.
