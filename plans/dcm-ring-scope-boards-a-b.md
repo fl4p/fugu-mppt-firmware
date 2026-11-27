@@ -2,7 +2,7 @@
 
 # Scope capture of the DCM coil ring on fry and flat
 
-Status: planned, not started (2026-11-25). Needs Fab at the van with a scope.
+Status: planned, not started (updated 2026-11-27). Needs Fab at the van with a scope.
 
 ## Goal
 
@@ -34,8 +34,11 @@ private `dcdc-tools` repo; the published pages then change "inferred" to "measur
 
 1. Generalise `dcdc-tools/bench/flu_dcm_ring.py` to take the board, its `L` and the console
    transport (`fugu_console.py --mqtt --name <dev>`); it currently assumes flu and its rig.
-2. On the day: `lock.sh acquire <dev>`, announce on channel `fugu`, low power (morning),
-   `dc 0`, then `dc 200`; capture; `mppt` afterwards. One board at a time.
+2. On the day: check `lock.sh status <dev>` and `ota-<dev>` (other sessions OTA and A/B-test
+   builds on both boards; `elf-archive/console-commands.jsonl` shows who else sends commands),
+   then `lock.sh acquire <dev>`. Low power (morning), `dc 0`, then `dc 200`; capture; `mppt`
+   afterwards. One board at a time. Send commands with `fugu_console.py --mqtt --name <dev>`:
+   its lock guard refuses while another caller holds `ota-<dev>`.
 3. Fit, store raw traces under `dcdc-tools/verifications/` with a write-up.
 4. Update `website/docs/internals/dcm-ringing.mdx` (rows A, B), the field-sweep table on
    `website/docs/lab/coil-inductance.md` and `doc/lab/dcm-ringing-boards.md`.
@@ -48,7 +51,9 @@ restore `mppt` and check the status line afterwards.
 
 ## Open questions for Fab
 
-- Which scope and probes are available at the van (the flu capture used an MXO44; the PicoScope
-  ps2000 is 2-channel, 50 MS/s at tb=1, enough for a ~250–330 kHz ring but check its input range
-  for ~80 V with the probe attenuation).
+- Which scope and probes are available at the van. The flu capture used an MXO44. The PicoScope
+  ps2000 (`etc/pico_capture.py`) is 2-channel, 50 MS/s at tb=1, and caps a capture at about 3000
+  samples (60 µs at 50 MS/s): enough for a ~250–330 kHz ring (period 3–4 µs), but the fitted
+  quarter-cycle rise (~0.8–1 µs) gets only ~40–50 samples, so average more events (~30) than with
+  the MXO44. Its ±20 V range needs a 10:1 probe for the ~80 V node.
 - Where the switch node and the LS gate can be probed on the Fugu2 boards without removing them.
