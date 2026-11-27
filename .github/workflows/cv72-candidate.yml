@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CANDIDATE_SHA: "FILL_CANDIDATE_SHA"
+  CANDIDATE_SHA: "22981613c8f715cf41e66b90ec17a48bae537342"
 
 jobs:
   cv-hold:
