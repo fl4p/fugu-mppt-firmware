@@ -214,13 +214,15 @@ These options need verification before they are applied.
   `rtcount` numbers before and after, and override `-O2` on `main.cpp / mppt.cpp / adc/adc_esp32_cont.cpp` plus any
   IDF code on the sample-to-PWM path (likely `esp_adc/esp_adc_continuous.c`, parts of `freertos`, the ADC continuous
   ISR).
-- `-fno-asynchronous-unwind-tables`: `~80 KB`. `.eh_frame` is ~22 KB in libmain and ~61 KB in arduino-esp32. With
-  `-fexceptions` ON, C++ exception throw/catch does not need async-unwind tables. They serve stack walking at arbitrary
-  instructions (signal handlers, gcore-style dumps). Verify that panic backtraces still resolve before merging.
+- `-fno-asynchronous-unwind-tables` saves almost nothing: 320 B on libmain (production config, 2026-11-27). The
+  image holds 40 KB of `.eh_frame` in total, 39 KB of it from C++ archives (libmain 21.9 KB, arduino-esp32 10.1 KB,
+  nvs_flash 2.7 KB). With `-fexceptions` on, GCC keeps those unwind tables because a throw has to unwind through
+  every frame, so the flag only drops tables of C code.
 - Disable `-fexceptions` globally and rewire `service.h` / `cli.cpp` / `main.cpp` try-catches as error returns:
   `~60–80 KB` (drops `libstdc++.a`'s 66 KB `.rodata` exception unwind tables). The work is mechanical but invasive.
   Every `throw std::runtime_error(...)` in conf / sensor_setup / buck / mppt construction / ADC init would have to
-  become a returned bool or `std::optional`. It is worth doing only after the other options are used up.
+  become a returned bool or `std::optional`. It is worth doing only after the other options are used up. The
+  `.eh_frame` part of that saving is at most the 40 KB above.
 
 ### Config options
 
