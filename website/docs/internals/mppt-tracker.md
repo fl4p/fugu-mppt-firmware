@@ -446,7 +446,7 @@ current bound (step 2 below) and moves to $m = 4$.*
 `PeakScan` (`src/peak_scan.h`) probes one voltage per candidate maximum. It needs the number of substrings $n$,
 which it learns from the global sweeps (below), and a buck converter (no-op on boost). It runs in tracking mode
 only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emulator mode), above 5 % of
-`limits.conf::p_max`:
+`limits.conf::p_max`, or above 1 % of it in [rising light](#rising-light):
 
 1. Candidates: the unshaded substring share is estimated as $s_0 = k\,V_{oc}/n$, with $V_{oc}$ the input voltage at the
    start of the last global sweep (converter off) and $k = V_{mpp}/V_{oc}$ taken from the sweep's maximum when it lies
@@ -465,9 +465,10 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    undervoltage limit, and on a buck the start ratio of the low-side minimum pulse, about $1.2\,V_{out}$), or above
    $0.95\,V_{oc}$, is skipped.
 2. A lower candidate ($m < m_0$) delivers at most $m\,s$ times the largest current seen since the last sweep
-   (the sweep passes every maximum). If that is below the present power plus the margin, the candidate is
-   skipped. On an unshaded string in full sun this skips every candidate, and no scan runs (only the
-   [near-point probes](#near-point-probes), once per period).
+   (the sweep passes every maximum; the probes of later scans count too). If that is below the present power
+   plus the margin, the candidate is skipped. On an unshaded string in steady full sun this skips every candidate, and
+   no scan runs (only the [near-point probes](#near-point-probes), once per period). In
+   [rising light](#rising-light) the bound is not applied.
 3. The scan holds the operating point, waits for the power filter to settle (`powerSettleMs()`, at most 1 s),
    and averages the power for 100 ms ($P_0$). It then steers $V_{in}$ to each candidate in turn (duty
    $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. Each measurement also
@@ -480,6 +481,31 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    continues where it was, in the same mode.
 
 The log shows each scan as `scan: P <P0>-><P0'> W at <V>V, <n> probes, best x<ratio> at <V>V[, moving][, heat]`; `heat` marks a scan whose higher candidates used the heating exception.
+
+### Rising light
+
+The current bound of step 2 goes stale when the light rises on some substrings and not on others. A typical case
+is morning shade on part of a string: the sweep runs in dim, even light, and the operating point sits on the
+full-string maximum. As the sun comes up, the unshaded substrings brighten, but the shaded ones limit the current
+at the operating point. The largest current seen stays near the shaded substrings' current, so a lower maximum
+that already gives several times the power is skipped.
+
+A scan therefore counts as being in rising light when the power is more than 15 % above a reference. After a
+sweep the reference is its MPP, or the power 5 s into tracking if that is higher (light that rose during the
+sweep). A scan that moves raises it to the power of the probe it moves to, and a scan in rising light to its
+own start power. Such a scan:
+
+* skips the current bound of step 2 and probes every reachable lower candidate;
+* runs down to 1 % of `limits.conf::p_max` instead of 5 %;
+* raises the reference, so the next scan in rising light needs another 15 % rise.
+
+Its probes count as currents seen in step 2. A lower maximum that a probe found about as bright as the operating
+point, or brighter, therefore stays a candidate in the following scans once the light stops rising. A probe that
+came within 6 % of the operating point is repeated 60 s later by the usual re-scan.
+
+In falling light (dusk, a cloud) the power stays below the reference, so the floor stays at 5 % and the bound
+applies. On an unshaded string the rising-light scans find nothing and only cost their probes. Between two
+sweeps, a rise from $P$ to $P'$ adds at most about $\log(P'/P)/\log 1.15$ of them.
 
 ### Near-point probes
 
