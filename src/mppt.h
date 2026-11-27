@@ -328,7 +328,10 @@ private:
     PD_Control VinController{-100, -200, true}; // Vin under-voltage
     PD_Control VoutController{1500, /*100**/ 12 * 1000, true}; // Vout over-voltage  TODO 8k, 10k prevents full sweep
     PD_Control IinController{100, 200, true}; // Iin over-current
-    PD_Control_SmoothSetpoint IoutCurrentController{200, 400, 200}; // Iout over-current // TODO PID?
+    // Fixed control-gain reference [A], independent of the battery's current limit.
+    // With normalize=false and both currents scaled by it, gains match the old law at a settled 40 A target.
+    static constexpr float IoutCtrlRefA = 40.f;
+    PD_Control_SmoothSetpoint IoutCurrentController{200, 400, 200, false}; // Iout over-current, fixed 40 A ref
     PD_Control_SmoothSetpoint powerController{20, 5, 200}; // over-power // TODO PID?
     //PD_Control LoadRegulationCTRL{5, -200, true}; //
 

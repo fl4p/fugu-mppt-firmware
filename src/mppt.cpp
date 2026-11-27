@@ -150,7 +150,9 @@ void MpptController::update() {
         },
         CVP{
             CC, IoutCurrentController,
-            {_sweeping ? sensors.Iout->ewm.avg.get() : sensors.Iout->med3.get(), Iout_max}
+            // Scale both currents by a fixed reference so the ampere-error gain stays constant.
+            {(_sweeping ? sensors.Iout->ewm.avg.get() : sensors.Iout->med3.get()) / IoutCtrlRefA,
+             Iout_max / IoutCtrlRefA}
         },
         CVP{CP, powerController, {power_smooth, powerLimit}},
         //CVP{CC, LoadRegulationCTRL, {sensors.Iout->last, Iout_max * 1.5f}},

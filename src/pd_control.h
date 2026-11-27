@@ -50,7 +50,8 @@ struct PD_Control {
 
 struct PD_Control_SmoothSetpoint : PD_Control {
     EWMA<float> _ewma;
-    PD_Control_SmoothSetpoint(float Kp, float Kd, int smoothSpan) : PD_Control(Kp, Kd, true), _ewma(smoothSpan) {}
+    PD_Control_SmoothSetpoint(float Kp, float Kd, int smoothSpan, bool normalize = true)
+        : PD_Control(Kp, Kd, normalize), _ewma(smoothSpan) {}
     float update(float actual, float target, float dt) override {
         _ewma.add(target);
         return PD_Control::update(actual, _ewma.get(), dt);

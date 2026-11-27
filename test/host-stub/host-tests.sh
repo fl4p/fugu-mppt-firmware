@@ -38,6 +38,7 @@ TESTS=(
   "net-guard-test|-std=gnu++20 -fexceptions -I $H -I src||"
   "net-bytes-test|-std=gnu++20 -O1 -pthread $SIM|$H/esp/sim_stubs.cpp $H/esp/sim_alloc.cpp $H/net-bytes-other-tu.cpp|"
   "out-impedance-test|-std=gnu++17 -O2 -fexceptions -I $H -I src||"
+  "pd-control-test|-std=gnu++20 -fexceptions -I $H -I $H/arduino-shim -I src||"
   "plot-test|-std=gnu++17 -fexceptions -I $H -I src||"
   "pv-shade-test|-std=gnu++20 -fexceptions -I $H -I src|$VC|"
   "rect-cal-test|-std=gnu++20 -O2 -fexceptions -DMOCK=1 -I $H -I src|$VC|"

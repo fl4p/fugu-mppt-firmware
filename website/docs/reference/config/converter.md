@@ -49,8 +49,13 @@ The following table lists the compiled-in defaults:
 | `vin`   | -100  | -200  | `limits.conf::vin_min` |
 | `vout`  | 1500  | 12000 | `charger.Vout_max()` |
 | `iin`   | 100   | 200   | `limits.conf::hv_i_max` (buck) or `lv_i_max` (boost) |
-| `iout`  | 200   | 400   | derived `Iout_max` |
+| `iout`  | 200   | 400   | fixed 40 A control-gain reference |
 | `power` | 20    | 5     | derived power limit |
+
+The Iout controller uses `(smoothed Iout_max - measured Iout) / 40 A` as its error.
+This fixed reference keeps the response to an ampere of error constant as the charger lowers its
+current limit during a CV hold. At a settled 40 A limit, the gains match the previous relative-error
+controller. Changing the battery's current limit leaves this reference unchanged.
 
 A per-path constant in `mppt.cpp` scales the controller output into a duty slew rate, so these gains
 are not the whole loop gain. The following table lists that constant:
