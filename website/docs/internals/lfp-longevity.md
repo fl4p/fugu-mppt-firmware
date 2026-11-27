@@ -413,6 +413,11 @@ and test conditions, the authors attribute most of the temperature effect betwee
 calendar aging [[4](#ref-4), Conclusions]. That argues for keeping a *resting* pack cool as much
 as a charging one.
 
+Shallow cycling of the same cell type ran the other way: during 700 FEC at 1 C, cells at 25 °C
+lost capacity slightly faster than cells at 40 °C, and the authors call the temperature effect
+limited [[22](#ref-22), Experimental and Results, Fig. 3a]. Much of that shallow-cycling loss was
+recoverable ([depth of cycle](#42-depth-of-cycle)).
+
 ### 6.2 Cold and plating
 
 The LF280K may be charged between 0 and 55 °C and discharged between −20 and 55 °C [[8](#ref-8), §3
@@ -450,7 +455,10 @@ temperature that matters is that of the cells, as reported by the BMS.
 ## 7. Charge rate
 
 Naumann et al. compared rates of 0.2, 0.5 and 1 C at 80 % depth of cycle around 50 % SoC and
-40 °C [[4](#ref-4), Table 3]. Per day, higher currents
+40 °C [[4](#ref-4), Table 3]. These test points changed the charge and discharge rate together.
+Of the asymmetric points, two ran 1 C charge with 0.5 C discharge and the reverse. Fig. 3 plots
+them, but the text does not discuss them. The model fits the rate factor only on equal charge and
+discharge rates [[4](#ref-4), §2.5, Fig. 3 and §3.2.4]. Per day, higher currents
 aged the cells faster, and after calendar aging was subtracted, higher C-rates also caused more
 cycle aging. Overall, the authors report that "the C-rate showed only small influence" on
 capacity loss. A cell with 2 C discharge changed its degradation rate after about 4000 FEC, which
@@ -566,8 +574,8 @@ design [[1](#ref-1)], and cells from the same manufacturer can differ strongly a
 reviewed study tested a 280 Ah prismatic cell under controlled conditions.
 
 **Temperature ranges.** The operating-window ranking of [[2](#ref-2)] was measured at 40 and 55 °C only.
-The calendar plateaus of [[1](#ref-1)] were measured at 25–50 °C, and the cycle tests of [[4](#ref-4)] at 25 and
-40 °C. That the window ranking also holds at room temperature is an extrapolation, supported by
+The calendar plateaus of [[1](#ref-1)] were measured at 25–50 °C, and the cycle tests of [[4](#ref-4)] and the shallow-cycling tests of
+[[22](#ref-22)] at 25 and 40 °C. That the window ranking also holds at room temperature is an extrapolation, supported by
 the plateau structure that [[1](#ref-1)] found at 25 °C.
 
 **Extrapolated lifetimes.** Several lifetime figures are extrapolations, not observations: the
@@ -584,6 +592,10 @@ difference [[2](#ref-2)]. That has not been tested.
 Storage SoC mattered strongly in [[1](#ref-1)] but was "of secondary importance" to temperature in
 [[6](#ref-6)]. With three storage SoCs, [[6](#ref-6)] cannot resolve the finer plateau structure of
 [[1](#ref-1)]. Neither study establishes why their cells differ (see [Temperature](#32-temperature)).
+
+Cycle fade rose with temperature between 15 and 35 °C in [[9](#ref-9)], but shallow cycling in
+[[22](#ref-22)] lost slightly more at 25 °C than at 40 °C ([heat](#61-heat)). The two used different
+cells, and the [[22](#ref-22)] tests were shallow cycles.
 
 For 20 % cycles, the window around 50 % SoC aged more than the windows around 25 % and 75 % in
 [[4](#ref-4)]; that effect was largely recoverable [[22](#ref-22)] and did not appear in realistic
@@ -631,7 +643,7 @@ relays, and the lifetime factor claimed in [[18](#ref-18)] is not supported by
 4. <Ref n="4" />M. Naumann, F. B. Spingler, A. Jossen, "Analysis and modeling of cycle aging of a commercial
    LiFePO4/graphite cell," *Journal of Power Sources* 451, 227666 (2020).
    [doi:10.1016/j.jpowsour.2019.227666](https://doi.org/10.1016/j.jpowsour.2019.227666). C-rate:
-   §3.1.2, Table 3 and Conclusions; depth of cycle: §3.1.3; temperature: §3.1.4 and Conclusions;
+   §2.5, §3.1.2, Table 3, Fig. 3, §3.2.4 and Conclusions; depth of cycle: §3.1.3; temperature: §3.1.4 and Conclusions;
    PV profile: Table 4 and §3.3.2.1.
 5. <Ref n="5" />M. Naumann, *Techno-economic evaluation of stationary battery energy storage systems with
    special consideration of aging*, Dr.-Ing. dissertation, Technical University of Munich (2018).
@@ -709,6 +721,6 @@ relays, and the lifetime factor claimed in [[18](#ref-18)] is not supported by
 22. <Ref n="22" />F. B. Spingler, M. Naumann, A. Jossen, "Capacity recovery effect in commercial LiFePO4 /
     graphite cells," *Journal of The Electrochemical Society* 167(4), 040526 (2020).
     [doi:10.1149/1945-7111/ab7900](https://doi.org/10.1149/1945-7111/ab7900). Abstract;
-    cell models: Experimental.
+    cell models and shallow-cycle rate tests: Experimental; temperature and C-rate: Results, Fig. 3a.
 23. <Ref n="23" />T. Sasaki, Y. Ukyo, P. Novák, "Memory effect in a lithium-ion battery," *Nature Materials*
     12(6), 569–575 (2013). [doi:10.1038/nmat3623](https://doi.org/10.1038/nmat3623). Abstract.
