@@ -273,7 +273,8 @@ class Realign(unittest.TestCase):
         self.assertEqual(self.head(), g(self.bare, 'rev-parse', 'main'))
 
     def test_case_only_rename(self):
-        if g(self.co, 'config', '--bool', 'core.ignorecase') != 'true':
+        if subprocess.run(['git', '-C', self.co, 'config', '--bool', 'core.ignorecase'], capture_output=True,
+                          text=True).stdout.strip() != 'true':
             self.skipTest('case-sensitive file system')
         g(self.up, 'mv', 'b.txt', 'B.txt')
         self.upstream({})
