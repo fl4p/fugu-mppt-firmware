@@ -1,0 +1,132 @@
+name: cv72 phase robustness
+
+# Phase-robustness sweep of cv-hold-pair on the actual CI image. phaseI is fixed at
+# the stock 1.3; phaseC takes the integers 0..11 x lagI 0/1 (24 cases), plus the stock
+# phaseC = 5.1 at lagI 0/1 (2 cases) = 26 cases. Four balanced shards; the binary is
+# built once per shard, then each case is a direct SIM_BMS run. Existing thresholds, no
+# SIM_T shortening. Every case runs; per-case rc/logs are kept; the shard aggregate rc
+# fails the job.
+#
+# PREPARED, NOT PUSHED. The push trigger stays inactive until env.CANDIDATE_SHA is set
+# to the root's future candidate SHA and the branch is pushed. A placeholder SHA fails
+# the checkout guard instead of running.
+
+on:
+  push:
+    branches: [investigate/cv72-baseline]
+  workflow_dispatch:
+
+concurrency:
+  group: cv72-phase-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: "FILL_PHASE_SHA"
+
+jobs:
+  phase:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: checkout candidate
+        run: |
+          if [ "$CANDIDATE_SHA" = "FILL_PHASE_SHA" ]; then
+            echo "ERROR: CANDIDATE_SHA is not set"; exit 1
+          fi
+          git checkout --detach "$CANDIDATE_SHA"
+          echo "checked_out_sha=$(git rev-parse HEAD)"
+
+      - name: runner and toolchain identity
+        run: |
+          mkdir -p out
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "checked_out_sha=$(git rev-parse HEAD)"
+            echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+            echo "arch=$(uname -m)"
+            echo "os=$(head -2 /etc/os-release | tr '\n' ' ')"
+            echo "clang=$(clang++ --version | head -1)"
+            echo "gcc=$(g++ --version | head -1)"
+            echo "glibc=$(ldd --version | head -1)"
+            echo "shard=${{ matrix.shard }}"
+            echo "note=stock_c5.1_l0 uses the stock defaults (phaseI 1.3, phaseC 5.1, lagI 0)"
+          } | tee out/env.txt
+
+      - name: build the sim once
+        run: |
+          set -o pipefail
+          ROOT="$PWD"
+          # mirrors the build in test/host-stub/mppt-sim.sh at the pinned SHA
+          clang++ -std=gnu++20 -O2 -fexceptions -Wno-format -Wno-deprecated-volatile \
+              -include "$ROOT/test/host-stub/esp/sim_prelude.h" -I "$ROOT/test/host-stub/esp" -I "$ROOT/src" \
+              -DSIM_REPO_ROOT="\"$ROOT\"" \
+              "$ROOT/test/host-stub/mppt-sim.cpp" "$ROOT/test/host-stub/esp/sim_stubs.cpp" "$ROOT/test/host-stub/esp/sim_alloc.cpp" \
+              "$ROOT/src/mppt.cpp" "$ROOT/src/adc/sensor_setup.cpp" "$ROOT/src/sim/vconv.cpp" "$ROOT/src/math/float16.cpp" \
+              "$ROOT/src/selftest/bflow_test.cpp" "$ROOT/src/selftest/measure_coil.cpp" \
+              -o out/mppt-sim > out/build.log 2>&1
+          [ -x out/mppt-sim ] || { echo "ERROR: build failed"; tail -40 out/build.log; exit 1; }
+          echo "built out/mppt-sim"
+
+      - name: select this shard's cases
+        run: |
+          set -o pipefail
+          # name|envspec ; empty envspec = stock defaults
+          {
+            for c in 0 1 2 3 4 5 6 7 8 9 10 11; do
+              for l in 0 1; do
+                echo "pI1.3_c${c}_l${l}|SIM_BMS=1.3,${c},${l}"
+              done
+            done
+            echo "stock_c5.1_l0|"
+            echo "stock_c5.1_l1|SIM_BMS=1.3,5.1,1"
+          } > /tmp/all-cases.txt
+          TOTAL="$(grep -c . /tmp/all-cases.txt || true)"
+          if [ "$TOTAL" -ne 26 ]; then
+            echo "ERROR: expected 26 cases, found $TOTAL"; exit 1
+          fi
+          SEL="$(grep . /tmp/all-cases.txt | awk -v k=${{ matrix.shard }} '(NR-1)%4==k')"
+          if [ -z "$SEL" ]; then
+            echo "ERROR: empty case selection for shard ${{ matrix.shard }}/4"; exit 1
+          fi
+          printf '%s\n' "$SEL" > out/cases.txt
+          echo "cases this shard: $(wc -l < out/cases.txt)"
+
+      - name: run this shard's cases
+        run: |
+          set -o pipefail
+          mkdir -p out/cases
+          : > out/results.tsv
+          fail=0
+          while IFS='|' read -r name envspec; do
+            [ -n "$name" ] || continue
+            if [ -n "$envspec" ]; then
+              env "$envspec" out/mppt-sim cv-hold-pair > "out/cases/$name.log" 2>&1 && rc=0 || rc=$?
+            else
+              out/mppt-sim cv-hold-pair > "out/cases/$name.log" 2>&1 && rc=0 || rc=$?
+            fi
+            verdict="$(grep -E '^== CVHOLD cv-hold-pair: (PASS|FAIL)' "out/cases/$name.log" | tail -1 || true)"
+            printf '%s\t%s\t%s\t%s\n' "$name" "$envspec" "$rc" "$verdict" | tee -a out/results.tsv
+            [ "$rc" -eq 0 ] || fail=1
+          done < out/cases.txt
+          echo "shard ${{ matrix.shard }}/4 aggregate_fail=$fail"
+          echo "$fail" > out/aggregate.txt
+          exit 0
+
+      - name: assert shard result
+        run: |
+          fail="$(cat out/aggregate.txt)"
+          echo "shard ${{ matrix.shard }}/4 aggregate_fail=$fail"
+          exit "$fail"
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv72-phase-shard${{ matrix.shard }}
+          path: out/
