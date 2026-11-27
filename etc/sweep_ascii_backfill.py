@@ -13,16 +13,19 @@ Each sweep prints `Stop sweep ... MPP=(P W,pwm,V V)`, `Grouping n V points (x0,y
 Vin = x0 + i (x1 - x0) / 100 (src/etc/plot.h). Chart column i draws the segment bin i -> i+1: '─╭╰' mark the row of
 bin i+1, '─╮╯' that of bin i. With mn, mx the series min and max, r = 16 / (mx - mn), a bin of power v sits on row
 lround(v r) - lround(mn r) (from the bottom), rows = lround(mx r) - lround(mn r), row k has the label
-lround(mn + k (mx - mn) / rows), the axis shows '┼' on the zero row and on bin 0's row. (mn, mx) is solved from all
-of these plus the Grouping line's first power (bin 0 normally holds only that point); P is the middle of the values
-every consistent (mn, mx) allows, `p_err` its half width (W), `row_step` = (mx - mn) / 16 (W). A chart is rejected
-when no (mn, mx) fits (lost or doubled rows, bad labels), p_err exceeds ERR_MAX row steps (under-constrained,
-typically a sub-2 W chart with near-constant integer labels), a column has no glyph or two neighbouring columns
-disagree, or the curve maximum misses the logged MPP by more than one row step in P or 2 bins in Vin.
+lround(mn + k (mx - mn) / rows), the axis shows '┼' on the zero row and on bin 0's row. Every (mn, mx) consistent
+with these (a finite candidate grid) bounds each bin's value; `p_err` (W) is the largest distance from P to that
+bound plus ERR_PAD row steps for the grid, `row_step` = (mx - mn) / 16 (W). The Grouping line's first power only
+picks P inside the bound, since bin 0 can average several points. A chart is rejected when no (mn, mx) fits (lost or
+doubled rows, bad labels), p_err exceeds ERR_MAX = 1.5 row steps (under-constrained, typically a sub-10 W chart with
+near-constant integer labels; filter p_err_steps <= 1 for the strict set), a column has no glyph or two
+neighbouring columns disagree, or the curve maximum misses the logged MPP by more than one row step in P or 2 bins
+in Vin.
 
 Influx (v1, db ha_van, measurement sweep_ascii, tag device): one point per bin with fields i, V, P; point 0 also
-mpp_V, mpp_P, row_step, p_err, curve and, when logged, verdict (verified|flagged|unverified), off_pct, land_V, land_P (the last
-`sweep landed` line). Time = log time of the footer (converted to UTC) + i ms, so a re-run overwrites instead of duplicating.
+mpp_V, mpp_P, row_step, p_err, p_err_steps (p_err / row_step), curve and, when logged, verdict
+(verified|flagged|unverified), off_pct, land_V, land_P (the last `sweep landed` line). Time = log time of the footer (converted to UTC) + i ms, so a re-run
+overwrites instead of duplicating.
 curve: 'mpp' when the chart plots the MPP's own quantities (EWM Vin, power without the input caps' discharge,
 c4805eb8), 'raw' before (med3 Vin, power with the discharge: on fast or dim sweeps the chart peak sits above and
 left of the MPP, so more of those fail the MPP check). The switch is the first fleet OTA carrying c4805eb8
@@ -58,7 +61,9 @@ VERDICT = re.compile(r'mppt: sweep (verified|flagged): landed [-\d.]+ W, off by 
 UNVER = re.compile(r'mppt: sweep not verified')
 NEW, OLD = '─╭╰', '─╮╯'
 CURVE_MPP_FROM = {'fry': '2026-11-24 15:21:09', 'flat': '2026-11-24 15:25:00'}  # UTC, from ota-owners.jsonl
-ERR_MAX = 1.0  # p_err limit, row steps
+ERR_MAX = 1.5  # p_err limit, row steps
+ERR_PAD = 0.05  # p_err margin for the finite candidate grid, row steps
+G0_TOL = 0.25  # how far bin 0 may sit from the Grouping line's first power, row steps (None: g0 unused)
 LOG_TZ = ZoneInfo('Europe/Lisbon')
 
 
@@ -150,16 +155,20 @@ def decode_chart(rows, g0=None):
         ok &= (min2 == -yb[0]) | (min2 > 0) | (min2 + R < 0)
     if not ok.any():
         return None, 'no consistent scale (lost or doubled row?)', None
-    if g0 is not None:
-        tol = np.float32(.006)
+    def hull(sel):
+        r, m2 = ratio[sel, None], min2[sel, None]
+        return (np.maximum(mn[sel, None], (yb[None, :] + m2 - .5) / r).min(axis=0),
+                np.minimum(mx[sel, None], (yb[None, :] + m2 + .5) / r).max(axis=0))
+
+    lo, hi = hull(ok)  # the bound: g0 can be off when bin 0 averages several points
+    step = float(np.median(1 / ratio[ok]))
+    P = (lo + hi) / 2
+    if g0 is not None and G0_TOL is not None:  # g0 only picks the estimate inside that hull
+        tol = np.float32(.006) + np.float32(G0_TOL) / ratio
         okg = ok & (np.abs(g0 * ratio - min2 - yb[0]) <= .5 + tol * ratio) & (mn <= g0 + tol) & (mx >= g0 - tol)
         if okg.any():
-            ok = okg
-    mn, mx, ratio, min2 = mn[ok, None], mx[ok, None], ratio[ok, None], min2[ok, None]
-    lo = np.maximum(mn, (yb[None, :] + min2 - .5) / ratio).min(axis=0)
-    hi = np.minimum(mx, (yb[None, :] + min2 + .5) / ratio).max(axis=0)
-    P, err = (lo + hi) / 2, float(np.max(hi - lo) / 2)
-    step = float(np.median(1 / ratio))
+            P = np.sum(hull(okg), axis=0) / 2
+    err = float(np.max(np.maximum(hi - P, P - lo))) + ERR_PAD * step
     if err > ERR_MAX * step:
         return None, f'under-constrained scale (err {err:.3f} W, step {step:.3f})', None
     return P.astype(float), step, err
@@ -304,7 +313,7 @@ def to_lines(s, measurement='sweep_ascii'):
         f = [f'i={i}i', f'V={s.V[i]:.3f}', f'P={s.P[i]:.3f}']
         if i == 0:
             f += [f'mpp_V={s.mpp[1]}', f'mpp_P={s.mpp[0]}', f'row_step={s.step:.4f}', f'p_err={s.err:.4f}',
-                  f'curve="{curve(s)}"']
+                  f'p_err_steps={s.err / s.step:.3f}', f'curve="{curve(s)}"']
             if s.verdict:
                 f.append(f'verdict={esc_str(s.verdict)}')
             if s.off is not None:

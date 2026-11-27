@@ -74,10 +74,10 @@ def sweeps():
 def test_real_charts(sweeps):
     assert [(s.dev, b.utc(s.ts)) for s in sweeps] == [('fry', '2026-11-27 07:31:26'), ('fry', '2026-11-27 08:42:48')]
     dawn, s = sweeps
-    # 3.5 W, labels 3..-1, the '-1' row one column wider: zero row and g0 pin the scale to about one row step
+    # 3.5 W, labels 3..-1, the '-1' row one column wider: zero row and labels bound the scale
     assert dawn.reason is None and dawn.land == (52.7, 3.2) and dawn.verdict is None
-    assert 0.2 < dawn.step < 0.3 and 0.5 * dawn.step < dawn.err <= dawn.step
-    assert abs(dawn.P.max() - 3.5) <= dawn.step and dawn.P[0] == pytest.approx(2.29, abs=dawn.err)
+    assert 0.2 < dawn.step < 0.3 and 0.5 * dawn.step < dawn.err <= b.ERR_MAX * dawn.step
+    assert abs(dawn.P.max() - 3.5) <= dawn.err and dawn.P[0] == pytest.approx(2.29, abs=dawn.err)
     assert dawn.P[98] == pytest.approx(dawn.P.min()) and dawn.P.min() < 0
     assert s.reason is None and s.mpp == (90.9, 47.9) and s.g0 == 69.02
     assert s.step == pytest.approx((91 - 17) / 16, abs=0.3) and s.err <= s.step
@@ -103,7 +103,7 @@ def test_ground_truth(pk):
             assert pk < 20, step
             continue
         assert step == pytest.approx((p.max() - p.min()) / 16, rel=.1)
-        assert np.max(np.abs(P - p)) <= step * 1.0 + 1e-6 and err <= step + 1e-9
+        assert np.max(np.abs(P - p)) <= err + 1e-6 and err <= b.ERR_MAX * step + 1e-9
 
 
 def test_negative_label_wider_row():
@@ -182,3 +182,15 @@ def test_line_protocol(sweeps):
     assert 'mpp_V=47.9,mpp_P=90.9,' in lines[0] and 'verdict="verified"' in lines[0] and 'curve="mpp"' in lines[0]
     assert 'p_err=' in lines[0] and 'mpp_P' not in lines[1] and lines[99].split(' ')[1].startswith('i=99i,')
     assert b.esc_tag('a b,c=d') == r'a\ b\,c\=d'
+
+
+@pytest.mark.parametrize('off', [0.2, 0.5, 1.0, 2.0])
+def test_g0_off_bin0(off):
+    # bin 0 averaging several points: the Grouping line's first power is not bin 0, the bound must still hold
+    rnd = np.random.default_rng(int(off * 10))
+    for _ in range(15):
+        pk = float(rnd.choice([3.5, 8, 20, 91]))
+        p = pv_curve(pk, rnd.uniform(.3, .8), drop=rnd.uniform(.02, .4)) + rnd.normal(0, pk * .01, 100).astype(np.float32)
+        g0 = round(float(p[0] + rnd.choice([-1, 1]) * off * (p.max() - p.min()) / 16), 2)
+        P, step, err = b.decode_chart(chart(p), g0)
+        assert P is None or np.max(np.abs(P - p)) <= err + 1e-6
