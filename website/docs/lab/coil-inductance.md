@@ -254,7 +254,7 @@ The `measure-coil` console command runs the same two sweeps on the device with n
 has two forms:
 
 ```
-measure-coil l0 [steps] [dwell_ms] [f=<Hz>] [apply]     # the §5 inductance sweep
+measure-coil l0 [steps] [dwell_ms] [f=<Hz>] [sync] [apply]  # the §5 inductance sweep
 measure-coil ls [hs]    [dwell_ms] [apply]              # the §6 LS-timing / rect_offset_ns sweep
 ```
 
@@ -466,11 +466,14 @@ With sync rectification on, the firmware turns the low side off in DCM at the ra
 ideal zero crossing, and the body diode finishes the discharge. The tail at `−(Vout+Vf)` then
 changes `Iout` by well under 0.1 %.
 
-`measure-coil l0` does not turn sync rectification on itself. Manual PWM enables it only with
-`limits.conf::reverse_current_paranoia=0`. With the default `reverse_current_paranoia=1` the low
-side stays at its minimum pulse (about 2 µs, which keeps the bootstrap supply charged) and the body
-diode carries the rest of each discharge. That is the first case above, and it biases `L` upward,
-by an estimated 1–1.6 %. The sweep header records the regime: `rect=sync` or `rect=LSmin+diode`.
+By default `measure-coil l0` does not turn sync rectification on itself. Manual PWM enables it only
+with `limits.conf::reverse_current_paranoia=0`. With the default `reverse_current_paranoia=1` the
+low side stays at its minimum pulse (about 2 µs, which keeps the bootstrap supply charged) and the
+body diode carries the rest of each discharge. That is the first case above, and it biases `L`
+upward, by an estimated 1–1.6 %. `measure-coil l0 sync` (buck only) turns sync rectification on
+whenever the backflow switch closes, as `ls` does, whatever the paranoia setting; on the converter
+model it read 50.83 µH for a 51.00 µH coil where the default read 51.29 µH. The sweep header records
+the regime: `rect=sync` or `rect=LSmin+diode`.
 A reverse-current notch does not occur in either regime. The oscillation of `L` in a fine duty
 sweep is the switch-node ring of §7, not SR timing.
 

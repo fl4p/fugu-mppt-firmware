@@ -10,8 +10,9 @@
 //
 // ls=false -> L0 duty sweep (arg1 = steps, 0 = default); ls=true -> LS-timing sweep (arg1 = hs,
 // 0 = auto), dwellMs 0 = default (L0 1 s, LS 3 s). apply writes the result to coil.conf. fHz > 0: L0 sweep at
-// that switching frequency, the previous one restored afterwards. Returns false if a run is already in progress.
-bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs, uint32_t fHz = 0);
+// that switching frequency, the previous one restored afterwards. sync: L0 buck sweep with sync rect. Returns false
+// if a run is already in progress.
+bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs, uint32_t fHz = 0, bool sync = false);
 
 // lowest fHz [Hz]: the fixed bootstrap refresh pulse must still top up the HS supply above UVLO each period
 constexpr uint32_t kMeasFswMin = 20000;

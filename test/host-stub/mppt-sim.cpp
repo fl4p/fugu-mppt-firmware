@@ -37,6 +37,7 @@
 //                              # mc-boost-virt: the firmware task with Iin computed from Iout: refused
 //                              # mc-flat-trip-late: a shutdown after 20 DCM rows: fitted, nothing for coil.conf
 //                              # mc-flat-ring: mc-flat with flat's switch-node ring on: the clean run writes L
+//                              # mc-flat-sync: mc-flat-ring as `l0 sync`: LS window opens, no reverse current, off after
 //                              # mc-boost-weakpump: a gate pump that needs > 8.6 % LS duty (fry 11-26): the ramp closes it;
 //                              #   -old: the fixed 7.8 % probe duty aborts
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
@@ -2482,7 +2483,8 @@ static struct {
     int wrapN, wrapSkip; // reverse ticks done, ticks since the 2^32 skip (inject 11)
     uint32_t taskLsWrites; // LS driver writes from the task (outside the RT ticks), inject 12
     uint32_t offTicks, backoffTicks, closedTicks, srTicks, restartTicks, pinTicks, rowsAfter;
-    uint16_t lastCtrl;
+    uint16_t lastCtrl, srLsMax; // srLsMax: widest LS count with sync rect on and BF closed
+    float srIoMin;               // min plant cycle-mean Iout under that LS window
     double tPub, tInject = -1, tAbort = -1;
     float L = NAN;
     int pts = -1;
@@ -2593,6 +2595,10 @@ static void mcTick() {
     const bool bf = mppt.bflow.state(), off = converter.disabled();
     g_mc.offTicks += off && bf, g_mc.backoffTicks += mppt.inBackoff() && bf, g_mc.closedTicks += bf && !off;
     g_mc.srTicks += bf && !off && converter.syncRectEnabled_();
+    if (bf && !off && converter.syncRectEnabled_() &&
+        converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + converter.pwmMaxDriver() / 64)
+        g_mc.srLsMax = std::max(g_mc.srLsMax, converter.getRectOnPwmCnt()),
+        g_mc.srIoMin = std::min(g_mc.srIoMin, g_vconv.getIoutAvg());
     if (!off && converter.inDCM())
         g_mc.ipkPl = std::max(g_mc.ipkPl, (float) ((g_vconv.getVin() - g_vconv.getVout()) * converter.getCtrlOnPwmCnt() /
                                               converter.periodCounts() / (converter.realizedFreqHz() * g_vconv.getL())));
@@ -2753,7 +2759,7 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
                tNow() - tEnter);
     }
     g_tickHook = mcTick, g_simDelayHook = simDelay, g_simRunTasks = true, g_simLsCommitHook = mcLsCommitHook;
-    const bool started = measureCoilStart(ls, false, 0, 0);
+    const bool started = measureCoilStart(ls, false, 0, 0, 0, sc == "mc-flat-sync");
     g_tickHook = nullptr, g_simDelayHook = nullptr, g_simRunTasks = false, g_simLsCommitHook = nullptr;
     uint16_t plantHi = 0; // plant HS/LS counts with the converter off after the task
     for (int k = 0; k < 100; ++k) {
@@ -2790,6 +2796,14 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
         chk(g_mc.pts >= coilfit::kMinFitPts && strstr(g_mc.why, "aborted"), "the aborted sweep still fitted its rows");
     printf("== %s: coil.conf %s%.2f uH%s%s\n", name.c_str(), g_mc.persist ? "" : "refused (", g_mc.Lp * 1e6f,
            g_mc.persist ? "" : "): ", g_mc.why);
+    if (sc == "mc-flat-sync") {
+        printf("== %s: sync LS window up to %u counts, min plant Iout under it %.3f A\n", name.c_str(), g_mc.srLsMax, g_mc.srIoMin);
+        chk(g_mc.srTicks > 0 && g_mc.srLsMax > 0, "sync rect on and its LS window opened while the BF is closed");
+        chk(g_mc.srIoMin > -0.05f, "no reverse output current under the sync LS window");
+        chk(!mppt.mcSyncRect.load() && !converter.syncRectEnabled_(), "sync rect off after the run");
+        chk(g_trips.size() == trips0, "no protection trip");
+        chk(g_mc.persist && fabsf(g_mc.Lp / g_vconv.getL() - 1) < 0.03f, "uncorrected L for coil.conf within 3 %");
+    } else if (!ls && mppt.limits.reverse_current_paranoia) chk(!g_mc.srTicks, "l0 without sync (paranoia on): no sync rect");
     if (sc == "mc-flat-ring") // the plant rings: the fit states its error, a clean run is written
         chk(g_mc.persist && fabsf(g_mc.Lp / g_vconv.getL() - 1) < 0.03f, "clean run: uncorrected L for coil.conf within 3 %");
     if (g_mc.inject == 1 || g_mc.inject == 2 || g_mc.inject == 7) chk(!g_mc.reqKept, "the shutdown cancelled the request");
@@ -4567,7 +4581,7 @@ static int simMain(int argc, char **argv) {
     }
     const bool dcd = sc.rfind("dcd-", 0) == 0, dcdFry = dcd && sc.size() > 4 && !sc.compare(sc.size() - 4, 4, "-fry");
     if (dcdFry) setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
-    if (sc == "mc-flat-ring") setenv("SIM_RING", "flat", 0);
+    if (sc == "mc-flat-ring" || sc == "mc-flat-sync") setenv("SIM_RING", "flat", 0);
     const bool flatTake = sc == "bf-daily-flat" || sc.rfind("mc-flat", 0) == 0 || sc.rfind("bf-flat-ccm", 0) == 0 ||
                           (dcd && !dcdFry);
     if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);

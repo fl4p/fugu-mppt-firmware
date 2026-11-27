@@ -2412,7 +2412,7 @@ static void cmdSelftest(cmd *c) {
 }
 
 #ifdef CONFIG_FUGU_WITH_MEASURE_COIL
-// measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [apply]  — the sweep logic lives in measure_coil.cpp.
+// measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [sync] [apply]  — the sweep logic lives in measure_coil.cpp.
 static void cmdMeasureCoil(cmd *c) {
     if (adcSampler.isCalibrating())
         CMD_FAIL_RETURN("measure-coil: busy calibrating");
@@ -2424,12 +2424,13 @@ static void cmdMeasureCoil(cmd *c) {
     else
         CMD_FAIL_RETURN("measure-coil: expected l0|ls [args]");
 
-    bool apply = false;
+    bool apply = false, sync = false;
     int pos[2] = {0, 0}, np = 0; // steps|hs, dwell_ms (0: per-mode default)
     long fHz = 0;
     for (int i = 1, n = cc.countArgs(); i < n; ++i) {
         auto v = cc.getArg(i).getValue();
         if (v == "apply") apply = true;
+        else if (v == "sync") sync = true;
         else if (!strncmp(v.c_str(), "f=", 2)) {
             char *end = nullptr;
             errno = 0;
@@ -2444,6 +2445,8 @@ static void cmdMeasureCoil(cmd *c) {
         CMD_FAIL_RETURN("measure-coil: f= is for l0 only");
     if (ls && converter.boost())
         CMD_FAIL_RETURN("measure-coil: ls is for a buck only");
+    if (sync && (ls || converter.boost()))
+        CMD_FAIL_RETURN("measure-coil: sync is for l0 on a buck only");
     if (fHz && !converter.getPeriodTicks())
         CMD_FAIL_RETURN("measure-coil: f= needs the MCPWM gate driver build");
     if (fHz && (fHz < (long) kMeasFswMin || fHz > (long) converter.getPwmFrequency()))
@@ -2481,7 +2484,7 @@ static void cmdMeasureCoil(cmd *c) {
         CMD_FAIL_RETURN("measure-coil: a frequency change is still queued");
     if (bfTestBusy())
         CMD_FAIL_RETURN("measure-coil: selftest running");
-    if (!measureCoilStart(ls, apply, pos[0], dwellMs, (uint32_t) fHz))
+    if (!measureCoilStart(ls, apply, pos[0], dwellMs, (uint32_t) fHz, sync))
         CMD_FAIL_RETURN("measure-coil: already running");
 }
 #endif // CONFIG_FUGU_WITH_MEASURE_COIL
@@ -2939,7 +2942,7 @@ void setupCli() {
 #endif
     cli.addBoundlessCmd("selftest", cmdSelftest); // selftest [bflow|abort|clear]
 #ifdef CONFIG_FUGU_WITH_MEASURE_COIL
-    cli.addBoundlessCmd("measure-coil", bfGuarded<cmdMeasureCoil>); // measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [apply]
+    cli.addBoundlessCmd("measure-coil", bfGuarded<cmdMeasureCoil>); // measure-coil l0|ls [steps|hs] [dwell_ms] [f=<Hz>] [sync] [apply]
 #endif
 #if CONFIG_FUGU_WITH_VCONV
     cli.addBoundlessCmd("vconv", bfGuarded<cmdVconv>); // vconv [pv|bat|set ...]
