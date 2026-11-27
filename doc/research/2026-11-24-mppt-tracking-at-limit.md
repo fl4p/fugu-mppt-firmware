@@ -4,6 +4,10 @@
 
 ## Summary
 
+**Update 2026-11-26:** the P&O dither slope, which does not use the sweep curve, puts flat at ≥300 W
+on its local maximum (−0.13 V, 90 % CI −0.35..+0.06 V, 495 windows over 23 days); the ~22 Wh/day below is most
+likely the sweep-curve voltage bias, not a tracking loss. See `2026-11-26-dither-vertex.md`.
+
 Open for bright conditions. The identified mechanisms below ~300 W total a few Wh per
 converter per day (≤0.5 %). The largest item from the 30-day study
 (`2026-11-21-mppt-vs-fixed-voltage.md`), flat sitting 1.5–5 V below the sweep-curve Vmpp,

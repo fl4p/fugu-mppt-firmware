@@ -195,7 +195,8 @@ rather than the tracker drifting, so the fresh value is used. With the all-ages 
 On bright, unshaded, fresh bins, the operating point sits on the curve's Vmpp: fry median offset 0.0 V (IQR −0.9 to
 +0.7), s_op median 0.996. flat has a tail below the MPP: median −0.2 V, mean −0.6 V, IQR −2.0 to +0.6, s_op median
 0.989. The fry tracker loses its 2-4 % at dawn/dusk (η_op 0.957), under shading (0.972) and on overcast days (0.972).
-The flat tracker loses about 2 % even on clear days.
+The flat tracker loses about 2 % even on clear days. (Update 2026-11-26: the dither slope puts flat on its local
+maximum at ≥300 W, so this 2 % is most likely flat's sweep-curve bias; see `2026-11-26-dither-vertex.md`.)
 
 ## Validation
 
