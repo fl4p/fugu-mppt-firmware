@@ -766,6 +766,12 @@ void MpptController::telemetry() {
         point.addField("rect_off", rectCal.offset()); // counts
         point.addField("heap", (int) heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
         point.addField("heap_min", (int) heap_caps_get_minimum_free_size(MALLOC_CAP_DEFAULT));
+        const auto &bs = charger.batSt;
+        if (bs.haveValidCellVoltage()) point.addField("vcell", bs.vcell_high, 3);
+        if (bs.vcell_high > 0) point.addField("bms_age", (int) coarseTicksToSec(bs.cellAgeTicks()));
+        point.addField("chg", (int) charger.state());
+        point.addField("bal", charger.balanceDue() ? (int) charger.balanceInBandS() : 0);
+        point.addField("ah_full", bs.coulombCounter.deficit(), 1);
     }
 
     point.addField("pwm_duty", converter.getCtrlOnPwmCnt());

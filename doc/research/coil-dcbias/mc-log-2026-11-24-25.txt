@@ -1,0 +1,97 @@
+-rw-r--r--  1 fab fab 3624475 Nov 25 12:21 fugu_console.log
+-rw-r--r--  1 fab fab 9999960 Nov 25 08:46 fugu_console.log.1
+-rw-r--r--  1 fab fab 9999907 Nov 15 11:44 fugu_console.log.10
+-rw-r--r--  1 fab fab 1005079 Jan  9  2026 fugu_console.log.1.br
+-rw-r--r--  1 fab fab 9999973 Nov 24 14:03 fugu_console.log.2
+-rw-r--r--  1 fab fab 9999984 Nov 23 13:12 fugu_console.log.3
+-rw-r--r--  1 fab fab 9999958 Nov 22 13:04 fugu_console.log.4
+-rw-r--r--  1 fab fab 9999929 Nov 21 19:03 fugu_console.log.5
+-rw-r--r--  1 fab fab 9999882 Nov 20 12:07 fugu_console.log.6
+-rw-r--r--  1 fab fab 9999920 Nov 19 04:13 fugu_console.log.7
+2026-11-15 10:10:01,007      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 412..1482 step 22  Vin=65.00 Vout=26.08 M=0.401
+2026-11-15 10:10:49,753      fry: measure-coil: L = 76.14 uH  (ring fit, 32 DCM pts, Iout>=0.45A, +-0.5%; ring 245 kHz = 5.5 nF node C, ripple +-11%, 3.0 periods; median of points 75.95 uH)
+2026-11-15 10:33:44,867     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 506..1822 step 28  Vin=55.54 Vout=27.41 M=0.493
+2026-11-15 10:34:21,734     flat: measure-coil: L = 59.51 uH  (ring fit, 23 DCM pts, Iout>=0.40A, +-1.2%; ring 307 kHz = 4.5 nF node C, ripple +-9%, 3.0 periods; median of points 59.42 uH)
+2026-11-15 10:47:13,510      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 416..1496 step 22  Vin=65.98 Vout=26.74 M=0.405
+2026-11-15 10:48:03,577      fry: measure-coil: L = 76.15 uH  (ring fit, 33 DCM pts, Iout>=0.44A, +-0.4%; ring 246 kHz = 5.5 nF node C, ripple +-11%, 3.0 periods; median of points 76.18 uH)
+2026-11-15 10:49:21,094     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 503..1810 step 27  Vin=54.74 Vout=26.84 M=0.490
+2026-11-15 10:49:56,661     flat: measure-coil: L = 51.27 uH  (ring fit, 24 DCM pts, Iout>=0.41A, +-0.5%; ring 323 kHz = 4.7 nF node C, ripple +-7%, 3.1 periods; median of points 50.83 uH)
+2026-11-15 10:52:11,079      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 419..1509 step 23  Vin=65.51 Vout=26.77 M=0.409
+2026-11-15 10:52:59,746      fry: measure-coil: L = 75.93 uH  (ring fit, 32 DCM pts, Iout>=0.44A, +-0.5%; ring 248 kHz = 5.4 nF node C, ripple +-11%, 2.9 periods; median of points 76.19 uH)
+2026-11-15 10:54:18,675     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 471..1695 step 26  Vin=57.95 Vout=26.60 M=0.459
+2026-11-15 10:54:59,249     flat: measure-coil: L = 51.74 uH  (ring fit, 27 DCM pts, Iout>=0.40A, +-0.4%; ring 315 kHz = 4.9 nF node C, ripple +-7%, 3.3 periods; median of points 51.89 uH)
+2026-11-15 10:56:26,468      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 411..1481 step 22  Vin=65.19 Vout=26.14 M=0.401
+2026-11-15 10:57:17,778      fry: measure-coil: L = 75.80 uH  (ring fit, 34 DCM pts, Iout>=0.44A, +-0.5%; ring 245 kHz = 5.6 nF node C, ripple +-11%, 3.0 periods; median of points 76.34 uH)
+2026-11-15 10:58:34,156     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 465..1673 step 25  Vin=57.39 Vout=26.00 M=0.453
+2026-11-15 10:59:13,715     flat: measure-coil: L = 49.75 uH  (ring fit, 30 DCM pts, Iout>=0.42A, +-0.3%; ring 321 kHz = 4.9 nF node C, ripple +-7%, 3.6 periods; median of points 49.87 uH)
+2026-11-15 12:18:04,217      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 406..1460 step 22  Vin=66.43 Vout=26.27 M=0.395
+2026-11-15 12:19:00,432      fry: measure-coil: L = 77.02 uH  (ring fit, 33 DCM pts, Iout>=0.45A, +-0.5%; ring 244 kHz = 5.5 nF node C, ripple +-10%, 2.9 periods; median of points 78.04 uH)
+2026-11-15 12:20:17,334     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 447..1611 step 24  Vin=60.33 Vout=26.31 M=0.436
+2026-11-15 12:21:02,799     flat: measure-coil: L = 51.78 uH  (ring fit, 29 DCM pts, Iout>=0.40A, +-0.3%; ring 314 kHz = 5.0 nF node C, ripple +-7%, 3.3 periods; median of points 51.33 uH)
+2026-11-24 11:52:25,031     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 445..1602 step 24  Vin=61.08 Vout=26.49 M=0.434
+2026-11-24 11:53:16,850     flat: measure-coil: L = 49.74 uH  (ring fit, 35 DCM pts, Iout>=0.40A, +-0.3% noise +-1.4% syst; ring 323 kHz = 4.9 nF node C, ripple +-7%, 3.7 periods; median of points 50.37 uH)
+2026-11-24 11:53:16,948     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.3A 48.54uH+-0.6/4.8% | 3.4-4.3A 49.80uH+-0.5/3.2% | 4.3-5.0A 50.08uH+-0.5/2.3% | 5.1-5.7A 50.45uH+-0.5/1.9%
+2026-11-24 12:19:25,183     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 455..1636 step 25  Vin=58.96 Vout=26.12 M=0.443
+2026-11-24 12:20:31,120     flat: measure-coil: L = 48.35 uH  (median of 48 DCM pts, Iout>=0.26A; ring not resolved: no periodic term, expect up to +-5%)
+2026-11-24 12:20:31,138     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.3A 47.78uH+-1.7/2.9% | 3.4-3.6A 46.27uH+-1.5/1.3% | 3.6-3.8A 48.64uH+-1.7/1.5% | 3.9-4.2A 49.18uH+-1.6/1.7% | 4.2-4.4A 52.35uH+-1.7/1.5%
+2026-11-24 12:42:30,972     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 392..1411 step 21  Vin=69.85 Vout=26.69 M=0.382
+2026-11-24 12:43:19,002     flat: measure-coil: L = 49.50 uH  (ring fit, 30 DCM pts, Iout>=0.41A, +-0.4% noise +-1.6% syst; ring 324 kHz = 4.9 nF node C, ripple +-7%, 3.1 periods; median of points 49.23 uH)
+2026-11-24 12:43:19,085     flat: measure-coil: L(Ipk), +-noise/offsets: 2.7-3.6A 48.60uH+-0.6/5.0% | 3.7-4.7A 49.68uH+-0.6/3.3% | 4.7-5.6A 50.26uH+-0.5/2.4%
+2026-11-24 13:33:04,963     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 394..1420 step 21  Vin=70.01 Vout=26.92 M=0.384
+2026-11-24 13:33:52,839     flat: measure-coil: L = 49.50 uH  (ring fit, 30 DCM pts, Iout>=0.40A, +-0.4% noise +-1.6% syst; ring 325 kHz = 4.9 nF node C, ripple +-7%, 3.1 periods; median of points 49.11 uH)
+2026-11-24 13:33:52,942     flat: measure-coil: L(Ipk), +-noise/offsets: 2.7-3.6A 48.60uH+-0.7/5.0% | 3.7-4.6A 49.74uH+-0.6/3.2% | 4.7-5.6A 50.19uH+-0.6/2.4%
+2026-11-24 13:45:38,322     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 401..1442 step 22  Vin=68.72 Vout=26.84 M=0.391
+2026-11-24 13:46:28,799     flat: measure-coil: L = 49.49 uH  (ring fit, 32 DCM pts, Iout>=0.41A, +-0.3% noise +-1.5% syst; ring 323 kHz = 4.9 nF node C, ripple +-7%, 3.3 periods; median of points 49.25 uH)
+2026-11-24 13:46:28,903     flat: measure-coil: L(Ipk), +-noise/offsets: 2.6-3.4A 48.43uH+-0.6/5.0% | 3.5-4.2A 49.37uH+-0.5/3.5% | 4.3-5.0A 50.13uH+-0.5/2.6% | 5.1-5.7A 50.08uH+-0.4/2.1%
+2026-11-24 13:55:32,441      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 374..1345 step 20  Vin=73.51 Vout=26.78 M=0.364
+2026-11-24 13:56:09,611     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 409..1474 step 22  Vin=66.91 Vout=26.71 M=0.399
+2026-11-24 13:56:39,958      fry: measure-coil: L = 76.18 uH  (ring fit, 45 DCM pts, Iout>=0.26A, +-0.8% noise +-2.4% syst; ring 254 kHz = 5.2 nF node C, ripple +-12%, 2.5 periods; median of points 76.35 uH)
+2026-11-24 13:56:39,959      fry: measure-coil: L(Ipk), +-noise/offsets: 1.8-2.7A 75.26uH+-1.2/5.7% | 2.8-3.3A 75.42uH+-1.1/3.1% | 3.4-3.7A 77.92uH+-1.2/2.5%
+2026-11-24 13:57:16,779     flat: measure-coil: L = 49.84 uH  (ring fit, 46 DCM pts, Iout>=0.39A, +-0.3% noise +-1.3% syst; ring 321 kHz = 4.9 nF node C, ripple +-7%, 3.8 periods; median of points 50.39 uH)
+2026-11-24 13:57:16,787     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.5A 48.46uH+-0.6/4.7% | 3.6-4.5A 49.87uH+-0.4/2.9% | 4.6-5.1A 50.18uH+-0.4/2.1% | 5.2-5.5A 50.83uH+-0.4/1.6%
+2026-11-24 16:13:14,198     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 387..1393 step 21  Vin=70.19 Vout=26.47 M=0.377
+2026-11-24 16:14:05,931     flat: measure-coil: L = 49.67 uH  (ring fit, 34 DCM pts, Iout>=0.41A, +-0.5% noise +-1.6% syst; ring 323 kHz = 4.9 nF node C, ripple +-7%, 3.5 periods; median of points 50.04 uH)
+2026-11-24 16:14:06,018     flat: measure-coil: L(Ipk), +-noise/offsets: 2.6-3.4A 48.55uH+-1.0/5.6% | 3.5-4.4A 50.10uH+-0.7/3.7% | 4.4-5.1A 49.93uH+-0.7/2.8% | 5.2-5.8A 50.03uH+-0.6/2.2%
+2026-11-24 16:14:51,582     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 413..1488 step 22  Vin=65.39 Vout=26.35 M=0.403
+2026-11-24 16:15:36,940     flat: measure-coil: L = 49.20 uH  (ring fit, 28 DCM pts, Iout>=0.41A, +-0.4% noise +-1.6% syst; ring 304 kHz = 5.6 nF node C, ripple +-7%, 3.0 periods; median of points 49.21 uH)
+2026-11-24 16:15:36,952     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.4A 48.04uH+-0.7/5.1% | 3.5-4.3A 49.44uH+-0.6/3.4% | 4.5-5.6A 50.08uH+-0.6/2.4%
+2026-11-24 21:41:39,320      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 685..2465 step 37  Vin=26.59 Vout=6.86 M=0.258 boost
+2026-11-24 21:42:32,574      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 685..2465 step 37  Vin=26.59 Vout=28.08 M=1.056 boost
+2026-11-24 21:43:41,080      fry: measure-coil: L = 74.69 uH  (ring fit, 38 DCM pts, Iin>=0.50A, +-0.5% noise +-1.0% syst; ring 248 kHz = 5.5 nF node C, ripple +-11%, 3.1 periods; median of points 73.18 uH)
+2026-11-24 21:43:41,153      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.1A 75.55uH+-0.9/3.0% | 3.2-4.3A 74.74uH+-0.6/1.8% | 4.3-5.4A 73.87uH+-0.5/1.3%
+2026-11-24 21:44:05,443      fry: measure-coil L0: fsw=21500 pwmMax=7442 band 1242..4472 step 68  Vin=26.59 Vout=26.38 M=0.992 boost
+2026-11-24 21:45:00,849      fry: measure-coil: L = 73.76 uH  (ring fit, 29 DCM pts, Iin>=0.66A, +-0.3% noise +-0.7% syst; ring 250 kHz = 5.5 nF node C, ripple +-6%, 4.3 periods; median of points 73.61 uH)
+2026-11-24 21:45:00,927      fry: measure-coil: L(Ipk), +-noise/offsets: 4.0-4.9A 74.63uH+-0.6/1.4% | 5.0-6.0A 74.12uH+-0.4/1.1% | 6.2-7.1A 73.59uH+-0.3/0.8% | 7.3-8.4A 72.86uH+-0.2/0.7%
+2026-11-24 21:51:55,132     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 685..2466 step 37  Vin=26.57 Vout=25.76 M=0.969 boost
+2026-11-24 21:52:59,045     flat: measure-coil: L = 48.83 uH  (ring fit, 33 DCM pts, Iin>=0.74A, +-0.5% noise +-0.9% syst; ring 319 kHz = 5.1 nF node C, ripple +-8%, 3.6 periods; median of points 49.00 uH)
+2026-11-24 21:52:59,114     flat: measure-coil: L(Ipk), +-noise/offsets: 3.6-4.5A 50.00uH+-1.0/2.1% | 4.6-5.5A 49.04uH+-1.0/1.6% | 5.7-6.7A 48.26uH+-0.9/1.2% | 6.7-7.9A 48.13uH+-0.9/1.0%
+2026-11-24 21:53:45,742     flat: measure-coil L0: fsw=21500 pwmMax=7442 band 1243..4474 step 68  Vin=26.57 Vout=25.65 M=0.965 boost
+2026-11-24 21:54:41,964     flat: measure-coil: L = 48.60 uH  (ring fit, 30 DCM pts, Iin>=1.08A, +-0.3% noise +-0.7% syst; ring 325 kHz = 4.9 nF node C, ripple +-3%, 6.1 periods; median of points 48.69 uH)
+2026-11-24 21:54:42,051     flat: measure-coil: L(Ipk), +-noise/offsets: 6.0-7.1A 49.10uH+-0.6/1.1% | 7.4-8.6A 48.87uH+-0.6/0.9% | 8.9-10.0A 48.63uH+-0.6/0.7% | 10.2-11.5A 48.36uH+-0.6/0.6% | 11.8-12.9A 48.04uH+-0.6/0.5%
+2026-11-24 23:47:51,422      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 684..2464 step 37  Vin=26.62 Vout=6.88 M=0.259 boost
+2026-11-24 23:49:02,283      fry: measure-coil: L = 74.56 uH  (ring fit, 39 DCM pts, Iin>=0.51A, +-0.5% noise +-1.0% syst; ring 249 kHz = 5.5 nF node C, ripple +-11%, 3.2 periods; median of points 73.71 uH)
+2026-11-24 23:49:02,298      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.2A 75.43uH+-0.8/2.9% | 3.3-4.4A 74.54uH+-0.6/1.8% | 4.4-5.5A 73.73uH+-0.5/1.2%
+2026-11-24 23:56:01,613     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 684..2464 step 37  Vin=26.62 Vout=8.47 M=0.318 boost
+2026-11-24 23:57:06,005     flat: measure-coil: L = 48.90 uH  (ring fit, 33 DCM pts, Iin>=0.74A, +-0.5% noise +-0.9% syst; ring 320 kHz = 5.1 nF node C, ripple +-8%, 3.6 periods; median of points 48.60 uH)
+2026-11-24 23:57:06,027     flat: measure-coil: L(Ipk), +-noise/offsets: 3.6-4.5A 50.07uH+-0.9/2.2% | 4.6-5.5A 49.13uH+-0.9/1.6% | 5.7-6.7A 48.34uH+-0.8/1.2% | 6.7-7.9A 48.19uH+-0.8/1.0%
+2026-11-25 08:14:09,217      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 358..1288 step 19  Vin=76.18 Vout=26.56 M=0.349
+2026-11-25 08:15:21,920      fry: measure-coil: L = 76.47 uH  (ring fit, 40 DCM pts, Iout>=0.32A, +-0.4% noise +-1.6% syst; ring 249 kHz = 5.4 nF node C, ripple +-11%, 2.7 periods; median of points 75.02 uH)
+2026-11-25 08:15:21,921      fry: measure-coil: L(Ipk), +-noise/offsets: 2.1-3.0A 75.31uH+-0.7/5.3% | 3.0-3.8A 77.01uH+-0.6/3.3% | 3.8-4.2A 77.08uH+-0.6/2.5%
+2026-11-25 08:22:12,863     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 388..1398 step 21  Vin=70.32 Vout=26.62 M=0.379
+2026-11-25 08:23:03,938     flat: measure-coil: L = 49.64 uH  (ring fit, 32 DCM pts, Iout>=0.40A, +-0.4% noise +-1.6% syst; ring 327 kHz = 4.8 nF node C, ripple +-7%, 3.3 periods; median of points 49.20 uH)
+2026-11-25 08:23:03,948     flat: measure-coil: L(Ipk), +-noise/offsets: 2.6-3.4A 48.75uH+-0.7/5.2% | 3.5-4.2A 49.63uH+-0.6/3.6% | 4.3-5.0A 50.03uH+-0.6/2.8% | 5.1-5.7A 50.19uH+-0.5/2.2%
+2026-11-25 08:23:35,694     flat: measure-coil L0: fsw=30002 pwmMax=5333 band 513..1847 step 28  Vin=69.17 Vout=26.62 M=0.385
+2026-11-25 08:24:20,324     flat: measure-coil: L = 51.52 uH  (ring fit, 28 DCM pts, Iout>=0.43A, +-0.3% noise +-1.3% syst; ring 327 kHz = 4.6 nF node C, ripple +-4%, 3.8 periods; median of points 51.52 uH)
+2026-11-25 08:24:20,332     flat: measure-coil: L(Ipk), +-noise/offsets: 3.0-3.9A 52.05uH+-0.5/3.9% | 4.0-4.8A 51.44uH+-0.4/2.7% | 5.0-5.8A 51.38uH+-0.3/2.1% | 5.9-6.7A 51.21uH+-0.3/1.7%
+2026-11-25 08:24:41,132     flat: measure-coil L0: fsw=21999 pwmMax=7273 band 697..2511 step 38  Vin=69.38 Vout=26.61 M=0.384
+2026-11-25 08:25:15,319     flat: measure-coil: L = 49.57 uH  (ring fit, 23 DCM pts, Iout>=0.43A, +-0.3% noise +-1.1% syst; ring 330 kHz = 4.7 nF node C, ripple +-2%, 4.3 periods; median of points 49.53 uH)
+2026-11-25 08:25:15,339     flat: measure-coil: L(Ipk), +-noise/offsets: 3.8-5.0A 49.09uH+-0.4/3.0% | 5.1-6.5A 49.72uH+-0.3/2.1% | 6.7-7.9A 49.84uH+-0.3/1.5%
+2026-11-25 08:25:53,118      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 353..1272 step 19  Vin=77.45 Vout=26.67 M=0.344
+2026-11-25 08:27:01,804      fry: measure-coil: L = 76.75 uH  (ring fit, 39 DCM pts, Iout>=0.37A, +-0.4% noise +-1.6% syst; ring 244 kHz = 5.5 nF node C, ripple +-10%, 2.9 periods; median of points 77.17 uH)
+2026-11-25 08:27:01,813      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.1A 76.00uH+-0.6/5.4% | 3.2-4.0A 77.33uH+-0.5/3.4% | 4.0-4.7A 76.93uH+-0.5/2.4%
+2026-11-25 08:27:33,979      fry: measure-coil L0: fsw=21500 pwmMax=7442 band 641..2307 step 35  Vin=77.51 Vout=26.70 M=0.344
+2026-11-25 08:27:50,572     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 388..1399 step 21  Vin=70.26 Vout=26.61 M=0.379
+2026-11-25 08:28:24,506      fry: measure-coil: L = 77.46 uH  (ring fit, 31 DCM pts, Iout>=0.40A, +-0.3% noise +-1.1% syst; ring 251 kHz = 5.2 nF node C, ripple +-6%, 4.2 periods; median of points 77.45 uH)
+2026-11-25 08:28:25,711      fry: measure-coil: L(Ipk), +-noise/offsets: 2.9-3.6A 77.13uH+-0.6/3.8% | 3.7-4.4A 77.70uH+-0.5/2.7% | 4.5-5.1A 78.11uH+-0.4/2.1% | 5.2-5.8A 77.16uH+-0.4/1.7% | 5.9-6.4A 77.24uH+-0.4/1.5%
+2026-11-25 08:28:39,083     flat: measure-coil: L = 49.49 uH  (ring fit, 30 DCM pts, Iout>=0.40A, +-0.4% noise +-1.6% syst; ring 324 kHz = 4.9 nF node C, ripple +-7%, 3.1 periods; median of points 49.03 uH)
+2026-11-25 08:28:39,095     flat: measure-coil: L(Ipk), +-noise/offsets: 2.7-3.6A 48.51uH+-0.6/5.1% | 3.7-4.7A 49.66uH+-0.6/3.3% | 4.7-5.6A 50.34uH+-0.5/2.4%

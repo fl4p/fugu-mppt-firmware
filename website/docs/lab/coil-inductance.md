@@ -254,7 +254,7 @@ The `measure-coil` console command runs the same two sweeps on the device with n
 has two forms:
 
 ```
-measure-coil l0 [steps] [dwell_ms] [f=<Hz>] [apply]     # the §5 inductance sweep
+measure-coil l0 [steps] [dwell_ms] [f=<Hz>] [sync] [apply]  # the §5 inductance sweep
 measure-coil ls [hs]    [dwell_ms] [apply]              # the §6 LS-timing / rect_offset_ns sweep
 ```
 
@@ -415,10 +415,14 @@ The run:
    diode carries the coil current to the output. The battery reaches the coil only through the
    backflow switch, whose gate pump runs off the bootstrap supply, so the switch conducts only once
    the converter switches. The command turns the switch on. While `Vout` is more than 3 V below
-   `Vin`, it switches at a precharge duty of one 2 µs low-side pulse per period (7.8 % at 39 kHz).
-   The battery then charges the output through the coil and the body diode, at a rate set by the
-   switch's gate ramp rather than by the duty. If `Vout` is still more than 3 V below `Vin` after
-   3 s, the command takes the switch as not conducting and aborts.
+   `Vin`, it ramps the duty from the minimum to 18 % over 1 s and then holds it, and it pauses the
+   ramp while `Vout` rises faster than about 12 V/s. The pump needs a board-dependent minimum duty:
+   the bootstrap supply that feeds it recharges only while the low side is on, and it pumps only
+   while the low side is off. One board did not close the switch at a fixed 7.8 % (one 2 µs pulse
+   per period at 39 kHz), but closed it at 15 to 17 % on a ramp. Once the switch conducts, the
+   battery charges the output through the coil and the body diode, at a rate set by the switch's
+   gate ramp rather than by the duty. If `Vout` is still more than 3 V below `Vin` after 3 s, the
+   command takes the switch as not conducting and aborts, and reports the duty it reached.
 2. It reads the `Iin` zero, then raises the duty until `Vout` is 2 V above `Vin`. Below that the
    coil current does not return to zero in each period, so no row is taken.
 3. It steps through the duty band and ends the sweep at the first row that reaches one of these:
@@ -462,11 +466,14 @@ With sync rectification on, the firmware turns the low side off in DCM at the ra
 ideal zero crossing, and the body diode finishes the discharge. The tail at `−(Vout+Vf)` then
 changes `Iout` by well under 0.1 %.
 
-`measure-coil l0` does not turn sync rectification on itself. Manual PWM enables it only with
-`limits.conf::reverse_current_paranoia=0`. With the default `reverse_current_paranoia=1` the low
-side stays at its minimum pulse (about 2 µs, which keeps the bootstrap supply charged) and the body
-diode carries the rest of each discharge. That is the first case above, and it biases `L` upward,
-by an estimated 1–1.6 %. The sweep header records the regime: `rect=sync` or `rect=LSmin+diode`.
+By default `measure-coil l0` does not turn sync rectification on itself. Manual PWM enables it only
+with `limits.conf::reverse_current_paranoia=0`. With the default `reverse_current_paranoia=1` the
+low side stays at its minimum pulse (about 2 µs, which keeps the bootstrap supply charged) and the
+body diode carries the rest of each discharge. That is the first case above, and it biases `L`
+upward, by an estimated 1–1.6 %. `measure-coil l0 sync` (buck only) turns sync rectification on
+whenever the backflow switch closes, as `ls` does, whatever the paranoia setting; on the converter
+model it read 50.83 µH for a 51.00 µH coil where the default read 51.29 µH. The sweep header records
+the regime: `rect=sync` or `rect=LSmin+diode`.
 A reverse-current notch does not occur in either regime. The oscillation of `L` in a fine duty
 sweep is the switch-node ring of §7, not SR timing.
 

@@ -37,6 +37,9 @@
 //                              # mc-boost-virt: the firmware task with Iin computed from Iout: refused
 //                              # mc-flat-trip-late: a shutdown after 20 DCM rows: fitted, nothing for coil.conf
 //                              # mc-flat-ring: mc-flat with flat's switch-node ring on: the clean run writes L
+//                              # mc-flat-sync: mc-flat-ring as `l0 sync`: LS window opens, no reverse current, off after
+//                              # mc-boost-weakpump: a gate pump that needs > 8.6 % LS duty (fry 11-26): the ramp closes it;
+//                              #   -old: the fixed 7.8 % probe duty aborts
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
@@ -203,6 +206,7 @@
 //     SIM_BMS_GAP=t,len[,t2,len2]  SIM_BMS=ibat_phase,cell_phase,lag (lag 1: ibat one frame late)  SIM_BASE_A=A  SIM_T
 //     SIM_TR  SIM_PACK_RP=x (scales the pack's polarization, lfp_pack.h topOfCharge())
 //     SIM_CLOUD=t,len,light,ramp_s  (cv-hold-* but -day: one cloud on both units, light 0..1, linear edges)
+//     SIM_IBAT_NOISE=A (alternating +-A on the BMS ibat frames)  SIM_CELL_DT=s[,s..][@t] (cell frame intervals from t)
 //
 #include <algorithm>
 #include <cmath>
@@ -2290,17 +2294,27 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
     printf("  measure: boost fsw %.0f Hz pwmMax %u band %d..%d step %d Vin %.2f Vout %.2f\n", fsw, pwmMax, lo, hi, step,
            vin0, vout0);
     mppt.bflow.enable(true);
-    const auto hPre = (uint16_t) std::max(2, std::min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8));
+    // SIM_MC_PRE=old: the fixed probe duty of cb342b34 (one 2 us LS pulse per period) in place of the ramp
+    const bool preOld = getenv("SIM_MC_PRE") && !strcmp(getenv("SIM_MC_PRE"), "old");
+    const int hTop = converter.pwmCtrlMax / 5;
     auto up = [] { return sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3; };
-    if (!up()) mppt.setManualTarget(hPre);
+    int hPre = 0;
+    if (preOld && !up()) mppt.setManualTarget(hPre = std::max(2, std::min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8)));
     const double tPre = tNow();
     g_vconv.takeIinMax(), g_preImax = g_preIewm = 0, g_tickHook = [] {
         g_preImax = std::max(g_preImax, g_vconv.takeIinMax()), g_preIewm = std::max(g_preIewm, sensors.Iin->ewm.avg.get());
     };
-    for (const double dl = tNow() + 3; !up() && tNow() < dl && wait(0.02);) {}
+    float v = INFINITY;
+    for (const double dl = tNow() + 3; !up() && tNow() < dl;) { // mirrors sweepL0()
+        const float vo = sensors.Vout->ewm.avg.get();
+        if (!preOld && hPre < hTop && !(vo > v + 0.25f)) mppt.setManualTarget(hPre = std::min(hTop, hPre + std::max(1, hTop / 50)));
+        v = vo;
+        if (!wait(0.02)) break;
+    }
     g_tickHook = nullptr;
-    printf("  measure: precharge at duty %u: Vout %.2f after %.3f s, plant Iin max %.2f A, Iin ewm max %.2f A\n", hPre,
-           sensors.Vout->ewm.avg.get(), tNow() - tPre, g_preImax, g_preIewm);
+    printf("  measure: precharge %s to duty %d (%u reached): Vout %.2f after %.3f s, plant Iin max %.2f A, Iin ewm max %.2f A\n",
+           preOld ? "fixed" : "ramp", hPre, converter.getCtrlOnPwmCnt(), sensors.Vout->ewm.avg.get(), tNow() - tPre,
+           g_preImax, g_preIewm);
     if (!up() || tripped) {
         printf("  measure: Vout %.2f did not follow Vin %.2f\n", sensors.Vout->ewm.avg.get(), sensors.Vin->ewm.avg.get());
         stop = "Vout did not follow";
@@ -2386,6 +2400,8 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
 // mc-boost-virt: the firmware task (not the replica above) with a physical HV shunt and Iin computed from it: refused.
 // All start from the night state: C_in and the string at 6.85 V, the battery behind its open backflow switch (in_bf), whose
 // gate pump runs only while the converter switches. mc-boost-bfopen: that switch stuck open, the start must abort.
+// mc-boost-weakpump: a pump that needs an LS duty above ~8.6 % (in_bf_iq 20 mA, SIM_BF_IQ), as fry on 11-26: the ramp
+//   closes the switch; -old: the fixed 7.8 % probe duty of cb342b34 never does and aborts.
 static float g_mcVinOfs[2] = {0, 0};
 static int runMcBoostVirt(const std::string &name);
 static int runMcBoost(const std::string &name) {
@@ -2423,7 +2439,7 @@ static int runMcBoost(const std::string &name) {
            " Ipk up to %.2f A (plant %.2f), Vout max %.2f V, Iin max %.2f A, stop: %s, %.0f s\n", name.c_str(), r.L * 1e6f,
            lPlant * 1e6f, g_mcIpkMean, (r.L / lPlant - 1) * 100, r.k * 100, r.kse * 100, -k * 100, r.n,
            r.f > 0 ? "fit" : "none", g_mcIpk, g_mcIpkPlant, g_mcVmax, g_mcImax, stop.c_str(), secs);
-    if (name == "mc-boost-bfopen") { // the backflow switch never conducts: the start aborts, nothing reaches the output
+    if (name == "mc-boost-bfopen" || name == "mc-boost-weakpump-old") { // the switch does not conduct: the start aborts
         chk(stop == "Vout did not follow", "aborted at the start");
         chk(g_mcVmax < 26.6f && g_mcImax < 2.f, "Vout below Vin, Iin < 2 A");
         chk(g_trips.size() == trips0, "no protection trip");
@@ -2468,7 +2484,8 @@ static struct {
     int wrapN, wrapSkip; // reverse ticks done, ticks since the 2^32 skip (inject 11)
     uint32_t taskLsWrites; // LS driver writes from the task (outside the RT ticks), inject 12
     uint32_t offTicks, backoffTicks, closedTicks, srTicks, restartTicks, pinTicks, rowsAfter;
-    uint16_t lastCtrl;
+    uint16_t lastCtrl, srLsMax; // srLsMax: widest LS count with sync rect on and BF closed
+    float srIoMin;               // min plant cycle-mean Iout under that LS window
     double tPub, tInject = -1, tAbort = -1;
     float L = NAN;
     int pts = -1;
@@ -2579,6 +2596,10 @@ static void mcTick() {
     const bool bf = mppt.bflow.state(), off = converter.disabled();
     g_mc.offTicks += off && bf, g_mc.backoffTicks += mppt.inBackoff() && bf, g_mc.closedTicks += bf && !off;
     g_mc.srTicks += bf && !off && converter.syncRectEnabled_();
+    if (bf && !off && converter.syncRectEnabled_() &&
+        converter.getRectOnPwmCnt() > converter.getRectOnPwmMin() + converter.pwmMaxDriver() / 64)
+        g_mc.srLsMax = std::max(g_mc.srLsMax, converter.getRectOnPwmCnt()),
+        g_mc.srIoMin = std::min(g_mc.srIoMin, g_vconv.getIoutAvg());
     if (!off && converter.inDCM())
         g_mc.ipkPl = std::max(g_mc.ipkPl, (float) ((g_vconv.getVin() - g_vconv.getVout()) * converter.getCtrlOnPwmCnt() /
                                               converter.periodCounts() / (converter.realizedFreqHz() * g_vconv.getL())));
@@ -2739,7 +2760,7 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
                tNow() - tEnter);
     }
     g_tickHook = mcTick, g_simDelayHook = simDelay, g_simRunTasks = true, g_simLsCommitHook = mcLsCommitHook;
-    const bool started = measureCoilStart(ls, false, 0, 0);
+    const bool started = measureCoilStart(ls, false, 0, 0, 0, sc == "mc-flat-sync");
     g_tickHook = nullptr, g_simDelayHook = nullptr, g_simRunTasks = false, g_simLsCommitHook = nullptr;
     uint16_t plantHi = 0; // plant HS/LS counts with the converter off after the task
     for (int k = 0; k < 100; ++k) {
@@ -2776,6 +2797,14 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
         chk(g_mc.pts >= coilfit::kMinFitPts && strstr(g_mc.why, "aborted"), "the aborted sweep still fitted its rows");
     printf("== %s: coil.conf %s%.2f uH%s%s\n", name.c_str(), g_mc.persist ? "" : "refused (", g_mc.Lp * 1e6f,
            g_mc.persist ? "" : "): ", g_mc.why);
+    if (sc == "mc-flat-sync") {
+        printf("== %s: sync LS window up to %u counts, min plant Iout under it %.3f A\n", name.c_str(), g_mc.srLsMax, g_mc.srIoMin);
+        chk(g_mc.srTicks > 0 && g_mc.srLsMax > 0, "sync rect on and its LS window opened while the BF is closed");
+        chk(g_mc.srIoMin > -0.05f, "no reverse output current under the sync LS window");
+        chk(!mppt.mcSyncRect.load() && !converter.syncRectEnabled_(), "sync rect off after the run");
+        chk(g_trips.size() == trips0, "no protection trip");
+        chk(g_mc.persist && fabsf(g_mc.Lp / g_vconv.getL() - 1) < 0.03f, "uncorrected L for coil.conf within 3 %");
+    } else if (!ls && mppt.limits.reverse_current_paranoia) chk(!g_mc.srTicks, "l0 without sync (paranoia on): no sync rect");
     if (sc == "mc-flat-ring") // the plant rings: the fit states its error, a clean run is written
         chk(g_mc.persist && fabsf(g_mc.Lp / g_vconv.getL() - 1) < 0.03f, "clean run: uncorrected L for coil.conf within 3 %");
     if (g_mc.inject == 1 || g_mc.inject == 2 || g_mc.inject == 7) chk(!g_mc.reqKept, "the shutdown cancelled the request");
@@ -4195,6 +4224,17 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     if (const char *e = getenv("SIM_LOAD")) sscanf(e, "%f,%f,%f,%f", T.load, T.load + 1, T.load + 2, T.load + 3);
     if (const char *e = getenv("SIM_BMS_GAP")) sscanf(e, "%lf,%lf,%lf,%lf", T.gap, T.gap + 1, T.gap + 2, T.gap + 3);
     if (const char *e = getenv("SIM_REBOOT_AT")) rebootAt = atof(e);
+    if (const char *e = getenv("SIM_IBAT_NOISE")) T.bms.noiseI = atof(e);
+    static float cellDt[8];
+    if (const char *e = getenv("SIM_CELL_DT")) { // s[,s..][@t]: cell frame intervals (cycled) from t (default 0)
+        int n = 0;
+        for (char *q = (char *) e; n < 8 && *q && *q != '@';) {
+            cellDt[n++] = strtof(q, &q);
+            if (*q == ',') ++q;
+        }
+        if (const char *at = strchr(e, '@')) T.bms.tC2 = atof(at + 1);
+        T.bms.cycC2 = cellDt, T.bms.nCyc2 = n;
+    }
     if (const char *e = getenv("SIM_BMS")) {
         int lag = 0;
         sscanf(e, "%f,%f,%d", &T.bms.phaseI, &T.bms.phaseC, &lag);
@@ -4546,7 +4586,7 @@ static int simMain(int argc, char **argv) {
     }
     const bool dcd = sc.rfind("dcd-", 0) == 0, dcdFry = dcd && sc.size() > 4 && !sc.compare(sc.size() - 4, 4, "-fry");
     if (dcdFry) setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
-    if (sc == "mc-flat-ring") setenv("SIM_RING", "flat", 0);
+    if (sc == "mc-flat-ring" || sc == "mc-flat-sync") setenv("SIM_RING", "flat", 0);
     const bool flatTake = sc == "bf-daily-flat" || sc.rfind("mc-flat", 0) == 0 || sc.rfind("bf-flat-ccm", 0) == 0 ||
                           (dcd && !dcdFry);
     if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
@@ -4685,6 +4725,8 @@ static int simMain(int argc, char **argv) {
         ov = {{"pv_isc", "200"}, {"pv_voc", "26.6"}, {"pv_k", "0.95"}, {"v_bat", "0"}, {"r_bat", "207.5e3"}, {"plant_c_in", "470e-6"},
               {"plant_c_out", "1.2e-3"}, {"out_d_i0", "2.3e-8"}, {"out_d_vt", "4.45"}, {"noise_iin", "0.02"}, {"noise_vin", "0.02"},
               {"noise_vout", "0.05"}, {"in_bf", "1"}, {"bflow_stuck", sc == "mc-boost-bfopen" ? "1" : "0"}};
+    if (sc.rfind("mc-boost-weakpump", 0) == 0) ov.push_back({"in_bf_iq", getenv("SIM_BF_IQ") ? getenv("SIM_BF_IQ") : "20e-3"});
+    if (sc == "mc-boost-weakpump-old") setenv("SIM_MC_PRE", "old", 1);
     g_batAuto = sc.rfind("bat-auto", 0) == 0;
     if (const char *e = getenv("SIM_MC_TON")) ov.push_back({"t_on_ofs", e});
     boot(ov, p0);

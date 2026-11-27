@@ -1,0 +1,327 @@
+2026-11-23 13:36:26,710     flat: I (3395828) main: received serial command: 'measure-coil'
+2026-11-23 13:50:48,800     flat: I (408357) main: received serial command: 'measure-coil'
+2026-11-23 18:28:05,247      fry: I (1112533) main: received serial command: 'measure-coil'
+2026-11-23 18:55:54,967      fry: I (2782240) main: received serial command: 'measure-coil'
+2026-11-23 18:56:00,190      fry: I (2787462) main: received serial command: 'measure-coil'
+2026-11-23 18:57:20,523      fry: I (2867843) main: received serial command: 'measure-coil'
+2026-11-24 11:52:24,922     flat: I (67108) main: received serial command: 'measure-coil l0'
+2026-11-24 11:52:25,031     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 445..1602 step 24  Vin=61.08 Vout=26.49 M=0.434
+2026-11-24 11:53:16,850     flat: measure-coil: L = 49.74 uH  (ring fit, 35 DCM pts, Iout>=0.40A, +-0.3% noise +-1.4% syst; ring 323 kHz = 4.9 nF node C, ripple +-7%, 3.7 periods; median of points 50.37 uH)
+2026-11-24 11:53:16,948     flat: measure-coil: Iout zero +0.002/+0.002 A (off, before/after), subtracted
+2026-11-24 11:53:16,948     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.3A 48.54uH+-0.6/4.8% | 3.4-4.3A 49.80uH+-0.5/3.2% | 4.3-5.0A 50.08uH+-0.5/2.3% | 5.1-5.7A 50.45uH+-0.5/1.9%
+2026-11-24 11:53:16,949     flat: measure-coil: L(Ipk) slope +1.51 +-0.30 %/A over 2.5-5.7 A, Iout/on-time offsets add up to +-1.30: coil -0.39..+3.41 %/A, drop <= 0.4 %/A
+2026-11-24 11:53:16,950     flat: measure-coil: done, mode restored
+2026-11-24 12:19:25,103     flat: I (64554) main: received serial command: 'measure-coil l0'
+2026-11-24 12:19:25,183     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 455..1636 step 25  Vin=58.96 Vout=26.12 M=0.443
+2026-11-24 12:20:31,120     flat: measure-coil: L = 48.35 uH  (median of 48 DCM pts, Iout>=0.26A; ring not resolved: no periodic term, expect up to +-5%)
+2026-11-24 12:20:31,126     flat: measure-coil: Iout zero +0.000/-0.000 A (off, before/after), subtracted
+2026-11-24 12:20:31,138     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.3A 47.78uH+-1.7/2.9% | 3.4-3.6A 46.27uH+-1.5/1.3% | 3.6-3.8A 48.64uH+-1.7/1.5% | 3.9-4.2A 49.18uH+-1.6/1.7% | 4.2-4.4A 52.35uH+-1.7/1.5%
+2026-11-24 12:20:31,156     flat: measure-coil: L(Ipk) slope +9.59 +-6.25 %/A over 2.5-4.4 A, Iout/on-time offsets add up to +-1.36: coil -4.26..+23.44 %/A, drop <= 4.3 %/A
+2026-11-24 12:20:31,226     flat: measure-coil: done, mode restored
+2026-11-24 12:29:55,780     flat: I (103471) main: received serial command: 'measure-coil'
+2026-11-24 12:33:44,646     flat: I (332338) main: received serial command: 'measure-coil'
+2026-11-24 12:33:47,820     flat: I (335511) main: received serial command: 'measure-coil'
+2026-11-24 12:41:17,339     flat: I (148125) main: received serial command: 'measure-coil l0'
+2026-11-24 12:42:30,959     flat: I (221746) main: received serial command: 'measure-coil l0'
+2026-11-24 12:42:30,972     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 392..1411 step 21  Vin=69.85 Vout=26.69 M=0.382
+2026-11-24 12:43:19,002     flat: measure-coil: L = 49.50 uH  (ring fit, 30 DCM pts, Iout>=0.41A, +-0.4% noise +-1.6% syst; ring 324 kHz = 4.9 nF node C, ripple +-7%, 3.1 periods; median of points 49.23 uH)
+2026-11-24 12:43:19,008     flat: measure-coil: Iout zero -0.004/-0.001 A (off, before/after), subtracted
+2026-11-24 12:43:19,085     flat: measure-coil: L(Ipk) slope +1.74 +-0.42 %/A over 2.7-5.6 A, Iout/on-time offsets add up to +-1.46: coil -0.56..+4.03 %/A, drop <= 0.6 %/A
+2026-11-24 12:43:19,085     flat: measure-coil: L(Ipk), +-noise/offsets: 2.7-3.6A 48.60uH+-0.6/5.0% | 3.7-4.7A 49.68uH+-0.6/3.3% | 4.7-5.6A 50.26uH+-0.5/2.4%
+2026-11-24 12:43:19,087     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 13:24:11,363     flat: I (2722059) main: received serial command: 'measure-coil l0'
+2026-11-24 13:24:11,873     flat: I (2722565) main: received serial command: 'measure-coil l0'
+2026-11-24 13:32:59,182     flat: I (3249870) main: received serial command: 'measure-coil l0'
+2026-11-24 13:32:59,538     flat: I (3250231) main: received serial command: 'measure-coil l0'
+2026-11-24 13:33:00,921     flat: I (3251626) main: received serial command: 'measure-coil l0'
+2026-11-24 13:33:02,200     flat: I (3252840) main: received serial command: 'measure-coil l0'
+2026-11-24 13:33:03,481     flat: I (3254171) main: received serial command: 'measure-coil l0'
+2026-11-24 13:33:04,861     flat: I (3255504) main: received serial command: 'measure-coil l0'
+2026-11-24 13:33:04,963     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 394..1420 step 21  Vin=70.01 Vout=26.92 M=0.384
+2026-11-24 13:33:52,839     flat: measure-coil: L = 49.50 uH  (ring fit, 30 DCM pts, Iout>=0.40A, +-0.4% noise +-1.6% syst; ring 325 kHz = 4.9 nF node C, ripple +-7%, 3.1 periods; median of points 49.11 uH)
+2026-11-24 13:33:52,941     flat: measure-coil: Iout zero -0.004/-0.002 A (off, before/after), subtracted
+2026-11-24 13:33:52,942     flat: measure-coil: L(Ipk) slope +1.68 +-0.45 %/A over 2.7-5.6 A, Iout/on-time offsets add up to +-1.45: coil -0.67..+4.03 %/A, drop <= 0.7 %/A
+2026-11-24 13:33:52,942     flat: measure-coil: L(Ipk), +-noise/offsets: 2.7-3.6A 48.60uH+-0.7/5.0% | 3.7-4.6A 49.74uH+-0.6/3.2% | 4.7-5.6A 50.19uH+-0.6/2.4%
+2026-11-24 13:33:52,943     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 13:45:28,793      fry: I (4237475) main: received serial command: 'measure-coil'
+2026-11-24 13:45:37,707     flat: I (4008339) main: received serial command: 'measure-coil l0'
+2026-11-24 13:45:38,217     flat: I (4008860) main: received serial command: 'measure-coil l0'
+2026-11-24 13:45:38,322     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 401..1442 step 22  Vin=68.72 Vout=26.84 M=0.391
+2026-11-24 13:46:28,799     flat: measure-coil: L = 49.49 uH  (ring fit, 32 DCM pts, Iout>=0.41A, +-0.3% noise +-1.5% syst; ring 323 kHz = 4.9 nF node C, ripple +-7%, 3.3 periods; median of points 49.25 uH)
+2026-11-24 13:46:28,903     flat: measure-coil: Iout zero -0.004/-0.006 A (off, before/after), subtracted
+2026-11-24 13:46:28,903     flat: measure-coil: L(Ipk), +-noise/offsets: 2.6-3.4A 48.43uH+-0.6/5.0% | 3.5-4.2A 49.37uH+-0.5/3.5% | 4.3-5.0A 50.13uH+-0.5/2.6% | 5.1-5.7A 50.08uH+-0.4/2.1%
+2026-11-24 13:46:28,904     flat: measure-coil: L(Ipk) slope +1.56 +-0.33 %/A over 2.6-5.7 A, Iout/on-time offsets add up to +-1.33: coil -0.42..+3.54 %/A, drop <= 0.4 %/A
+2026-11-24 13:46:28,904     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 13:55:31,933      fry: I (470736) main: received serial command: 'measure-coil l0'
+2026-11-24 13:55:32,343      fry: I (471146) main: received serial command: 'measure-coil l0'
+2026-11-24 13:55:32,441      fry: measure-coil L0: fsw=39000 pwmMax=4103 band 374..1345 step 20  Vin=73.51 Vout=26.78 M=0.364
+2026-11-24 13:56:09,100     flat: I (4639833) main: received serial command: 'measure-coil l0'
+2026-11-24 13:56:09,510     flat: I (4640243) main: received serial command: 'measure-coil l0'
+2026-11-24 13:56:09,611     flat: measure-coil L0: fsw=39000 pwmMax=4103 band 409..1474 step 22  Vin=66.91 Vout=26.71 M=0.399
+2026-11-24 13:56:39,958      fry: measure-coil: L = 76.18 uH  (ring fit, 45 DCM pts, Iout>=0.26A, +-0.8% noise +-2.4% syst; ring 254 kHz = 5.2 nF node C, ripple +-12%, 2.5 periods; median of points 76.35 uH)
+2026-11-24 13:56:39,959      fry: measure-coil: Iout zero -0.001/+0.001 A (off, before/after), subtracted
+2026-11-24 13:56:39,959      fry: measure-coil: L(Ipk) slope +2.22 +-3.85 %/A over 1.8-3.7 A, Iout/on-time offsets add up to +-3.02: coil -8.51..+12.95 %/A, drop <= 8.5 %/A
+2026-11-24 13:56:39,959      fry: measure-coil: L(Ipk), +-noise/offsets: 1.8-2.7A 75.26uH+-1.2/5.7% | 2.8-3.3A 75.42uH+-1.1/3.1% | 3.4-3.7A 77.92uH+-1.2/2.5%
+2026-11-24 13:56:39,960      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 13:57:16,779     flat: measure-coil: L = 49.84 uH  (ring fit, 46 DCM pts, Iout>=0.39A, +-0.3% noise +-1.3% syst; ring 321 kHz = 4.9 nF node C, ripple +-7%, 3.8 periods; median of points 50.39 uH)
+2026-11-24 13:57:16,787     flat: measure-coil: Iout zero +0.003/+0.003 A (off, before/after), subtracted
+2026-11-24 13:57:16,787     flat: measure-coil: L(Ipk) slope +2.16 +-0.29 %/A over 2.5-5.5 A, Iout/on-time offsets add up to +-1.46: coil +0.12..+4.20 %/A, no drop resolved
+2026-11-24 13:57:16,787     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.5A 48.46uH+-0.6/4.7% | 3.6-4.5A 49.87uH+-0.4/2.9% | 4.6-5.1A 50.18uH+-0.4/2.1% | 5.2-5.5A 50.83uH+-0.4/1.6%
+2026-11-24 13:57:16,887     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 16:13:12,360     flat: I (2774099) main: received serial command: 'measure-coil l0'
+2026-11-24 16:13:14,093     flat: I (2775762) main: received serial command: 'measure-coil l0'
+2026-11-24 16:13:14,198     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 387..1393 step 21  Vin=70.19 Vout=26.47 M=0.377
+2026-11-24 16:14:05,931     flat: measure-coil: L = 49.67 uH  (ring fit, 34 DCM pts, Iout>=0.41A, +-0.5% noise +-1.6% syst; ring 323 kHz = 4.9 nF node C, ripple +-7%, 3.5 periods; median of points 50.04 uH)
+2026-11-24 16:14:06,010     flat: measure-coil: Iout zero -0.043/-0.055 A (off, before/after), subtracted
+2026-11-24 16:14:06,018     flat: measure-coil: L(Ipk) slope +1.08 +-0.41 %/A over 2.6-5.8 A, Iout/on-time offsets add up to +-1.45: coil -1.19..+3.35 %/A, drop <= 1.2 %/A
+2026-11-24 16:14:06,018     flat: measure-coil: L(Ipk), +-noise/offsets: 2.6-3.4A 48.55uH+-1.0/5.6% | 3.5-4.4A 50.10uH+-0.7/3.7% | 4.4-5.1A 49.93uH+-0.7/2.8% | 5.2-5.8A 50.03uH+-0.6/2.2%
+2026-11-24 16:14:06,019     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 16:14:51,175     flat: I (2872915) main: received serial command: 'measure-coil l0'
+2026-11-24 16:14:51,476     flat: I (2873145) main: received serial command: 'measure-coil l0'
+2026-11-24 16:14:51,582     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 413..1488 step 22  Vin=65.39 Vout=26.35 M=0.403
+2026-11-24 16:15:36,940     flat: measure-coil: L = 49.20 uH  (ring fit, 28 DCM pts, Iout>=0.41A, +-0.4% noise +-1.6% syst; ring 304 kHz = 5.6 nF node C, ripple +-7%, 3.0 periods; median of points 49.21 uH)
+2026-11-24 16:15:36,952     flat: measure-coil: Iout zero +0.003/+0.005 A (off, before/after), subtracted
+2026-11-24 16:15:36,952     flat: measure-coil: L(Ipk) slope +1.98 +-0.42 %/A over 2.5-5.6 A, Iout/on-time offsets add up to +-1.42: coil -0.27..+4.23 %/A, drop <= 0.3 %/A
+2026-11-24 16:15:36,952     flat: measure-coil: L(Ipk), +-noise/offsets: 2.5-3.4A 48.04uH+-0.7/5.1% | 3.5-4.3A 49.44uH+-0.6/3.4% | 4.5-5.6A 50.08uH+-0.6/2.4%
+2026-11-24 16:15:36,952     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 21:41:39,309      fry: I (26633) main: received serial command: 'measure-coil l0'
+2026-11-24 21:41:39,320      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 685..2465 step 37  Vin=26.59 Vout=6.86 M=0.258 boost
+2026-11-24 21:41:42,367      fry: measure-coil: Vout 7.08 did not follow Vin 26.59 with the backflow switch on
+2026-11-24 21:41:42,376      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 21:42:20,270      fry: I (67593) main: received serial command: 'measure-coil l0'
+2026-11-24 21:42:32,559      fry: I (79880) main: received serial command: 'measure-coil l0'
+2026-11-24 21:42:32,574      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 685..2465 step 37  Vin=26.59 Vout=28.08 M=1.056 boost
+2026-11-24 21:43:41,080      fry: measure-coil: L = 74.69 uH  (ring fit, 38 DCM pts, Iin>=0.50A, +-0.5% noise +-1.0% syst; ring 248 kHz = 5.5 nF node C, ripple +-11%, 3.1 periods; median of points 73.18 uH)
+2026-11-24 21:43:41,086      fry: measure-coil: Iin zero +0.005/-0.010 A (off, before/after), subtracted
+2026-11-24 21:43:41,153      fry: measure-coil: L(Ipk) slope -0.98 +-0.34 %/A over 2.2-5.4 A, Iout/on-time offsets add up to +-0.72: coil -2.39..+0.42 %/A, drop <= 2.4 %/A
+2026-11-24 21:43:41,153      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.1A 75.55uH+-0.9/3.0% | 3.2-4.3A 74.74uH+-0.6/1.8% | 4.3-5.4A 73.87uH+-0.5/1.3%
+2026-11-24 21:43:41,154      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 21:44:05,433      fry: I (172756) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-24 21:44:05,443      fry: measure-coil L0: fsw=21500 pwmMax=7442 band 1242..4472 step 68  Vin=26.59 Vout=26.38 M=0.992 boost
+2026-11-24 21:45:00,849      fry: measure-coil: L = 73.76 uH  (ring fit, 29 DCM pts, Iin>=0.66A, +-0.3% noise +-0.7% syst; ring 250 kHz = 5.5 nF node C, ripple +-6%, 4.3 periods; median of points 73.61 uH)
+2026-11-24 21:45:00,861      fry: measure-coil: Iin zero +0.005/-0.011 A (off, before/after), subtracted
+2026-11-24 21:45:00,927      fry: measure-coil: L(Ipk) slope -0.69 +-0.12 %/A over 4.0-8.4 A, Iout/on-time offsets add up to +-0.20: coil -1.12..-0.26 %/A, drop <= 1.1 %/A
+2026-11-24 21:45:00,927      fry: measure-coil: L(Ipk), +-noise/offsets: 4.0-4.9A 74.63uH+-0.6/1.4% | 5.0-6.0A 74.12uH+-0.4/1.1% | 6.2-7.1A 73.59uH+-0.3/0.8% | 7.3-8.4A 72.86uH+-0.2/0.7%
+2026-11-24 21:45:00,927      fry: measure-coil: fsw restored to 39000 Hz
+2026-11-24 21:45:00,928      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 21:51:55,043     flat: I (93132) main: received serial command: 'measure-coil l0'
+2026-11-24 21:51:55,132     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 685..2466 step 37  Vin=26.57 Vout=25.76 M=0.969 boost
+2026-11-24 21:52:59,045     flat: measure-coil: L = 48.83 uH  (ring fit, 33 DCM pts, Iin>=0.74A, +-0.5% noise +-0.9% syst; ring 319 kHz = 5.1 nF node C, ripple +-8%, 3.6 periods; median of points 49.00 uH)
+2026-11-24 21:52:59,051     flat: measure-coil: Iin zero -0.000/+0.006 A (off, before/after), subtracted
+2026-11-24 21:52:59,114     flat: measure-coil: L(Ipk), +-noise/offsets: 3.6-4.5A 50.00uH+-1.0/2.1% | 4.6-5.5A 49.04uH+-1.0/1.6% | 5.7-6.7A 48.26uH+-0.9/1.2% | 6.7-7.9A 48.13uH+-0.9/1.0%
+2026-11-24 21:52:59,135     flat: measure-coil: L(Ipk) slope -1.11 +-0.36 %/A over 3.6-7.9 A, Iout/on-time offsets add up to +-0.29: coil -2.14..-0.09 %/A, drop <= 2.1 %/A
+2026-11-24 21:52:59,136     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 21:53:45,729     flat: I (203818) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-24 21:53:45,742     flat: measure-coil L0: fsw=21500 pwmMax=7442 band 1243..4474 step 68  Vin=26.57 Vout=25.65 M=0.965 boost
+2026-11-24 21:54:41,964     flat: measure-coil: L = 48.60 uH  (ring fit, 30 DCM pts, Iin>=1.08A, +-0.3% noise +-0.7% syst; ring 325 kHz = 4.9 nF node C, ripple +-3%, 6.1 periods; median of points 48.69 uH)
+2026-11-24 21:54:41,969     flat: measure-coil: Iin zero +0.002/+0.008 A (off, before/after), subtracted
+2026-11-24 21:54:42,051     flat: measure-coil: L(Ipk) slope -0.42 +-0.12 %/A over 6.0-12.9 A, Iout/on-time offsets add up to +-0.09: coil -0.76..-0.09 %/A, drop <= 0.8 %/A
+2026-11-24 21:54:42,051     flat: measure-coil: L(Ipk), +-noise/offsets: 6.0-7.1A 49.10uH+-0.6/1.1% | 7.4-8.6A 48.87uH+-0.6/0.9% | 8.9-10.0A 48.63uH+-0.6/0.7% | 10.2-11.5A 48.36uH+-0.6/0.6% | 11.8-12.9A 48.04uH+-0.6/0.5%
+2026-11-24 21:54:42,052     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 21:54:42,052     flat: measure-coil: fsw restored to 39000 Hz
+2026-11-24 23:47:51,412      fry: I (66264) main: received serial command: 'measure-coil l0'
+2026-11-24 23:47:51,422      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 684..2464 step 37  Vin=26.62 Vout=6.88 M=0.259 boost
+2026-11-24 23:49:02,283      fry: measure-coil: L = 74.56 uH  (ring fit, 39 DCM pts, Iin>=0.51A, +-0.5% noise +-1.0% syst; ring 249 kHz = 5.5 nF node C, ripple +-11%, 3.2 periods; median of points 73.71 uH)
+2026-11-24 23:49:02,298      fry: measure-coil: Iin zero +0.006/-0.009 A (off, before/after), subtracted
+2026-11-24 23:49:02,298      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.2A 75.43uH+-0.8/2.9% | 3.3-4.4A 74.54uH+-0.6/1.8% | 4.4-5.5A 73.73uH+-0.5/1.2%
+2026-11-24 23:49:02,376      fry: measure-coil: L(Ipk) slope -0.96 +-0.34 %/A over 2.2-5.5 A, Iout/on-time offsets add up to +-0.71: coil -2.35..+0.44 %/A, drop <= 2.3 %/A
+2026-11-24 23:49:02,377      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-24 23:56:01,602     flat: I (66286) main: received serial command: 'measure-coil l0'
+2026-11-24 23:56:01,613     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 684..2464 step 37  Vin=26.62 Vout=8.47 M=0.318 boost
+2026-11-24 23:57:06,005     flat: measure-coil: L = 48.90 uH  (ring fit, 33 DCM pts, Iin>=0.74A, +-0.5% noise +-0.9% syst; ring 320 kHz = 5.1 nF node C, ripple +-8%, 3.6 periods; median of points 48.60 uH)
+2026-11-24 23:57:06,012     flat: measure-coil: Iin zero -0.000/+0.005 A (off, before/after), subtracted
+2026-11-24 23:57:06,027     flat: measure-coil: L(Ipk), +-noise/offsets: 3.6-4.5A 50.07uH+-0.9/2.2% | 4.6-5.5A 49.13uH+-0.9/1.6% | 5.7-6.7A 48.34uH+-0.8/1.2% | 6.7-7.9A 48.19uH+-0.8/1.0%
+2026-11-24 23:57:06,037     flat: measure-coil: L(Ipk) slope -1.13 +-0.33 %/A over 3.6-7.9 A, Iout/on-time offsets add up to +-0.30: coil -2.09..-0.17 %/A, drop <= 2.1 %/A
+2026-11-24 23:57:06,118     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:14:09,207      fry: I (30284614) main: received serial command: 'measure-coil l0'
+2026-11-25 08:14:09,217      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 358..1288 step 19  Vin=76.18 Vout=26.56 M=0.349
+2026-11-25 08:15:21,920      fry: measure-coil: Iout zero -0.003/-0.002 A (off, before/after), subtracted
+2026-11-25 08:15:21,920      fry: measure-coil: L = 76.47 uH  (ring fit, 40 DCM pts, Iout>=0.32A, +-0.4% noise +-1.6% syst; ring 249 kHz = 5.4 nF node C, ripple +-11%, 2.7 periods; median of points 75.02 uH)
+2026-11-25 08:15:21,921      fry: measure-coil: L(Ipk) slope +1.54 +-0.87 %/A over 2.1-4.2 A, Iout/on-time offsets add up to +-2.21: coil -2.42..+5.50 %/A, drop <= 2.4 %/A
+2026-11-25 08:15:21,921      fry: measure-coil: L(Ipk), +-noise/offsets: 2.1-3.0A 75.31uH+-0.7/5.3% | 3.0-3.8A 77.01uH+-0.6/3.3% | 3.8-4.2A 77.08uH+-0.6/2.5%
+2026-11-25 08:15:21,921      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:22:12,853     flat: I (29850043) main: received serial command: 'measure-coil l0'
+2026-11-25 08:22:12,863     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 388..1398 step 21  Vin=70.32 Vout=26.62 M=0.379
+2026-11-25 08:23:03,938     flat: measure-coil: L = 49.64 uH  (ring fit, 32 DCM pts, Iout>=0.40A, +-0.4% noise +-1.6% syst; ring 327 kHz = 4.8 nF node C, ripple +-7%, 3.3 periods; median of points 49.20 uH)
+2026-11-25 08:23:03,948     flat: measure-coil: Iout zero -0.010/-0.014 A (off, before/after), subtracted
+2026-11-25 08:23:03,948     flat: measure-coil: L(Ipk), +-noise/offsets: 2.6-3.4A 48.75uH+-0.7/5.2% | 3.5-4.2A 49.63uH+-0.6/3.6% | 4.3-5.0A 50.03uH+-0.6/2.8% | 5.1-5.7A 50.19uH+-0.5/2.2%
+2026-11-25 08:23:03,954     flat: measure-coil: L(Ipk) slope +1.32 +-0.36 %/A over 2.6-5.7 A, Iout/on-time offsets add up to +-1.38: coil -0.79..+3.42 %/A, drop <= 0.8 %/A
+2026-11-25 08:23:04,035     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:23:35,682     flat: I (29932876) main: received serial command: 'measure-coil l0 f=30000'
+2026-11-25 08:23:35,694     flat: measure-coil L0: fsw=30002 pwmMax=5333 band 513..1847 step 28  Vin=69.17 Vout=26.62 M=0.385
+2026-11-25 08:24:20,324     flat: measure-coil: L = 51.52 uH  (ring fit, 28 DCM pts, Iout>=0.43A, +-0.3% noise +-1.3% syst; ring 327 kHz = 4.6 nF node C, ripple +-4%, 3.8 periods; median of points 51.52 uH)
+2026-11-25 08:24:20,332     flat: measure-coil: Iout zero -0.014/-0.010 A (off, before/after), subtracted
+2026-11-25 08:24:20,332     flat: measure-coil: L(Ipk) slope -0.53 +-0.16 %/A over 3.0-6.7 A, Iout/on-time offsets add up to +-0.72: coil -1.58..+0.51 %/A, drop <= 1.6 %/A
+2026-11-25 08:24:20,332     flat: measure-coil: L(Ipk), +-noise/offsets: 3.0-3.9A 52.05uH+-0.5/3.9% | 4.0-4.8A 51.44uH+-0.4/2.7% | 5.0-5.8A 51.38uH+-0.3/2.1% | 5.9-6.7A 51.21uH+-0.3/1.7%
+2026-11-25 08:24:20,333     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:24:20,333     flat: measure-coil: fsw restored to 39000 Hz
+2026-11-25 08:24:41,118     flat: I (29998311) main: received serial command: 'measure-coil l0 f=22000'
+2026-11-25 08:24:41,132     flat: measure-coil L0: fsw=21999 pwmMax=7273 band 697..2511 step 38  Vin=69.38 Vout=26.61 M=0.384
+2026-11-25 08:25:15,319     flat: measure-coil: L = 49.57 uH  (ring fit, 23 DCM pts, Iout>=0.43A, +-0.3% noise +-1.1% syst; ring 330 kHz = 4.7 nF node C, ripple +-2%, 4.3 periods; median of points 49.53 uH)
+2026-11-25 08:25:15,325     flat: measure-coil: Iout zero -0.012/-0.010 A (off, before/after), subtracted
+2026-11-25 08:25:15,339     flat: measure-coil: L(Ipk), +-noise/offsets: 3.8-5.0A 49.09uH+-0.4/3.0% | 5.1-6.5A 49.72uH+-0.3/2.1% | 6.7-7.9A 49.84uH+-0.3/1.5%
+2026-11-25 08:25:15,423     flat: measure-coil: L(Ipk) slope +0.47 +-0.16 %/A over 3.8-7.9 A, Iout/on-time offsets add up to +-0.54: coil -0.39..+1.33 %/A, drop <= 0.4 %/A
+2026-11-25 08:25:15,424     flat: measure-coil: fsw restored to 39000 Hz
+2026-11-25 08:25:15,425     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:25:53,105      fry: I (30988506) main: received serial command: 'measure-coil l0'
+2026-11-25 08:25:53,118      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 353..1272 step 19  Vin=77.45 Vout=26.67 M=0.344
+2026-11-25 08:27:01,804      fry: measure-coil: L = 76.75 uH  (ring fit, 39 DCM pts, Iout>=0.37A, +-0.4% noise +-1.6% syst; ring 244 kHz = 5.5 nF node C, ripple +-10%, 2.9 periods; median of points 77.17 uH)
+2026-11-25 08:27:01,812      fry: measure-coil: Iout zero -0.003/-0.004 A (off, before/after), subtracted
+2026-11-25 08:27:01,813      fry: measure-coil: L(Ipk) slope +1.07 +-0.52 %/A over 2.2-4.7 A, Iout/on-time offsets add up to +-1.87: coil -1.85..+3.99 %/A, drop <= 1.9 %/A
+2026-11-25 08:27:01,813      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.1A 76.00uH+-0.6/5.4% | 3.2-4.0A 77.33uH+-0.5/3.4% | 4.0-4.7A 76.93uH+-0.5/2.4%
+2026-11-25 08:27:01,813      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:27:33,967      fry: I (31089364) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-25 08:27:33,979      fry: measure-coil L0: fsw=21500 pwmMax=7442 band 641..2307 step 35  Vin=77.51 Vout=26.70 M=0.344
+2026-11-25 08:27:50,551     flat: I (30187745) main: received serial command: 'measure-coil l0'
+2026-11-25 08:27:50,572     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 388..1399 step 21  Vin=70.26 Vout=26.61 M=0.379
+2026-11-25 08:28:24,506      fry: measure-coil: L = 77.46 uH  (ring fit, 31 DCM pts, Iout>=0.40A, +-0.3% noise +-1.1% syst; ring 251 kHz = 5.2 nF node C, ripple +-6%, 4.2 periods; median of points 77.45 uH)
+2026-11-25 08:28:25,711      fry: measure-coil: Iout zero -0.006/-0.003 A (off, before/after), subtracted
+2026-11-25 08:28:25,711      fry: measure-coil: L(Ipk), +-noise/offsets: 2.9-3.6A 77.13uH+-0.6/3.8% | 3.7-4.4A 77.70uH+-0.5/2.7% | 4.5-5.1A 78.11uH+-0.4/2.1% | 5.2-5.8A 77.16uH+-0.4/1.7% | 5.9-6.4A 77.24uH+-0.4/1.5%
+2026-11-25 08:28:25,712      fry: measure-coil: L(Ipk) slope -0.06 +-0.18 %/A over 2.9-6.4 A, Iout/on-time offsets add up to +-0.77: coil -1.20..+1.08 %/A, drop <= 1.2 %/A
+2026-11-25 08:28:25,712      fry: measure-coil: fsw restored to 39000 Hz
+2026-11-25 08:28:25,713      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:28:39,083     flat: measure-coil: L = 49.49 uH  (ring fit, 30 DCM pts, Iout>=0.40A, +-0.4% noise +-1.6% syst; ring 324 kHz = 4.9 nF node C, ripple +-7%, 3.1 periods; median of points 49.03 uH)
+2026-11-25 08:28:39,095     flat: measure-coil: Iout zero -0.005/-0.001 A (off, before/after), subtracted
+2026-11-25 08:28:39,095     flat: measure-coil: L(Ipk) slope +1.94 +-0.42 %/A over 2.7-5.6 A, Iout/on-time offsets add up to +-1.51: coil -0.41..+4.29 %/A, drop <= 0.4 %/A
+2026-11-25 08:28:39,095     flat: measure-coil: L(Ipk), +-noise/offsets: 2.7-3.6A 48.51uH+-0.6/5.1% | 3.7-4.7A 49.66uH+-0.6/3.3% | 4.7-5.6A 50.34uH+-0.5/2.4%
+2026-11-25 08:28:39,096     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-25 08:28:57,625      fry: I (31173026) main: received serial command: 'measure-coil l0 f=15000'
+2026-11-26 11:08:30,309     flat: I (64981) main: received serial command: 'measure-coil l0'
+2026-11-26 11:11:09,443     flat: I (224109) main: received serial command: 'measure-coil l0'
+2026-11-26 11:11:09,540     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 387..1392 step 21  Vin=69.59 Vout=26.23 M=0.377
+2026-11-26 11:12:02,476     flat: measure-coil: L = 53.40 uH on-time corrected (ring fit, 33 DCM pts, Iout>=0.40A, +-0.6% noise +-2.6% syst; ring 321 kHz = 4.6 nF node C, ripple +-7%, 3.3 periods; median of points 53.21 uH; uncorrected 48.72 uH)
+2026-11-26 11:12:02,483     flat: measure-coil: on-time offset +215 ns +-41 noise +-41 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.4x: applied
+2026-11-26 11:12:02,495     flat: measure-coil: Iout zero +0.011/+0.024 A (off, before/after), subtracted
+2026-11-26 11:12:02,549     flat: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed), +-noise/offsets: 2.4-3.2A 53.02uH+-1.1/8.0% | 3.3-4.0A 53.94uH+-0.9/5.8% | 4.2-4.7A 53.61uH+-0.8/4.5% | 4.8-5.4A 53.09uH+-0.7/3.6%
+2026-11-26 11:12:02,576     flat: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed) slope -0.13 +-0.50 %/A over 2.4-5.4 A, Iout/on-time offsets add up to +-1.93: coil -3.06..+2.81 %/A, drop <= 3.1 %/A
+2026-11-26 11:12:02,576     flat: measure-coil: L(Ipk) uncorrected slope +3.16 +-0.64 %/A over 2.6-5.5 A, Iout/on-time offsets add up to +-1.82: coil +0.06..+6.25 %/A, no drop resolved
+2026-11-26 11:12:02,576     flat: measure-coil: L(Ipk) uncorrected, +-noise/offsets: 2.6-3.4A 46.63uH+-1.1/5.6% | 3.5-4.2A 48.96uH+-0.9/3.8% | 4.3-4.9A 49.58uH+-0.9/2.9% | 4.9-5.5A 49.72uH+-0.8/2.3%
+2026-11-26 11:12:02,577     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 11:44:46,973     flat: I (172359) main: received serial command: 'measure-coil ls'
+2026-11-26 11:44:54,595     flat: measure-coil LS: HS=409 D=0.100 Vin=66.50 Vout=26.44 ideal_LS=620 auto_LS=600 sweep 320..868
+2026-11-26 11:46:14,268     flat: measure-coil: peak LS 803 (Iout_peak 0.323 A at raw argmax 803, fit failed: raw argmax)
+2026-11-26 11:46:14,368     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 11:49:36,762     flat: I (82199) main: received serial command: 'measure-coil ls'
+2026-11-26 11:49:44,357     flat: measure-coil LS: HS=403 D=0.098 Vin=67.52 Vout=26.41 ideal_LS=627 auto_LS=607 sweep 320..878
+2026-11-26 11:51:04,060     flat: measure-coil: peak LS 872 (Iout_peak 0.333 A at raw argmax 872, fit failed: raw argmax)
+2026-11-26 11:51:04,061     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:11:13,418     flat: I (36856944) main: received serial command: 'measure-coil l0'
+2026-11-26 22:11:13,432     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:11:13,432     flat: measure-coil: need Vin>Vout+1 (Vin=8.37 Vout=26.38)
+2026-11-26 22:11:54,590     flat: I (36898117) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-26 22:11:54,603     flat: measure-coil: need Vin>Vout+1 (Vin=8.36 Vout=26.39)
+2026-11-26 22:11:54,680     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:12:02,159     flat: I (36905686) main: received serial command: 'measure-coil l0 f=20000'
+2026-11-26 22:12:02,170     flat: measure-coil: need Vin>Vout+1 (Vin=8.36 Vout=26.39)
+2026-11-26 22:12:02,178     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:13:11,074     flat: I (55857) main: received serial command: 'measure-coil l0'
+2026-11-26 22:13:11,091     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 687..2473 step 38  Vin=26.41 Vout=8.36 M=0.316 boost
+2026-11-26 22:13:14,251     flat: I (59032) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-26 22:14:27,676      fry: I (38157324) main: received serial command: 'measure-coil l0'
+2026-11-26 22:14:27,677      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:14:27,677      fry: measure-coil: need Vin>Vout+1 (Vin=6.79 Vout=26.43)
+2026-11-26 22:16:33,932     flat: I (66540) main: received serial command: 'measure-coil l0'
+2026-11-26 22:16:33,995     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 687..2472 step 37  Vin=26.45 Vout=8.37 M=0.316 boost
+2026-11-26 22:17:02,619     flat: I (95227) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-26 22:17:04,969     flat: I (97578) main: received serial command: 'measure-coil l0 f=20000'
+2026-11-26 22:19:14,187      fry: I (44784) main: received serial command: 'measure-coil l0'
+2026-11-26 22:19:14,200      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 686..2471 step 37  Vin=26.47 Vout=6.81 M=0.257 boost
+2026-11-26 22:19:17,253      fry: measure-coil: Vout 7.43 did not follow Vin 26.50 with the backflow switch on, 3 s at duty 320; switch not conducting?
+2026-11-26 22:19:17,355      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:19:40,707      fry: I (71305) main: received serial command: 'measure-coil l0'
+2026-11-26 22:19:40,717      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 686..2471 step 37  Vin=26.48 Vout=6.81 M=0.257 boost
+2026-11-26 22:19:43,773      fry: measure-coil: Vout 7.44 did not follow Vin 26.50 with the backflow switch on, 3 s at duty 320; switch not conducting?
+2026-11-26 22:19:43,886      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:20:43,580      fry: I (134179) main: received serial command: 'measure-coil l0'
+2026-11-26 22:20:43,592      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 686..2470 step 37  Vin=26.48 Vout=27.93 M=1.055 boost
+2026-11-26 22:21:53,685      fry: measure-coil: L = 74.59 uH uncorrected (ring fit, 39 DCM pts, Iin>=0.51A, +-0.5% noise +-1.0% syst; ring 250 kHz = 5.5 nF node C, ripple +-11%, 3.2 periods; median of points 74.19 uH; uncorrected 74.59 uH)
+2026-11-26 22:21:53,724      fry: measure-coil: on-time offset -201 ns +-64 noise +-76 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.4x: offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf
+2026-11-26 22:21:53,725      fry: measure-coil: Iin zero +0.004/-0.009 A (off, before/after), subtracted
+2026-11-26 22:21:53,725      fry: measure-coil: L(Ipk) slope -1.06 +-0.33 %/A over 2.2-5.5 A, Iout/on-time offsets add up to +-0.71: coil -2.44..+0.32 %/A, drop <= 2.4 %/A
+2026-11-26 22:21:53,725      fry: measure-coil: L(Ipk), +-noise/offsets: 2.2-3.2A 75.56uH+-0.8/3.0% | 3.3-4.3A 74.55uH+-0.6/1.8% | 4.4-5.5A 73.69uH+-0.5/1.2%
+2026-11-26 22:21:53,725      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:22:13,496      fry: I (224094) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-26 22:22:13,590      fry: measure-coil L0: fsw=21500 pwmMax=7442 band 1245..4481 step 68  Vin=26.48 Vout=16.18 M=0.611 boost
+2026-11-26 22:23:01,610      fry: measure-coil: L = 74.15 uH uncorrected (ring fit, 27 DCM pts, Iin>=0.52A, +-0.4% noise +-0.8% syst; ring 249 kHz = 5.5 nF node C, ripple +-6%, 4.0 periods; median of points 73.91 uH; uncorrected 74.15 uH)
+2026-11-26 22:23:01,618      fry: measure-coil: Iin zero +0.004/-0.009 A (off, before/after), subtracted
+2026-11-26 22:23:01,618      fry: measure-coil: L(Ipk) slope -0.81 +-0.15 %/A over 3.3-7.4 A, Iout/on-time offsets add up to +-0.29: coil -1.40..-0.22 %/A, drop <= 1.4 %/A
+2026-11-26 22:23:01,618      fry: measure-coil: L(Ipk), +-noise/offsets: 3.3-4.1A 75.31uH+-0.7/1.8% | 4.3-5.2A 74.45uH+-0.5/1.3% | 5.3-6.3A 73.83uH+-0.3/1.0% | 6.5-7.4A 73.22uH+-0.3/0.8%
+2026-11-26 22:23:01,618      fry: measure-coil: on-time offset -305 ns +-61 noise +-110 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf
+2026-11-26 22:23:01,630      fry: measure-coil: fsw restored to 39000 Hz
+2026-11-26 22:23:01,718      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:37:32,684     flat: I (764707) main: received serial command: 'measure-coil l0'
+2026-11-26 22:37:32,735     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 686..2469 step 37  Vin=26.50 Vout=8.36 M=0.316 boost
+2026-11-26 22:38:38,469     flat: measure-coil: L = 48.89 uH uncorrected (ring fit, 34 DCM pts, Iin>=0.74A, +-0.4% noise +-0.9% syst; ring 319 kHz = 5.1 nF node C, ripple +-7%, 3.7 periods; median of points 48.15 uH; uncorrected 48.89 uH)
+2026-11-26 22:38:38,477     flat: measure-coil: Iin zero -0.000/+0.006 A (off, before/after), subtracted
+2026-11-26 22:38:38,477     flat: measure-coil: L(Ipk) slope -0.98 +-0.28 %/A over 3.6-7.9 A, Iout/on-time offsets add up to +-0.30: coil -1.83..-0.13 %/A, drop <= 1.8 %/A
+2026-11-26 22:38:38,477     flat: measure-coil: L(Ipk), +-noise/offsets: 3.6-4.5A 50.03uH+-0.8/2.2% | 4.6-5.7A 48.96uH+-0.7/1.6% | 5.7-6.6A 48.41uH+-0.7/1.2% | 6.9-7.9A 48.28uH+-0.7/1.0%
+2026-11-26 22:38:38,477     flat: measure-coil: on-time offset -329 ns +-75 noise +-82 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf
+2026-11-26 22:38:38,526     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:39:13,906     flat: I (865971) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-26 22:39:14,004     flat: measure-coil L0: fsw=21500 pwmMax=7442 band 1244..4479 step 68  Vin=26.50 Vout=9.73 M=0.367 boost
+2026-11-26 22:40:10,527     flat: measure-coil: L = 48.65 uH uncorrected (ring fit, 31 DCM pts, Iin>=1.04A, +-0.3% noise +-0.7% syst; ring 323 kHz = 5.0 nF node C, ripple +-3%, 6.2 periods; median of points 48.87 uH; uncorrected 48.65 uH)
+2026-11-26 22:40:10,583     flat: measure-coil: on-time offset -353 ns +-80 noise +-199 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf
+2026-11-26 22:40:10,584     flat: measure-coil: Iin zero +0.002/+0.008 A (off, before/after), subtracted
+2026-11-26 22:40:10,632     flat: measure-coil: L(Ipk) slope -0.46 +-0.11 %/A over 5.7-12.9 A, Iout/on-time offsets add up to +-0.10: coil -0.79..-0.13 %/A, drop <= 0.8 %/A
+2026-11-26 22:40:10,632     flat: measure-coil: L(Ipk), +-noise/offsets: 5.7-6.9A 49.54uH+-0.6/1.2% | 7.1-8.3A 48.66uH+-0.5/0.9% | 8.6-9.8A 48.83uH+-0.5/0.8% | 10.0-11.2A 48.27uH+-0.5/0.6% | 11.4-12.9A 48.09uH+-0.5/0.5%
+2026-11-26 22:40:10,633     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:40:10,633     flat: measure-coil: fsw restored to 39000 Hz
+2026-11-26 22:40:28,454     flat: I (940518) main: received serial command: 'measure-coil l0 f=20000'
+2026-11-26 22:40:28,556     flat: measure-coil L0: fsw=20000 pwmMax=8000 band 1338..4815 step 73  Vin=26.50 Vout=14.48 M=0.546 boost
+2026-11-26 22:41:20,984     flat: measure-coil: L = 48.40 uH uncorrected (ring fit, 29 DCM pts, Iin>=1.01A, +-0.2% noise +-0.7% syst; ring 325 kHz = 4.9 nF node C, ripple +-2%, 6.3 periods; median of points 48.53 uH; uncorrected 48.40 uH)
+2026-11-26 22:41:21,087     flat: measure-coil: Iin zero +0.003/+0.009 A (off, before/after), subtracted
+2026-11-26 22:41:21,087     flat: measure-coil: L(Ipk) slope -0.45 +-0.14 %/A over 6.0-13.2 A, Iout/on-time offsets add up to +-0.09: coil -0.82..-0.08 %/A, drop <= 0.8 %/A
+2026-11-26 22:41:21,087     flat: measure-coil: L(Ipk), +-noise/offsets: 6.0-7.5A 48.85uH+-0.5/1.1% | 7.7-9.3A 48.89uH+-0.4/0.8% | 9.5-11.1A 48.30uH+-0.4/0.7% | 11.4-13.2A 47.68uH+-0.4/0.5%
+2026-11-26 22:41:21,087     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-26 22:41:21,087     flat: measure-coil: fsw restored to 39000 Hz
+2026-11-26 22:41:21,087     flat: measure-coil: on-time offset -340 ns +-112 noise +-210 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf
+2026-11-26 23:18:41,236     flat: I (48519) main: received serial command: 'measure-coil l0'
+2026-11-26 23:18:41,327     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 687..2473 step 38  Vin=26.42 Vout=8.37 M=0.317 boost
+2026-11-26 23:19:46,760     flat: measure-coil: L = 49.01 uH uncorrected (ring fit, 33 DCM pts, Iin>=0.74A, +-0.4% noise +-0.9% syst; ring 319 kHz = 5.1 nF node C, ripple +-7%, 3.7 periods; median of points 49.61 uH; uncorrected 49.01 uH)
+2026-11-26 23:19:46,775     flat: measure-coil: Iin zero -0.000/+0.004 A (off, before/after), subtracted
+2026-11-26 23:19:46,775     flat: measure-coil: on-time offset -261 ns +-84 noise +-80 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: offset or error beyond +-400 ns: FAIL, the DCM model does not fit, L not for coil.conf
+2026-11-26 23:19:46,776     flat: measure-coil: L(Ipk) slope -0.86 +-0.32 %/A over 3.4-7.8 A, Iout/on-time offsets add up to +-0.33: coil -1.82..+0.10 %/A, drop <= 1.8 %/A
+2026-11-26 23:19:46,776     flat: measure-coil: L(Ipk), +-noise/offsets: 3.4-4.4A 49.85uH+-0.9/2.2% | 4.6-5.4A 49.31uH+-0.8/1.6% | 5.6-6.6A 48.49uH+-0.8/1.3% | 6.6-7.8A 48.48uH+-0.8/1.0%
+2026-11-26 23:19:46,776     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-27 10:07:17,206      fry: I (2855147) main: received serial command: 'measure-coil l0'
+2026-11-27 10:07:17,224      fry: measure-coil L0: fsw=38996 pwmMax=4103 band 358..1288 step 19  Vin=78.09 Vout=27.24 M=0.349
+2026-11-27 10:08:26,533      fry: measure-coil: L = 79.05 uH on-time corrected (ring fit, 37 DCM pts, Iout>=0.46A, +-0.4% noise +-2.9% syst; ring 246 kHz = 5.3 nF node C, ripple +-10%, 2.9 periods; median of points 79.25 uH; uncorrected 77.13 uH)
+2026-11-27 10:08:26,546      fry: measure-coil: on-time offset +67 ns +-44 noise +-60 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: applied
+2026-11-27 10:08:26,556      fry: measure-coil: Iout zero +0.003/-0.002 A (off, before/after), subtracted
+2026-11-27 10:08:26,631      fry: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed), +-noise/offsets: 2.3-3.1A 79.05uH+-0.7/8.9% | 3.2-4.0A 79.66uH+-0.6/6.1% | 4.1-5.0A 78.51uH+-0.6/4.6%
+2026-11-27 10:08:26,638      fry: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed) slope -0.19 +-0.47 %/A over 2.3-5.0 A, Iout/on-time offsets add up to +-2.33: coil -3.46..+3.09 %/A, drop <= 3.5 %/A
+2026-11-27 10:08:26,638      fry: measure-coil: L(Ipk) uncorrected slope +0.56 +-0.50 %/A over 2.3-5.0 A, Iout/on-time offsets add up to +-1.61: coil -2.04..+3.16 %/A, drop <= 2.0 %/A
+2026-11-27 10:08:26,638      fry: measure-coil: L(Ipk) uncorrected, +-noise/offsets: 2.3-3.2A 76.55uH+-0.7/5.2% | 3.3-4.1A 77.79uH+-0.7/3.4% | 4.1-5.0A 77.05uH+-0.6/2.4%
+2026-11-27 10:08:26,638      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-27 10:08:43,545      fry: I (2941374) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-27 10:08:43,545      fry: measure-coil L0: fsw=21500 pwmMax=7442 band 649..2336 step 35  Vin=77.83 Vout=27.14 M=0.349
+2026-11-27 10:09:25,642      fry: measure-coil: L = 77.31 uH on-time corrected (ring fit, 26 DCM pts, Iout>=0.41A, +-0.3% noise +-2.1% syst; ring 250 kHz = 5.3 nF node C, ripple +-6%, 3.8 periods; median of points 77.37 uH; uncorrected 77.98 uH)
+2026-11-27 10:09:25,653      fry: measure-coil: on-time offset -30 ns +-28 noise +-59 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: applied
+2026-11-27 10:09:25,716      fry: measure-coil: Iout zero -0.001/-0.002 A (off, before/after), subtracted
+2026-11-27 10:09:25,716      fry: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed) slope -0.08 +-0.18 %/A over 2.9-6.4 A, Iout/on-time offsets add up to +-1.22: coil -1.68..+1.51 %/A, drop <= 1.7 %/A
+2026-11-27 10:09:25,716      fry: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed), +-noise/offsets: 2.9-3.6A 77.04uH+-0.5/6.4% | 3.8-4.6A 77.73uH+-0.4/4.7% | 4.7-5.4A 77.54uH+-0.4/3.6% | 5.6-6.4A 76.93uH+-0.3/3.0%
+2026-11-27 10:09:25,716      fry: measure-coil: L(Ipk) uncorrected, +-noise/offsets: 2.9-3.6A 77.95uH+-0.5/3.9% | 3.7-4.6A 78.45uH+-0.4/2.7% | 4.7-5.4A 78.12uH+-0.4/2.0% | 5.5-6.4A 77.42uH+-0.3/1.6%
+2026-11-27 10:09:25,726      fry: measure-coil: L(Ipk) uncorrected slope -0.28 +-0.18 %/A over 2.9-6.4 A, Iout/on-time offsets add up to +-0.79: coil -1.42..+0.86 %/A, drop <= 1.4 %/A
+2026-11-27 10:09:25,739      fry: measure-coil: fsw restored to 39000 Hz
+2026-11-27 10:09:25,748      fry: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-27 10:10:19,608     flat: I (885663) main: received serial command: 'measure-coil l0'
+2026-11-27 10:10:19,681     flat: measure-coil L0: fsw=38996 pwmMax=4103 band 402..1447 step 22  Vin=69.22 Vout=27.13 M=0.392
+2026-11-27 10:11:07,219     flat: measure-coil: L = 50.35 uH on-time corrected (ring fit, 28 DCM pts, Iout>=0.41A, +-0.6% noise +-2.6% syst; ring 321 kHz = 4.9 nF node C, ripple +-7%, 3.0 periods; median of points 50.00 uH; uncorrected 49.95 uH)
+2026-11-27 10:11:07,232     flat: measure-coil: on-time offset +19 ns +-37 noise +-44 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.2x: applied
+2026-11-27 10:11:07,298     flat: measure-coil: Iout zero +0.000/-0.017 A (off, before/after), subtracted
+2026-11-27 10:11:07,298     flat: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed) slope -0.03 +-0.40 %/A over 2.6-5.7 A, Iout/on-time offsets add up to +-1.76: coil -2.60..+2.54 %/A, drop <= 2.6 %/A
+2026-11-27 10:11:07,298     flat: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed), +-noise/offsets: 2.6-3.5A 50.33uH+-1.1/7.8% | 3.6-4.6A 50.37uH+-0.7/5.4% | 4.7-5.7A 50.34uH+-0.5/4.0%
+2026-11-27 10:11:07,298     flat: measure-coil: L(Ipk) uncorrected, +-noise/offsets: 2.6-3.5A 49.81uH+-1.1/5.0% | 3.7-4.6A 49.98uH+-0.7/3.3% | 4.7-5.7A 50.04uH+-0.5/2.4%
+2026-11-27 10:11:07,304     flat: measure-coil: L(Ipk) uncorrected slope +0.18 +-0.41 %/A over 2.6-5.7 A, Iout/on-time offsets add up to +-1.24: coil -1.88..+2.24 %/A, drop <= 1.9 %/A
+2026-11-27 10:11:07,311     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-27 10:11:25,567     flat: I (951603) main: received serial command: 'measure-coil l0 f=21500'
+2026-11-27 10:11:25,639     flat: measure-coil L0: fsw=21500 pwmMax=7442 band 725..2611 step 40  Vin=69.40 Vout=27.06 M=0.390
+2026-11-27 10:11:56,960     flat: measure-coil: L = 51.36 uH on-time corrected (ring fit, 20 DCM pts, Iout>=0.40A, +-0.3% noise +-2.0% syst; ring 338 kHz = 4.3 nF node C, ripple +-2%, 4.0 periods; median of points 51.23 uH; uncorrected 48.34 uH)
+2026-11-27 10:11:56,971     flat: measure-coil: on-time offset +203 ns +-29 noise +-57 syst (L(Ipk) slope 0 +-0.5 %/A assumed), duty span 2.0x: applied
+2026-11-27 10:11:56,981     flat: measure-coil: Iout zero -0.014/-0.007 A (off, before/after), subtracted
+2026-11-27 10:11:56,991     flat: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed), +-noise/offsets: 3.9-4.9A 51.37uH+-0.5/5.1% | 5.1-6.3A 51.40uH+-0.3/3.7% | 6.5-7.7A 51.31uH+-0.3/2.9%
+2026-11-27 10:11:57,063     flat: measure-coil: L(Ipk) at the fitted on-time offset (slope 0 assumed) slope -0.04 +-0.16 %/A over 3.9-7.7 A, Iout/on-time offsets add up to +-0.79: coil -1.14..+1.06 %/A, drop <= 1.1 %/A
+2026-11-27 10:11:57,072     flat: measure-coil: L(Ipk) uncorrected slope +1.16 +-0.20 %/A over 4.0-7.8 A, Iout/on-time offsets add up to +-0.56: coil +0.20..+2.13 %/A, no drop resolved
+2026-11-27 10:11:57,072     flat: measure-coil: L(Ipk) uncorrected, +-noise/offsets: 4.0-5.1A 47.54uH+-0.5/2.9% | 5.3-6.5A 48.43uH+-0.4/2.0% | 6.7-7.8A 48.95uH+-0.3/1.5%
+2026-11-27 10:11:57,073     flat: measure-coil: done, manual PWM at duty 0 ('mppt' resumes tracking)
+2026-11-27 10:11:57,073     flat: measure-coil: fsw restored to 39000 Hz

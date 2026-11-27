@@ -27,6 +27,7 @@ struct MeasArgs {
     int arg1;       // L0: steps; LS: hs (0 = auto)
     uint32_t dwellMs;
     uint32_t fHz;   // L0: switching frequency for the sweep, 0 = keep
+    bool sync;      // L0 buck: sync rect (diode emulation) instead of the paranoia LS minimum
 };
 
 static std::atomic<bool> s_measureBusy{false};
@@ -189,19 +190,28 @@ static float sweepL0(const MeasArgs &a) {
     // manual PWM enables sync rect only without reverse_current_paranoia, else the LS stays at its minimum pulse
     UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f%s rect=%s",
              fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0, boost ? " boost" : "",
-             mppt.limits.reverse_current_paranoia ? "LSmin+diode" : "sync");
+             a.sync || !mppt.limits.reverse_current_paranoia ? "sync" : "LSmin+diode");
     const uint32_t zDwell = max<uint32_t>(a.dwellMs, 2000);
     if (boost) { // the battery feeds the coil through the backflow switch; the output charges to it through the HS diode
-        // the switch's gate pump runs off the bootstrap supply: switch at one refresh pulse (2 us LS) per period
+        // The switch's gate pump runs off the bootstrap (refreshed only while the LS is on) and needs a board-dependent
+        // minimum duty: fry 11-26 failed 3 s at a fixed 7.8 %, its PSU cold ramps closed it at 15-17 %. Ramp like PSU,
+        // from the minimum to 18 % (under boost-no-input's 22 %) in 1 s, then hold; no step while Vout climbs.
         mppt.bflow.enable(true);
-        const auto hPre = (uint16_t) max(2, min((int) ceilf(2e-6f * fsw * pwmMax), converter.pwmCtrlMax / 8));
+        const int hTop = converter.pwmCtrlMax / 5;
         auto up = [] { return sensors.Vout->ewm.avg.get() > sensors.Vin->ewm.avg.get() - 3.0f; };
-        if (!up()) mppt.setManualTarget(hPre);
-        for (const time_ms dl = wallClockMs() + 3000; !up() && wallClockMs() < dl && waitMs(20);) {}
+        int hPre = 0;
+        float v = INFINITY;
+        for (const time_ms dl = wallClockMs() + 3000; !up() && wallClockMs() < dl;) {
+            const float vo = sensors.Vout->ewm.avg.get();
+            if (hPre < hTop && !(vo > v + 0.25f)) mppt.setManualTarget(hPre = min(hTop, hPre + max(1, hTop / 50)));
+            v = vo;
+            if (!waitMs(20)) break;
+        }
         vout0 = sensors.Vout->ewm.avg.get();
         if (!up() || s_tripped) {
-            UART_LOG("measure-coil: Vout %.2f did not follow Vin %.2f with the backflow switch on, 3 s at duty %u; "
-                     "switch not conducting?", vout0, sensors.Vin->ewm.avg.get(), (unsigned) hPre);
+            UART_LOG("measure-coil: Vout %.2f did not follow Vin %.2f with the backflow switch on, 3 s ramping to duty "
+                     "%u (%u reached); switch not conducting?", vout0, sensors.Vin->ewm.avg.get(), (unsigned) hPre,
+                     (unsigned) converter.getCtrlOnPwmCnt());
             return NAN;
         }
     }
@@ -210,6 +220,7 @@ static float sweepL0(const MeasArgs &a) {
     // buck: BF closed once forward current flows (as MPPT closes it), by the RT loop each sample: open, its body diode
     // carries the sweep's ~2 A (highD-bflowOpen trips above 1 A) and its drop biases Vout and so L. Boost: BF stays
     // closed from above; z0 only arms the shutdown cancel
+    if (a.sync) mppt.mcSyncRect.store(true, std::memory_order_relaxed);
     mppt.mcBfZero.store(z0);
     if (boost) { // a low duty lifts Vout above Vin first: below it the coil does not reset and the duty must not climb
         mppt.setManualTarget((uint16_t) max(2, h_lo / 3));
@@ -450,13 +461,13 @@ static void measureCoilTask(void *arg) {
     vTaskDelete(nullptr);
 }
 
-bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs, uint32_t fHz) {
+bool measureCoilStart(bool ls, bool apply, int arg1, uint32_t dwellMs, uint32_t fHz, bool sync) {
     // The sweeps below snapshot pwmMax/pwmCtrlMax/pwmRectMin once and run for seconds. A dead-time
     // request that is still queued (console `dt` timed out but did not withdraw it) would land
     // mid-sweep and move all three under those copies, silently corrupting an L0 we may persist.
     if (!converter.deadTimeIdle() || !converter.pwmFreqIdle()) return false;
     if (s_measureBusy.exchange(true)) return false;
-    s_measArgs = {ls, apply, arg1, dwellMs, ls ? 0 : fHz};
+    s_measArgs = {ls, apply, arg1, dwellMs, ls ? 0 : fHz, sync && !ls};
     if (xTaskCreatePinnedToCore(measureCoilTask, "meas-coil", 6144, &s_measArgs, 1, nullptr, NON_RT_CORE) == pdPASS)
         return true;
     s_measureBusy.store(false);
