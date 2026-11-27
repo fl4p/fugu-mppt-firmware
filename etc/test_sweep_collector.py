@@ -268,6 +268,33 @@ def test_writer_retries_marks_and_rejects(tmp_path):
     w.stop()
 
 
+def test_http_error_mapping(monkeypatch):
+    import io, urllib.error
+    inf = sc.Influx("http://x", "db", "u", "p")
+    for code, exc in [(400, sc.InfluxRejected), (422, sc.InfluxRejected), (404, IOError), (413, IOError),
+                      (401, IOError), (500, IOError)]:
+        def boom(*a, code=code, **k):
+            raise urllib.error.HTTPError("http://x", code, "e", {}, io.BytesIO(b"msg"))
+        monkeypatch.setattr(sc.urllib.request, "urlopen", boom)
+        try:
+            inf.write(["m f=1 1"])
+            assert False, code
+        except Exception as e:
+            assert type(e) is exc, (code, type(e))
+
+
+def test_no_influx_does_not_mark(tmp_path):
+    arch = sc.Archive(str(tmp_path))
+    w = sc.Writer(sc._NoInflux(), arch, backoff_s=0.01)
+    w.start()
+    col, clk, _ = make(tmp_path, w)
+    for ln in FRY:
+        col.on_line("fry", ln)
+    assert wait_for(lambda: w.pending() == 0)
+    w.stop()
+    assert not list(tmp_path.glob("*.written"))
+
+
 def test_restart_requeues_unwritten(tmp_path):
     col, clk, _ = make(tmp_path)
     for ln in FRY:

@@ -195,6 +195,9 @@ def curve_lines(device, curve, base_s):
     return out
 
 
+SKIP = "skip"  # write() result: not written and not marked (--no-influx)
+
+
 class InfluxRejected(Exception):
     """Influx answered 4xx: retrying the same lines cannot succeed."""
 
@@ -212,7 +215,7 @@ class Influx:
                     raise IOError(f"influx write HTTP {r.status}")
         except urllib.error.HTTPError as e:
             body = e.read()[:200].decode("utf-8", "replace")
-            if 400 <= e.code < 500 and e.code not in (401, 403, 408, 429):
+            if e.code in (400, 422):  # bad data; 404 (no db), 413 etc. may heal: retry
                 raise InfluxRejected(f"HTTP {e.code}: {body}") from None
             raise IOError(f"HTTP {e.code}: {body}") from None
 
@@ -351,7 +354,7 @@ class Writer:
             if len(self.q) > self.max_queue:
                 old, _ = self.q.popleft()
                 log.error("write queue full: %s dropped from memory, stays unwritten in the archive "
-                          "(written on the next start or with --replay)", record_id(old))
+                          "(re-queued on a start within 7 days, else --replay)", record_id(old))
             self.cv.notify()
 
     def pending(self):
@@ -377,7 +380,11 @@ class Writer:
                     return
                 rec, lines = self.q[0]
             try:
-                self.influx.write(lines)
+                if self.influx.write(lines) == SKIP:
+                    with self.cv:
+                        if self.q and self.q[0][0] is rec:
+                            self.q.popleft()
+                    continue
                 status = "ok"
             except InfluxRejected as e:
                 log.error("%s: influx rejected the curve, not retried: %s", record_id(rec), e)
@@ -387,8 +394,10 @@ class Writer:
                     log.error("influx write failed (%s), retrying every %g s; %d queued", e, self.backoff_s,
                               self.pending())
                 failing = True
+                until = time.monotonic() + self.backoff_s
                 with self.cv:
-                    self.cv.wait(self.backoff_s)
+                    while not self.stopped and time.monotonic() < until:
+                        self.cv.wait(until - time.monotonic())
                 continue
             if failing:
                 log.info("influx writes recovered")
@@ -565,7 +574,7 @@ def replay(files, archive=None):
 class _NoInflux:
     def write(self, lines):
         log.info("no-influx: %d lines not written", len(lines))
-        raise InfluxRejected("--no-influx")
+        return SKIP
 
 
 def lock_archive(path):
