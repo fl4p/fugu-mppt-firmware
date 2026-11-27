@@ -1007,8 +1007,11 @@ public:
             _cvVprev = v, _cvIprev = ibat;
             if (!upStep) _cvRise = r;
             float err = params.cv_eoc - v;
+            // Gain from the measured error, before the forecast: the look-ahead can drive err across zero while the
+            // cell is still below cv_eoc, which would otherwise pick K_DOWN and brake hard below target.
+            const float gain = err > 0 ? K_UP : K_DOWN;
             if (err < 2 * APPROACH_V && dtOk && rise > RISE_VS) err -= AHEAD_S * rise;
-            _cvIbat = fminf(ibat + (err > 0 ? K_UP : K_DOWN) * err * params.tail_c_rate * params.Cbat
+            _cvIbat = fminf(ibat + gain * err * params.tail_c_rate * params.Cbat
                                    / (params.cv_eoc - params.cv_min), ibatCap);
         }
         frame = batSt.ibat_t;
