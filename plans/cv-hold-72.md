@@ -102,7 +102,7 @@ included in the production candidate.
 - Worker host suite: 38 PASS, one existing XFAIL (`bms-cutoff-test`).
 - Independent review of `f0ebdf43` found no blockers and reproduced the five
   failures under the constructor mutation.
-- ESP-IDF 6.0.3 ESP32-S3 build passed. The image is `0x1b8060` bytes with 4% of
+- At `f0ebdf43`, the ESP-IDF 6.0.3 ESP32-S3 build passed. The image is `0x1b8060` bytes with 4% of
   the smallest application partition free. No cycle-level cost measurement was
   made; the phase-1 simulation reports zero allocations and frees in its RT loop.
 - The documentation build with a fresh cache and the cross-link check passed.
@@ -124,8 +124,13 @@ included in the production candidate.
 - The G = 0.2 candidate passes the default pair and new delayed pair locally.
   Restoring G = 0.4 in an isolated copy makes the same delayed-pair harness fail
   at a 3.522 V entry peak. The focused charger and PD host tests pass.
-- Both 26-case grids, the full stock suite, host units and the firmware build
-  after integration with the latest `main` remain pending.
+- After merging `main` at `d0cf88d8`, candidate `cbbb692b` passes the delayed
+  pair with entry 3.510 V and band 3.499..3.501 V. The merged G = 0.4 calibration
+  still fails at entry 3.522 V; all three exact host-step assertions also fail
+  under that mutation. The shortened run fails the empty-window guard.
+- The merged ESP32-S3 build passes (`0x1b8210` bytes, 4% partition space free),
+  as do the fresh-cache docs build, rendered-page check and cross-link check.
+  Both 26-case grids, the 190-case stock suite and Linux host units remain pending.
 
 ### Empty-window guard review
 

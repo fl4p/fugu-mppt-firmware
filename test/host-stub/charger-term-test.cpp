@@ -1314,7 +1314,7 @@ static void test_bal_low_line_no_hold_cuts_at_band() {
 
 // look-ahead on the cell rise, 10 A, cell 3.460 -> 3.490 V in 10 mV steps: 12 s apart it brakes (0.83 mV/s); 60 s
 // apart (lost frames, 0.17 mV/s) or republished every 12 s between the steps it keeps the plain law (10.47 A at 3.490 V:
-// the limit rises 0.4 x 0.47 A per ibat frame)
+// the limit rises 0.2 x 0.47 A = 0.093 A per ibat frame)
 static void test_hold_rise_frame_spacing() {
     for (int mode = 0; mode < 3; ++mode) { // 0: 12 s, 1: 60 s, 2: republished every 12 s, a step every 60 s
         BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
