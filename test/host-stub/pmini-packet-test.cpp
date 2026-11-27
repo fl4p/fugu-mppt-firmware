@@ -10,12 +10,14 @@
 #include <vector>
 
 static std::vector<std::uint32_t> encodedWords;
+static bool failCodec = false;
 static std::size_t encodedRows = 0, encodedCols = 0;
 
 bool pminiEncode(const std::uint32_t *words, std::size_t rows, std::size_t cols, std::string &out) {
     encodedWords.assign(words, words + rows * cols);
     encodedRows = rows; encodedCols = cols;
-    out = "MTP2stub";
+    out += "MTP2stub";
+    if (failCodec) return false;
     return true;
 }
 
@@ -74,6 +76,13 @@ int main() {
     assert(encodedWords[0] == 1 && encodedWords[1] == 1 && encodedWords[2] == 3);
     assert(encodedWords[5] == 2 && encodedWords[6] == 1 && encodedWords[7] == 1);
     assert(encodedWords[8] == 0x40000000u && encodedWords[9] == 0);
+
+    // Native append failure must roll back the WHOLE envelope, including metadata.
+    failCodec = true;
+    std::string failed = "prefix";
+    assert(!p.packet(reinterpret_cast<const std::uint8_t *>(in.data()), in.size(), failed));
+    assert(failed == "prefix");
+    failCodec = false;
 
     // A field introduced in a later sparse row may precede an existing field;
     // the adapter derives a valid union order instead of assuming first-seen.

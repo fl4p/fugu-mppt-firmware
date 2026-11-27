@@ -94,7 +94,7 @@ static void flush(time_ms nowMs) {
         try {
             std::vector<std::string> packets;
             if (buf.size() > 1) {
-                if (!packetEncoder->pack(buf.substr(1), 1440, packets)) dropped += buf.size() - 1;
+                if (!packetEncoder->pack(std::string_view(buf).substr(1), 1440, packets)) dropped += buf.size() - 1;
                 else for (const auto &p : packets)
                     if (!MQTT.publish(topic.c_str(), p.data(), p.size(), 0, false)) dropped += p.size();
             }

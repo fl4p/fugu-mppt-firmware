@@ -8,8 +8,8 @@ int main() {
     TelePacketBatch b;
     assert(!b.due(10000));
     assert(b.append("x", 0));
-    assert(!b.due(1799)); assert(b.due(1800)); assert(b.due(999999));
-    assert(b.append("y", 1700)); assert(b.due(1800)); // adding a sample never postpones first deadline
+    assert(!b.due(999)); assert(b.due(1000)); assert(b.due(999999));
+    assert(b.append("y", 900)); assert(b.due(1000)); // adding a sample never postpones first deadline
     b.clear(); assert(!b.due(999999));
     assert(!b.append(std::string(TelePacketBatch::CAP + 1, 'x'), 0)); assert(b.raw.empty());
     assert(b.append(std::string(TelePacketBatch::CAP, 'x'), 100)); assert(b.due(100)); assert(!b.fits(1));
@@ -36,14 +36,35 @@ int main() {
     // A rejected complete pack must not teach the private dtype cache.
     TelePacketEncoder transaction;
     packets.clear(); assert(!transaction.pack(raw,2,packets));
-    std::string dataOnly;
+    std::string dataOnly, tableOnly;
     for(size_t at=0;at<raw.size();) {
         const size_t begin=at;size_t n=0;unsigned shift=0;uint8_t byte;
         do {byte=uint8_t(raw[at++]);n|=size_t(byte&127)<<shift;shift+=7;} while(byte&128);
         if(uint8_t(raw[at])==1)dataOnly.append(raw,begin,at-begin+n);
+        if(uint8_t(raw[at])==2)tableOnly.append(raw,begin,at-begin+n);
         at+=n;
     }
     assert(transaction.pack(dataOnly,1440,packets));
     for(const auto &p:packets)assert(uint8_t(p[0])!=2);
+    // A lost first table used to lock the codec into tamp forever: the next
+    // heartbeat arrives after unknown data. Learn it only AFTER that fallback.
+    TelePacketEncoder recovery;
+    packets.clear(); assert(recovery.pack(dataOnly + tableOnly, 1440, packets));
+    for (const auto &p:packets) assert(uint8_t(p[0]) != 2);
+    packets.clear(); assert(recovery.pack(dataOnly, 1440, packets));
+    assert(packets.size() == 1 && uint8_t(packets[0][0]) == 2);
+    // Failed packetization cannot commit a heartbeat, even when it is valid.
+    TelePacketEncoder refused;
+    packets = {"sentinel"}; assert(!refused.pack(dataOnly + tableOnly, 2, packets));
+    assert(packets == std::vector<std::string>{"sentinel"});
+    packets.clear(); assert(refused.pack(dataOnly, 1440, packets));
+    for (const auto &p:packets) assert(uint8_t(p[0]) != 2);
+    // A complete length prefix does not make an invalid Table definition valid.
+    TelePacketEncoder malformed;
+    packets.clear();
+    assert(!malformed.pack(tableOnly + std::string("\x02\x02\x80", 3), 1440, packets));
+    assert(packets.empty());
+    assert(malformed.pack(dataOnly, 1440, packets));
+    for (const auto &p:packets) assert(uint8_t(p[0]) != 2);
     puts("tele-packet tests passed");
 }

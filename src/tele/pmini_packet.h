@@ -11,6 +11,10 @@
 class PminiPacket {
 public:
     bool packet(const std::uint8_t *in, std::size_t n, std::string &out);
+    // Learn validated Table frames from a raw/tamp fallback in wire order.
+    // Data bodies are opaque here; table definitions and outer framing are
+    // validated atomically. Caller commits this state only with retained output.
+    bool observeTables(const std::uint8_t *in, std::size_t n);
     void reset();
 
 private:

@@ -26,7 +26,7 @@ for dev in ('fry','flat'):
   n=l.point(ts,dev.encode(),len(ks),ns,typ,vals,buf);wire.append(buf.raw[:n])
  batches=[];start=0
  for i in range(len(rows)):
-  if i>start and (rows[i]['time']-rows[start]['time']>=1800 or sum(map(len,wire[start:i+1]))>8192):batches.append(b''.join(wire[start:i]));start=i
+  if i>start and (rows[i]['time']-rows[start]['time']>=1000 or sum(map(len,wire[start:i+1]))>2048):batches.append(b''.join(wire[start:i]));start=i
  batches.append(b''.join(wire[start:]));encoded=baseline=0;counts={0:0,1:0,2:0};us=[];maximum=0
  for raw in batches:
   n=l.compress_packet(raw,len(raw),buf);assert n;baseline+=1+n

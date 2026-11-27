@@ -1,0 +1,30 @@
+{
+  "firmware_version": "fry-brk1-1225-g753d00ef-dirty",
+  "firmware_sha256": "22cc3ccedbae0a84b5d6ec94f69c67d3de4320eac8d3539cdd951564105cffda",
+  "device": "bench139c",
+  "receiver": "havan relay 0.17; fugu-py 9a1c5c5",
+  "clock_ack_ms": 29.017,
+  "ble_enabled": true,
+  "ble_stream_active": false,
+  "telemetry_restarts": 2,
+  "encode_max_us": [
+    151215,
+    183846,
+    155612
+  ],
+  "minimum_internal_heap_at_last_stop": 16076,
+  "log_lines_audited": 430,
+  "allocation_panic_drop_errors": 0,
+  "source_and_capture_sha256": {
+    "src/tele/pmini_codec.cpp": "7df28085ef956e7f193289c4c46804e54ed5d811731b25b5c86ee32605c1d40a",
+    "src/tele/pmini_packet.cpp": "7a7745360e37cd20ce645bbeedeea04a57b4684cd7dbfa0aecb1415f49410efd",
+    "src/tele/pmini_codec.h": "5937fccdc6f852121879e9db702762977f4b7d6236532a35f426f68f65a89e61",
+    "src/tele/pmini_packet.h": "e3229ff7fe2c5e0172af6e64a4547669b4bbf64c3c722d9e560b4eb62336be52",
+    "src/tele/tele_packet.cpp": "aef250d3f9c5aa069332f6c6af5329f2b9cca8a770d35b05f09d7b6474ba634b",
+    "src/tele/tele_packet.h": "99ef6334b5fbc8222dccbcadc7783d2c3f4d5d174ebc3ed0bba70646139b2cc2",
+    "src/tele/telemetry.cpp": "c9dee09e8583cc3c0e717af652d653cfb48b2e91b23c44e2086748b7784e8b79",
+    "src/tele/tele_ble.cpp": "10a179006c5735155251c9e8e18b3075c6268e2427c5e51078e73cae89efe55d",
+    "src/tele/tele_mqtt.cpp": "712eea4fa0d6aca15f3212535091bf16ed7786c9fed836b28ddfe5a61c559b37",
+    "doc/research/pmini-bench-2026-11-27/pmini-fixed-ble-on.jsonl": "2141d44a5f892b26a6459bca53221a8f75fca3bb8ca495c6ddc2db0127e6dee0"
+  }
+}

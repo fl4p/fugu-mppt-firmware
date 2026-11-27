@@ -3,42 +3,42 @@
     {
       "device": "fry",
       "points": 2048,
-      "batches": 25,
-      "tamp_bytes": 52054,
-      "adaptive_bytes": 29007,
-      "saving_pct": 44.27517577899873,
+      "batches": 57,
+      "tamp_bytes": 53951,
+      "adaptive_bytes": 36308,
+      "saving_pct": 32.70189616503865,
       "codec_counts": {
         "0": 0,
         "1": 1,
-        "2": 26
+        "2": 56
       },
-      "max_payload": 1376,
-      "host_median_us": 302.125,
-      "host_max_us": 761.209
+      "max_payload": 847,
+      "host_median_us": 145.0,
+      "host_max_us": 216.417
     },
     {
       "device": "flat",
       "points": 2048,
-      "batches": 24,
-      "tamp_bytes": 51278,
-      "adaptive_bytes": 29817,
-      "saving_pct": 41.852256328249936,
+      "batches": 54,
+      "tamp_bytes": 53220,
+      "adaptive_bytes": 35744,
+      "saving_pct": 32.83727921833896,
       "codec_counts": {
         "0": 0,
         "1": 1,
-        "2": 25
+        "2": 53
       },
-      "max_payload": 1362,
-      "host_median_us": 290.625,
-      "host_max_us": 712.375
+      "max_payload": 975,
+      "host_median_us": 136.208,
+      "host_max_us": 147.167
     }
   ],
   "fingerprints": {
     "doc/research/pmini-benchmark-2026-11-26/bridge.cpp": "6d477ce986080c956fc2e89c75bf45bf4f5ae1d127b6e45d72319d15466f8837",
     "test/host-stub/pmini-replay-bridge.cpp": "9f4d201c063511c8eea62ed769a490005d6df4c0be86c7191e7e697cff609878",
     "src/tele/pmini_codec.cpp": "7df28085ef956e7f193289c4c46804e54ed5d811731b25b5c86ee32605c1d40a",
-    "src/tele/pmini_packet.cpp": "c8d934cab6c08d4f47f1982ae26c832ef568874fd92c1349c3ece399819a6f9a",
-    "src/tele/tele_packet.cpp": "cf7c1b7c8cc4e9e090cf2c331af0a9a80200c726e7f35226c1f6434e4b8a7960",
+    "src/tele/pmini_packet.cpp": "7a7745360e37cd20ce645bbeedeea04a57b4684cd7dbfa0aecb1415f49410efd",
+    "src/tele/tele_packet.cpp": "aef250d3f9c5aa069332f6c6af5329f2b9cca8a770d35b05f09d7b6474ba634b",
     "src/tele/tamp_compress.cpp": "6deafbc28465604d98398828b552c3939fd302f9801c6eb01132203ff9830fd3"
   }
 }

@@ -111,7 +111,28 @@ void PminiPacket::reset() {
     sidTypes_.shrink_to_fit();
 }
 
+bool PminiPacket::observeTables(const std::uint8_t *in, std::size_t n) {
+    if (!in || !n || n > kMaxInput) return false;
+    try {
+        auto types = sidTypes_;
+        std::size_t at = 0, count = 0;
+        while (at < n) {
+            std::uint64_t len = 0; std::size_t used = 0;
+            if (++count > kMaxEvents || !readVarint(in + at, in + n, len, used) ||
+                !len || len > n - at - used) return false;
+            at += used;
+            if (in[at] == std::uint8_t(FrameT::Table)) {
+                if (!applyTable(in + at, std::size_t(len), types)) return false;
+            } else if (in[at] != std::uint8_t(FrameT::Data)) return false;
+            at += std::size_t(len);
+        }
+        sidTypes_.swap(types);
+        return true;
+    } catch (const std::bad_alloc &) { return false; }
+}
+
 bool PminiPacket::packet(const std::uint8_t *in, std::size_t n, std::string &out) {
+    const std::size_t start = out.size();
     try {
     if (in == nullptr || n == 0 || n > kMaxInput) return false;
     std::vector<std::uint8_t> types = sidTypes_;
@@ -299,31 +320,30 @@ bool PminiPacket::packet(const std::uint8_t *in, std::size_t n, std::string &out
     std::vector<FieldRef>().swap(fieldRefs);
     std::vector<Row>().swap(rows);
 
-    std::string shard;
-    if (!pminiEncode(words.data(), rowCount, cols, shard) || shard.size() < 4)
-        return false;
-
-    std::string encoded;
-    encoded.reserve(32 + prefix.size() + shard.size());
-    encoded.append(kMagic, sizeof(kMagic) - 1);
-    encoded.push_back(char(kEnvelopeVersion));
-    putPVarint(encoded, events.size());
-    putPVarint(encoded, prefix.size());
-    encoded.append(prefix);
-    putPVarint(encoded, schema.size());
-    for (const SchemaField &f : schema) { putPVarint(encoded, f.sid); encoded.push_back(char(f.dt)); }
+    // Append the envelope and shard directly; rollback includes the codec
+    // caller's prefix and never hashes bytes preceding this envelope.
+    out.append(kMagic, sizeof(kMagic) - 1);
+    out.push_back(char(kEnvelopeVersion));
+    putPVarint(out, events.size());
+    putPVarint(out, prefix.size());
+    out.append(prefix);
+    putPVarint(out, schema.size());
+    for (const SchemaField &f : schema) { putPVarint(out, f.sid); out.push_back(char(f.dt)); }
     for (const Event &event : events) {
-        if (!event.table) { encoded.push_back(char(kDataEvent)); continue; }
-        encoded.push_back(char(kTableEvent));
-        putPVarint(encoded, event.len);
-        encoded.append(reinterpret_cast<const char *>(in + event.at), event.len);
+        if (!event.table) { out.push_back(char(kDataEvent)); continue; }
+        out.push_back(char(kTableEvent));
+        putPVarint(out, event.len);
+        out.append(reinterpret_cast<const char *>(in + event.at), event.len);
     }
-    encoded.append(shard);
-    putU32LE(encoded, crc32(reinterpret_cast<const std::uint8_t *>(encoded.data()), encoded.size()));
-    out.append(encoded);
+    const auto shardAt = out.size();
+    if (!pminiEncode(words.data(), rowCount, cols, out) || out.size() - shardAt < 4) {
+        out.resize(start); return false;
+    }
+    putU32LE(out, crc32(reinterpret_cast<const std::uint8_t *>(out.data() + start), out.size() - start));
     sidTypes_.swap(types);
     return true;
     } catch (const std::bad_alloc &) {
+        out.resize(start);
         return false;
     }
 }

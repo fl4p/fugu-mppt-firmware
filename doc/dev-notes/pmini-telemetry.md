@@ -31,14 +31,14 @@ the Python decoder. The browser receiver is `etc/config-tool/teledec.js`.
 
 ## Batching and delivery
 
-Pmini mode batches at most 8,192 raw bytes and flushes after **1,800 ms** from
+Pmini mode batches at most 2,048 raw bytes and flushes after **1,000 ms** from
 the first queued sample. UDP carries the producer's monotonic enqueue time,
 so queue residence counts against the batching deadline. Later samples do not
 renew that deadline. A periodic transport tick flushes even without a new
 sample. Sparse UDP telemetry continues to flush promptly. Smaller buffers or
 packet limits may flush earlier.
 
-The target is two-second telemetry latency, allowing nominally 200 ms beyond
+The target is two-second telemetry latency, allowing nominally 1,000 ms beyond
 batching for encoding, scheduling and transport. This is not a hard network
 or real-time delivery guarantee: ESP32 encoding time, peak heap and worst-case
 radio/scheduler delay still need hardware qualification. BLE congestion,
@@ -79,7 +79,11 @@ stream-table heartbeat/recovery semantics: loss does not poison subsequent
 compression state, but a lost new-symbol definition may temporarily prevent
 rendering until its table resend. This is not a new reliable schema-negotiation
 protocol. Each transport owns a private dtype cache and never reads the
-producer's concurrently changing SymbolTable. Malformed packets cannot commit
+producer's concurrently changing SymbolTable. After retained raw/tamp fallback, valid table frames refresh the encoder cache
+for subsequent batches, including a heartbeat after unknown data. Failed packetization
+rolls back that cache. Table definitions are never applied retroactively.
+
+Malformed packets cannot commit
 partial schema changes to either host decoder.
 
 ## Validation
@@ -100,3 +104,70 @@ writes `doc/research/pmini-benchmark-2026-11-26/native-results.json`.
 Database float rounding remains a corpus limitation; this is not captured
 radio traffic or an ESP32 execution benchmark. See the adjacent native codec,
 packet, and final review notes for guard checks and measured host costs.
+
+## Bench-driven memory and deadline fixes (2026-11-27)
+
+The first hardware run failed with BLE enabled: allocation failures drove internal
+heap down to 1,088 bytes and the encoder stayed on tamp after losing its initial
+schema. With BLE disabled, pmini worked but clock-aligned sample age reached
+2,109 ms. The original 8 KiB / 1.8 s settings are superseded.
+
+Transport batches now reserve 2 KiB and wait at most 1 s. Encoding tries pmini
+before allocating tamp's worst-case output, avoids a simultaneous raw candidate,
+appends PMA2/MTP2 directly with rollback, and uses views when splitting or removing
+the MQTT codec byte. BLE pending output is bounded to 4 KiB. The adapter's 8 KiB
+input-format limit remains available for offline replay; live transport batching
+uses the smaller limit.
+
+A retained raw/tamp packet now teaches the encoder its validated table frames,
+even when unknown data precedes the table. Only later packets may use that schema.
+Recursive attempts and complete pack failures cannot advance the committed cache.
+The captured failing BLE-on stream now replays exactly: three tamp packets followed
+by 37 pmini packets, instead of 40 tamp packets.
+
+Guard review:
+
+1. Missing or malformed table definitions fail explicitly. Unknown data uses raw/tamp;
+   table observation validates table frames and framing, not opaque data bodies.
+2. Oversize batches and invalid frame lengths stay rejected at the far tail. Later
+   samples cannot refresh the first sample's deadline.
+3. The table observer runs only for a retained fallback; state is committed only
+   after the complete output-vector append succeeds.
+4. The native replay records input-source fingerprints and exercises the production
+   encoder, adapter and packet wrapper, not a parallel implementation.
+5. Failed pack attempts leave both caller output and committed schema unchanged;
+   partial direct-append failures restore the original prefix.
+6. Raw/tamp fallback is reported as such. Smaller batches reduce saved-corpus
+   savings to about 33%; the earlier 42–44% figures used larger batches.
+7. Regressions cover unknown data before a heartbeat, rejected packetization,
+   malformed tables, direct-append failure and a producer-independent deadline.
+8. This reduces actual allocations and waiting time. Diagnostic timing is logged
+   once when the UDP telemetry service stops; it does not replace the fix.
+
+Host checks: ASAN/UBSAN suite, 100,000 malformed adapter inputs, 5 Python tests,
+76 JavaScript tests, exact 4,096-point corpus replay and captured failure replay.
+A 1,984-byte synthetic packet with 14 rows and 24 fields used 10,925 bytes of
+incremental peak heap including output and encoder workspace in a host allocator
+probe; 100 encodes averaged 161 us. These host numbers are diagnostic, not ESP32
+qualification. The hardware validation record below is the device evidence.
+
+Hardware rerun: `bench139c` (ESP32-S3, 4 MB flash, no PSRAM, virtual converter),
+BLE service enabled throughout, relay 0.17 on havan. The 180 s passive capture
+contains 212 packets / 8,194 decoded points, zero decoder errors, 208 pmini packets
+and 4 tamp packets. Median sample age was 605 ms, p99 1,042 ms, maximum 1,163 ms;
+no captured sample exceeded 2 s. USB clock alignment was acknowledged in 29 ms.
+Pmini payloads were 42.9% smaller than tamp recompression of those same payloads;
+maximum packet size was 1,041 bytes. These are sample-to-receiver-host ages, not
+InfluxDB commit latency or a guarantee for every network condition.
+
+Two service restarts recovered normally. Worst complete adaptive encode time was
+183,846 us on ESP32 (includes the pmini/tamp comparison), measured before sending.
+Internal heap minimum was 16,492 bytes during the capture and 16,076 at final stop;
+430 device log lines contained no allocation failures, panic, encoding failures
+or UDP-send errors. The bench was restored to telemetry disabled / binary disabled,
+pmini unset, BLE enabled. No production converter was changed. This verifies UDP
+with BLE resident, not simultaneous BLE telemetry streaming or MQTT on hardware.
+Aggregate results and firmware/source hashes are in
+`doc/research/pmini-bench-2026-11-27/`; raw captures and diagnostics remain local.
+The tested pre-commit image's sources are fingerprinted there; its `-dirty` suffix
+reflects these fixes before commit.

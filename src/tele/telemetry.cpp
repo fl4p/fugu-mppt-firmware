@@ -31,10 +31,14 @@ static std::unique_ptr<TelePacketEncoder> s_packetEncoder;
 static TelePacketBatch s_packetBatch;
 static std::vector<std::string> s_packetPending;
 static size_t s_packetHead = 0;
+static uint32_t s_encodeMaxUs = 0, s_encodeCalls = 0;
 #endif
 
 void teleUdpResetPackets() {
 #ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (s_encodeCalls) ESP_LOGI("tele", "pmini encode: %u batches, max %u us",
+                               unsigned(s_encodeCalls), unsigned(s_encodeMaxUs));
+    s_encodeCalls = s_encodeMaxUs = 0;
     s_packetEncoder.reset();
     s_packetBatch = TelePacketBatch{};
     s_packetPending.clear(); s_packetHead = 0;
@@ -388,8 +392,14 @@ void TelemetryService::flushQueue(const IPAddress &addr) {
         if (!s_packetPending.empty()) { sendOne(); return; }
         const uint64_t now = uint64_t(esp_timer_get_time()) / 1000;
         const auto pack = [&]() {
-            if (!s_packetBatch.raw.empty() && !s_packetEncoder->pack(s_packetBatch.raw, CONFIG_TCP_MSS, s_packetPending))
-                ESP_LOGW("tele", "pmini batch encode failed, dropped %u bytes", unsigned(s_packetBatch.raw.size()));
+            if (!s_packetBatch.raw.empty()) {
+                const auto started = esp_timer_get_time();
+                const bool ok = s_packetEncoder->pack(s_packetBatch.raw, CONFIG_TCP_MSS, s_packetPending);
+                const auto elapsed = uint32_t(esp_timer_get_time() - started);
+                ++s_encodeCalls;
+                if (elapsed > s_encodeMaxUs) s_encodeMaxUs = elapsed;
+                if (!ok) ESP_LOGW("tele", "pmini batch encode failed, dropped %u bytes", unsigned(s_packetBatch.raw.size()));
+            }
             s_packetBatch.clear();
         };
         try {

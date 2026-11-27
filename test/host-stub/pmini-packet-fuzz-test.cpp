@@ -8,7 +8,7 @@
 #include <string>
 
 bool pminiEncode(const std::uint32_t *, std::size_t, std::size_t, std::string &out) {
-    out = "MTP2";
+    out += "MTP2";
     return true;
 }
 
