@@ -20,6 +20,23 @@ Simulator only, not tested on hardware. Follows the fry 2026-11-27 08:12..08:42 
 Image (esp32s3, `build/scanfix`, default sdkconfig): 1754469 -> 1754377 B (-92 B); flash .text +420 B, IRAM/DIRAM
 .text -512 B. Before the `begin()` split the change cost +644 B of IRAM.
 
+### Follow-up after the EE review of f88142ab
+
+1. The rise was consumed at the scan start (`pLo = pw` in `begin()`): a rising-light scan rejected as "light
+   changed" left the 60 s re-scan with the 50 W floor and the prune, so below 50 W it never ran. Now `up` marks a
+   rising-light scan; it raises `pLo` only when it ends steady with no probe within 2 margins (or has no candidate).
+   A rejected or close scan keeps the reference, so the re-scan runs in rising light.
+2. Settle: the probe settles when med3 Vin is within 1 % of the target. At ~20 W the duty command overshoots
+   (`d sqrt(vinFast / vt)` with Vin lagging; duty 730 -> 414 counts on the way back to 72.8 V) and Vin passes the
+   band on its way out; the 100 ms average then fell into the swing: Back read 18.2 W vs 21.1 W true, a false
+   "light changed" (reviewer's case `SIM_RISE=0.03,0.24,0.04,60,1860`, Mac). The power settle time is not the main
+   cause seen in the trace (per-tick dump, SIM_PDUMP). Fix: a probe that settled in the band and leaves 2 % travels again (`band` flag; the travel timeout path
+   is unchanged, so an unreachable target still ends in a measurement). Same case, Mac: 81.4 % / 956 s -> 98.5 % /
+   136 s, the Back reads 22.1 W.
+3. Scan start not during a flash operation: `pMin = FLT max` while `flashOpActive()` (`src/mppt.cpp`).
+
+Image after the follow-up: 1754749 B (base +280 B); flash .text +472 B, IRAM .text -168 B vs base.
+
 ## Scenario `wx-shade-rise`
 
 fry6 string (6 substrings, Voc 80 V), pClear 600 W, `pv_substrings=6`, p_max 1000. Boot sweep in even dim light
@@ -50,6 +67,27 @@ mean (min), wrong-peak time mean.
 | sh06 (shaded to 0.06) | +24.3 (+22.7) | 1264 -> 168 | 1 -> 4.9 |
 | slow (ramp over 3540 s) | +7.3 (+4.8) | 1319 -> 395 | 5 -> 8.9 |
 | small (unshaded only to 0.12) | +10.4 (+8.9) | 1092 -> 423 | 0 -> 3.6 |
+| sh04 (shaded 0.03 -> 0.04) | +44.1 (+42.5) | 1541 -> 183 | 0 -> 4.3 |
+| sh03 (shaded flat at 0.03) | +0.0 | 1557 -> 1557 | 0 -> 0 |
+
+After the follow-up (same host, same base):
+
+| variant | dHarvest pts | wrong-peak s base -> fix |
+|---|---|---|
+| def | +41.0 (+40.7) | 1526 -> 42 |
+| big | +44.0 | 1538 -> 39 |
+| dim | +39.3 | 1380 -> 90 |
+| p300 | +40.0 | 1526 -> 185 |
+| sh06 | +25.1 | 1264 -> 34 |
+| slow | +8.7 (+8.6) | 1319 -> 75 |
+| small | +12.6 (+12.3) | 1092 -> 140 |
+| sh04 | +44.0 | 1541 -> 183 |
+| sh03 | -0.0 | 1557 -> 1557 |
+
+Known limit (sh03): the detector uses the operating-point power, which the shaded substrings limit. With their
+light flat since the sweep, power never rises 15 %, no rising-light scan runs, and the result equals the old rule
+(48.8 % of GMPP). The fry field events had the tracked power rise 1.5-4x before each morning event, so they fall in
+the covered case.
 
 No false moves: the PROBES `wrong` count is 0 in every run, base and fix.
 
@@ -59,8 +97,8 @@ config) and noise replays: same exit codes and PASS/FAIL lines everywhere (wx-ca
 
 | cell | dHarvest pts mean (min) | extra scans |
 |---|---|---|
-| p6 wx-dawn (7 runs) | -0.05 (-0.15) | +2.6 |
-| p6 wx-low / wx-low-slow | +0.01 (-0.10) / -0.03 (-0.08) | +1 |
+| p6 wx-dawn (7 runs) | -0.05 (-0.15); follow-up -0.06 (-0.17) | +2.6 |
+| p6 wx-low / wx-low-slow | +0.01 (-0.10; follow-up -0.13) / -0.03 (-0.08) | +1 |
 | p6 wx-mid | -0.01 (-0.07) | +2 |
 | p6 wx-ramp-fry / -flat | -0.03 (-0.04) | +1 |
 | p6 wx-sweep-rise | -0.05 (-0.19) | +0.3 |

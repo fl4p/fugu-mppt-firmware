@@ -42,20 +42,21 @@ struct PeakScan {
     enum Phase : uint8_t { Idle, Ref, Probe, Back, Go, Near };
     Phase phase = Idle;
     uint8_t k = 0, nc = 0;
-    bool settled = false;
+    bool settled = false, band = false; // band: settled within 1 % of the target Vin, not by the travel timeout
     uint8_t ended = 0; // back at the start point: 1, 3 light changed; 2 moved to another peak; 4 timed out (return to d0);
                        // 6 return pass done
     uint16_t d0 = 0;
     float vc[6]{}, pc[6]{};
     // return pass: probe Vin and the down-pass power there (ascending), probe index of the best, largest probe/down - 1;
     // a scan: its near probes in rv/rp 0 (start point, before), 1, 2; rv[0] NAN: none
-    bool ret = false, heat = false; // heat: this scan's upward probes used Vin / m0 (heatCut)
+    bool ret = false, heat = false, up = false; // heat: this scan's upward probes used Vin / m0 (heatCut); up: in rising light
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
     float voc = NAN, iEnv = 0, kVmp = kVmpFallback; // Voc at the sweep start, max PV-side current seen [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
     // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it. After the sweep pLo is the
-    // rising-light reference: the MPP, raised to the power 5 s later, at a scan's move and at a scan in rising light
+    // rising-light reference: the MPP, raised to the power 5 s later, at a scan's move and when a scan in rising light
+    // ends steady without a probe within 2 margins
     float pk = 0, vPk = 0, pLo = 0;
     bool fall = false;
     uint32_t t0 = 0, tPhase = 0, tLast = 0, tOff = 0, tS = 0;
@@ -222,7 +223,10 @@ struct PeakScan {
             if (!due || pw < (rise ? 0.2f : 1.f) * pMin || !begin(vin, pw, d, vMin, now, per, rise, vs0)) return NAN;
         }
         const float vt = phase == Near ? rv[k] : phase == Probe || phase == Go ? (ret ? rv[k] : vc[k]) : v0;
-        if (!settled && (std::fabs(vinFast - vt) < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, tPhase = now;
+        const float dv = std::fabs(vinFast - vt);
+        if (!settled && (dv < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, band = dv < 0.01f * vt, tPhase = now;
+        // settled in the band, then out of 2 % (Vin overshoots at low power): travel again
+        if (settled && band && dv > 0.02f * vt) settled = false, tPhase = now, acc.clear();
         if (settled && hold) tPhase = now, acc.clear();
         if (settled) {
             const float ts = std::fmin(settleMs(), 1000.f), dt = (float) (now - tPhase); // fmin: NAN -> 1 s
@@ -253,10 +257,10 @@ struct PeakScan {
                 continue;
             vc[nc++] = v;
         }
-        if (rise) pLo = pw;
-        phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
+        up = rise, phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
         if (!armNear(nearDv && (nc || per), vMin, now) && !nc) {
             phase = Idle, pRef = pw, vRef = vin;
+            if (rise) pLo = pw;
             return false;
         }
         acc.clear();
@@ -289,7 +293,7 @@ struct PeakScan {
     __attribute__((noinline)) void refDone(float p, float vin) {
         if (!std::isnan(rv[0])) logNear(p);
         p0 = p, phase = Probe;
-        if (!nc) phase = Idle, pRef = p, vRef = vin, ended = 1;
+        if (!nc) phase = Idle, pRef = p, vRef = vin, ended = 1, pLo = up ? std::max(pLo, p) : pLo;
     }
 
     // ratios against the start power interpolated between before (rp[0]) and after (p) in measurement order; drift:
@@ -336,8 +340,10 @@ struct PeakScan {
                 k = (uint8_t) best, phase = Go, pRef = pc[best], vRef = vc[best], pLo = std::max(pLo, pRef);
             } else {
                 phase = Idle, pRef = p, vRef = vin, ended = steady ? 1 : 3;
-                // a probe within 2 margins (clouds change the ratio): again in 60 s
-                if (g > 1 - 2 * margin && interval > 60) tLast = now - (interval - 60) * 1000u;
+                // a probe within 2 margins (clouds change the ratio): again in 60 s, in rising light still as such
+                const bool again = g > 1 - 2 * margin;
+                if (up && steady && !again) pLo = std::max(pLo, p);
+                if (again && interval > 60) tLast = now - (interval - 60) * 1000u;
             }
         } else {
             phase = Idle, vRef = vin, ended = ret ? 6 : 2, rLand = p, ret = false;
