@@ -182,3 +182,32 @@ Smaller items:
   `heap_caps_get_per_task_info`. This gives current figures per task, with no per-task peak and no
   locking in malloc.
 - Live per-task heap peaks are therefore not available. Use `heap` min-ever plus the deltas above.
+
+## Live stack high-water
+
+### 2026-11-24 14:08 local (both on 958-ga52c7d7c)
+
+`tasks` STKFREE_B (bytes never used since boot). fry uptime 21 min (OTA 13:47), flat 90 min (OTA 12:38),
+both midday MPPT at 70–95 W. fry ran `measure-coil l0` at 13:55 and flat at 13:56 (another session), so those paths are in the figures.
+
+| task | fry | flat | min |
+|---|---|---|---|
+| loopRt | 6464 | 6308 | 6308 |
+| loopTask | 4504 | 4532 | 4504 |
+| mqtt_task | 5828 | 5200 | 5200 |
+| esp_timer | 3040 | 2992 | 2992 |
+| sys_evt | 3212 | 2700 | 2700 |
+| arduino_events | 2904 | 2072 | 2072 |
+| teleflush | 2792 | 2752 | 2752 |
+| btController | 2696 | 2548 | 2548 |
+| mdns | 2324 | 2756 | 2324 |
+| nimble_host | 1872 | 1056 | 1056 |
+| tcpip | 1680 | 1680 | 1680 |
+| Tmr Svc | 1360 | 1360 | 1360 |
+| wifi | 960 | 960 | 960 |
+| IDLE0 / IDLE1 | 704 / 712 | 704 / 712 | 704 |
+| ipc0 / ipc1 | 376 / 368 | 376 / 352 | 352 |
+
+Heap at the same time: fry free 35.2 KB, min-ever 22.1 KB, DMA min 14.4 KB; flat free 34.7 KB, min-ever 18.7 KB,
+DMA min 11.0 KB. The minima include the OTA download (fry) and the BLE/measure-coil sessions of the day; short uptimes, so
+these are not yet a full day's high-water.
