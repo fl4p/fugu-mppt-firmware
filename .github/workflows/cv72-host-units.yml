@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CANDIDATE_SHA: "FILL_HOST_TESTS_SHA"
+  CANDIDATE_SHA: "3a4cccd62f5c3fb0cee2d2c0defbd8ed6bcaed8c"
 
 jobs:
   host-units:
