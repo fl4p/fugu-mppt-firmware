@@ -49,7 +49,8 @@ struct PeakScan {
     float vc[6]{}, pc[6]{};
     // return pass: probe Vin and the down-pass power there (ascending), probe index of the best, largest probe/down - 1;
     // a scan: its near probes in rv/rp 0 (start point, before), 1, 2; rv[0] NAN: none
-    bool ret = false, heat = false, up = false; // heat: this scan's upward probes used Vin / m0 (heatCut); up: in rising light
+    bool ret = false, heat = false, up = false, rt = false; // heat: this scan's upward probes used Vin / m0 (heatCut);
+                                                              // up: in rising light; rt: its one close retry is due
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
     float voc = NAN, iEnv = 0, kVmp = kVmpFallback; // Voc at the sweep start, max PV-side current seen [W/V], Vmpp / Voc
@@ -76,7 +77,7 @@ struct PeakScan {
     // first sweep tick (converter still off, Vin ~ Voc)
     void onSweep(float vin, uint32_t now) {
         claim();
-        voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true, ret = force = false;
+        voc = vin, iEnv = 0, pRef = -1, phase = Idle, tLast = tOff = now, nc = 0, pLo = 0, fall = true, ret = force = rt = false;
     }
 
     // sweep tick, Vin falling: local power maxima below 0.93 Voc with an 8 % dip on both sides go to vc/pc (idle
@@ -340,9 +341,10 @@ struct PeakScan {
                 k = (uint8_t) best, phase = Go, pRef = pc[best], vRef = vc[best], pLo = std::max(pLo, pRef);
             } else {
                 phase = Idle, pRef = p, vRef = vin, ended = steady ? 1 : 3;
-                // a probe within 2 margins (clouds change the ratio): again in 60 s, in rising light still as such
+                // a probe within 2 margins (clouds change the ratio): again in 60 s, in rising light still as such once
                 const bool again = g > 1 - 2 * margin;
-                if (up && steady && !again) pLo = std::max(pLo, p);
+                if (up && steady && (!again || rt)) pLo = std::max(pLo, p);
+                rt = up && steady && again && !rt;
                 if (again && interval > 60) tLast = now - (interval - 60) * 1000u;
             }
         } else {
