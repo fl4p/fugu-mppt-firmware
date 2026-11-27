@@ -54,3 +54,33 @@ scp etc/havan/fugu-sweep-collector.service havan-ts:/tmp/ && ssh havan-ts 'sudo 
 ```
 
 Tests: `.venv/bin/python3 -m pytest etc/test_sweep_collector.py`.
+
+# Near-point probe collector (havan)
+
+`near_collector.py` keeps every `scan near:` line, the log-only probes at `Vin ± scan_near_v`
+(`tracker.conf`). It listens on the same `pv/log/+` mirror and appends one JSON object per probe to
+`~/pv/near/<UTC date>.jsonl`:
+
+```json
+{"device": "flat", "recv_ts": "2026-11-27T15:12:34Z", "v0": 57.4, "minus": 0.939,
+ "plus": 1.003, "ref_before": 366.4, "ref_after": 368.6, "drift": false, "near_only": true,
+ "raw": "I (328017) mppt: scan near: ..."}
+```
+
+A probe that was out of range is written as `n/a` by the firmware and stored as `null`; `drift` marks
+the two reference measurements differing by more than 1 %, and `near_only` a probe that ran with no
+candidate maximum. It sends no commands (read-only) and writes nothing else.
+
+Why it exists: the probes are not in InfluxDB, so the only other copy is `~/pv/fugu_console.log`,
+which rotates — the >=300 W sample count stayed at one or two a day and a conclusion drawn from one
+day's file changed the next. With this running, analyse the archive instead of the log.
+
+Runs as the systemd unit `fugu-near-collector` in `~/pv`, log `~/pv/near_collector.log` (1 MB x 3),
+same MQTT credentials. It logs each stored probe and a stats line every 30 min.
+
+```bash
+scp etc/havan/near_collector.py havan-ts:pv/
+scp etc/havan/fugu-near-collector.service havan-ts:/tmp/ && ssh havan-ts 'sudo mv /tmp/fugu-near-collector.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now fugu-near-collector'
+```
+
+Tests: `.venv/bin/python3 -m pytest etc/test_near_collector.py`.
