@@ -28,5 +28,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pytest rich pyserial
+      - run: pip install pytest rich pyserial numpy
       - run: python -m pytest -q -p no:cacheprovider test/host_py etc/test_*.py
