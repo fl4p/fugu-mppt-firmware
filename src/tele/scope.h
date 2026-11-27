@@ -6,13 +6,24 @@
 
 
 //#include <sstream>
+#include <atomic>
 #include <cassert>
 #include <cstdio>
+#include <functional>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include "../etc/rt.h"   // TaskNotification
 
-static uint64_t bytesSent = 0;
+// Network bytes accepted by the sinks (scope TCP stream + UDP telemetry). One shared counter with
+// two concurrent writers: the scope service runs on the main/LF task, the UDP flush on its own
+// "teleflush" task (core 0); the LF loop is the reader. Increments are atomic, and the reader
+// snapshots and clears a completed window with exchange(0), which cannot lose an increment racing
+// it (that send lands in the next window), unlike a plain read-then-zero. uint32_t keeps the RMW a
+// lock-free 32-bit op — a 64-bit one needs a libatomic call on Xtensa — and one window is orders of
+// magnitude below 2^32.
+inline std::atomic<uint32_t> bytesSent{0};
 
 #ifdef ARDUINO
 
@@ -248,7 +259,8 @@ public:
             uint8_t bufSelSend = (uint8_t) ((bufSel + BufNum - 1) % BufNum);
             auto sent = client.write((uint8_t *) buf[bufSelSend], (size_t) (bufPos[bufSelSend]));
             bufPos[bufSelSend] = 0;
-            bytesSent += sent;
+            // write() returns the bytes the socket accepted (0 on failure); count only those.
+            bytesSent.fetch_add((uint32_t) sent, std::memory_order_relaxed);
             return true;
         }
         return false;

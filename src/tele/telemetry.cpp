@@ -5,6 +5,7 @@
 #include "telemetry.h"
 #include "telemetry_service.h"   // transport methods (flushTask/flushQueue) are defined here
 
+#include "scope.h"   // shared network-byte counter
 #include "../adc/sampling.h"
 #include "line_protocol.h"
 #include "../store.h"
@@ -329,7 +330,7 @@ static void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
         return;
     }
 
-    bytesSent += udpSend(msg.c_str(), msg.length(), host, port);
+    bytesSent.fetch_add((uint32_t) udpSend(msg.c_str(), msg.length(), host, port), std::memory_order_relaxed);
 
     msg.clear();
 }
@@ -356,7 +357,7 @@ static void sendBinaryBatch(const IPAddress &dst, uint16_t port, Compressor &com
     if (comp.packet((const uint8_t *) raw.data(), raw.size(), out)) {
         if (out.size() > CONFIG_TCP_MSS)
             ESP_LOGW("tele", "binary datagram %u B > MSS (raw %u)", (unsigned) out.size(), (unsigned) raw.size());
-        bytesSent += udpSend(out.data(), out.size(), dst, port);
+        bytesSent.fetch_add((uint32_t) udpSend(out.data(), out.size(), dst, port), std::memory_order_relaxed);
     }
     raw.clear();
 }
@@ -388,7 +389,7 @@ void TelemetryService::flushQueue(const IPAddress &addr) {
             if (s_packetHead < s_packetPending.size()) {
                 const auto &p = s_packetPending[s_packetHead++];
                 const auto sent = udpSend(p.data(), p.size(), addr, port);
-                bytesSent += sent;
+                bytesSent.fetch_add((uint32_t) sent, std::memory_order_relaxed);
                 if (sent != p.size()) ESP_LOGW("tele", "UDP telemetry send failed: dropped %u bytes", unsigned(p.size() - sent));
                 if (s_packetHead == s_packetPending.size()) { s_packetPending.clear(); s_packetHead = 0; }
             }

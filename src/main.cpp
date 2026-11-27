@@ -1182,7 +1182,7 @@ static void lfControl() {
 
 // One-line UART/MQTT/telnet status line. CONFIG_FUGU_WITH_MEASURE_COIL skips it during the coil sweep so the
 // measurement output isn't intermixed with the status print.
-__attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt) {
+__attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, uint32_t dt, uint32_t windowBytes) {
 #ifdef CONFIG_FUGU_WITH_MEASURE_COIL
     if (!sensors.Vin || isMeasuring()) return;
 #else
@@ -1206,7 +1206,7 @@ __attribute__((cold)) static void lfStatusLine(uint32_t nSamples, uint32_t sps, 
         sensors.Vin->ewm.avg.get() * sensors.Iin->ewm.avg.get(),
         tempStr(ntcStr, mppt.ntc), tempStr(ucStr, mppt.ucTemp),
         sps,
-        dt ? (uint32_t) (bytesSent * 1000llu / dt) : 0,
+        dt ? (uint32_t) (windowBytes * 1000llu / dt) : 0,
         converter.inDCM() ? "DCM" : "CCM",
         converter.getCtrlOnPwmCnt(), converter.getRectOnPwmCnt(), converter.getRectOnPwmMax(),
         g_app.manualPwm()
@@ -1315,9 +1315,13 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     // Console commands print an immediate status line (cli.cpp): a read-only snapshot with the
     // last full-window rate — it must not consume the window.
     if (interim) {
-        lfStatusLine(nSamples, lastSps, dt);
+        lfStatusLine(nSamples, lastSps, dt, bytesSent.load(std::memory_order_relaxed));
         return;
     }
+
+    // Snapshot and clear the completed window once, before the pacing gate below can skip the
+    // status line — a skipped window must still be cleared, not left to accumulate.
+    uint32_t windowBytes = bytesSent.exchange(0, std::memory_order_relaxed);
 
     // a sensor reset (calibration) zeroes the counter: count the samples since then
     uint32_t n = nSamples >= lastNSamples ? nSamples - lastNSamples : nSamples;
@@ -1358,7 +1362,7 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
     // and stay quiet while idle) — but it no longer gates any of the work above.
     if (!lastTimeOutUs
         or (nowUs - lastTimeOutUs) >= (mppt.converter.disabled() ? (lfPeriod * 8) : lfPeriod)) {
-        lfStatusLine(nSamples, sps, dt);
+        lfStatusLine(nSamples, sps, dt, windowBytes);
         // Unconditional: lfStatusLine also returns without printing (no sensors / coil sweep), and
         // leaving lastTimeOutUs at 0 there would make the outer !lastTimeOutUs gate spin loopLF —
         // and with it the die-sensor read — every millisecond.
@@ -1367,7 +1371,6 @@ __attribute__((cold)) void loopLF(const time_us &nowUs, bool interim) {
 
     lastNSamples = nSamples;
     lastWindowUs = nowUs;
-    bytesSent = 0;
 
     mppt.meter.update(); // day accumulator; needs to run WHILE converting, that is when energy flows
 
