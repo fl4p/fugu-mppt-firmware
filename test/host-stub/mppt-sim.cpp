@@ -171,6 +171,7 @@
 //   12 s, 1 mV); PV SIM_PV_W per unit (560):
 //     cv-hold-pair     both units at ~20 A into cv_eoc: peak <= cv_eoc + 15 mV to hold + 300 s, then +-10 mV, no latch
 //     cv-hold-pair-lag the same fixture with the BMS ibat frame one 4 s frame late (phaseC 4, lagI true)
+//     cv-hold-pair-phase0 the same fixture with the cell frame at phase 0 (normal, current not lagged)
 //     cv-hold-offset   unit 2's Vout reads 0 / -0.15 / -0.9 V idle / both converting / alone, 90 min
 //     cv-hold-gap      no BMS frames 1800..2000 s: both units pause on the stale data and run again within 60 s
 //     cv-hold-load     900 W on 30 s / off 30 s from 1200 s: cell <= cv_eoc + 15 mV
@@ -4165,7 +4166,8 @@ static const char *topState(const BatteryCharger *c) {
 }
 
 static int runCvHold(const std::string &name, const std::string &sc) {
-    if (sc != "cv-hold-pair" && sc != "cv-hold-pair-lag" && sc != "cv-hold-offset" && sc != "cv-hold-gap" &&
+    if (sc != "cv-hold-pair" && sc != "cv-hold-pair-lag" && sc != "cv-hold-pair-phase0" && sc != "cv-hold-offset" &&
+        sc != "cv-hold-gap" &&
         sc != "cv-hold-load" && sc != "cv-hold-reboot" && sc != "cv-hold-mask" && sc != "cv-hold-day" &&
         sc != "cv-hold-regap" && sc != "cv-hold-recloud" && sc != "cv-hold-recloud-early") {
         printf("unknown scenario %s\n", sc.c_str());
@@ -4180,6 +4182,7 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     T.bms.phaseI = 1.3f, T.bms.phaseC = 5.1f, T.bms.qV = 0.001f;
     // cv-hold-pair-lag: the same pair fixture, cell phase 4 s, the BMS ibat frame one frame (4 s) late
     if (sc == "cv-hold-pair-lag") T.bms.phaseC = 4.f, T.bms.lagI = true;
+    if (sc == "cv-hold-pair-phase0") T.bms.phaseC = 0.f;
     double tEnd = 3600, rebootAt = -1;
     if (sc == "cv-hold-offset") tEnd = 5400, T.err[1] = {0, -0.15f, -0.9f};
     if (sc == "cv-hold-gap") T.gap[0] = 1800, T.gap[1] = 200;
@@ -4394,7 +4397,7 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     auto need = [&](bool c, const char *w) { if (!c) ok = false, why += why.empty() ? w : std::string(", ") + w; };
     need(nCeil == 0, "ceiling latch");
     need(peak < ceil, "cell at the ceiling");
-    const bool pair = sc == "cv-hold-pair" || sc == "cv-hold-pair-lag";
+    const bool pair = sc == "cv-hold-pair" || sc == "cv-hold-pair-lag" || sc == "cv-hold-pair-phase0";
     if (pair) {
         need(holdAt >= 0, "no hold");
         need(entry <= eoc + 0.015f, "entry peak > cv_eoc + 15 mV");

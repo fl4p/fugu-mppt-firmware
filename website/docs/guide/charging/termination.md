@@ -329,7 +329,7 @@ loops run on the BMS frames:
   rose but the ohmic step turns the pair into a fall, the pair is skipped: no
   look-ahead on it, and the next pair counts with the one before.
 - Current loop, on each `ibat` frame: the converter's output-current limit
-  moves by 0.2 × (target − `ibat`). Upward steps are at most 2 A, and the limit
+  moves by 0.25 × (target − `ibat`). Upward steps are at most 2 A, and the limit
   stays at most 2 A above the converter's own output current, so it does not
   wind up while the PV power is short and the returning sun does not push the
   cell over `cv_eoc`. The limit never goes below 0.25 A.
@@ -436,7 +436,7 @@ without coordination. The gains are sized for that:
   is taken out of the rise, so a current step is not read as a rise or fall of
   the cell.
 - With ideal current tracking, a fixed target and inactive caps, N chargers sum
-  to a gain of 0.2 N per `ibat` frame: 0.4 for two. The smaller correction damps
+  to a gain of 0.25 N per `ibat` frame: 0.5 for two. The smaller correction damps
   the response when the BMS reports current one frame late. This approximation
   does not establish stability of the full cell and converter control loops.
 - A charger whose Vout sensor reads wrong regulates the same pack current as

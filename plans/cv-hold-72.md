@@ -82,7 +82,7 @@ approximation, not a stability proof of the coupled cell loop, converter dynamic
 caps or asynchronous updates. The remaining slow excursion is not explained by
 that inner-loop model.
 
-The production candidate retains the fixed reference and uses G = 0.2. A new
+The first damping candidate retains the fixed reference and uses G = 0.2. A new
 stock `cv-hold-pair-lag` case fixes cell phase at 4 s and delays current by one
 frame, sharing the original pair's entry, band and latch assertions. Its empty
 steady-window check rejects a run with no samples after `holdAt + 300 s`.
@@ -90,6 +90,23 @@ steady-window check rejects a run with no samples after `holdAt + 300 s`.
 Diagnostic logs and traces: `/tmp/fugu-cv72-lag/`, including `lag_pC4.csv`,
 `g02_pC4.log` and `build_g02.log`. No instrumented getters or trace hooks are
 included in the production candidate.
+
+The wider grid rejects G = 0.2 on entry peaks despite passing every steady band.
+A bounded intermediate-gain probe at G = 0.25 passes the competing cases:
+
+| Mac cell phase / extra current delay | Entry peak (V) | Steady band (V) |
+|---|---|---|
+| 0 / none | 3.509 | 3.499..3.501 |
+| 0 / one frame | 3.513 | 3.500..3.501 |
+| 4 / one frame | 3.509 | 3.499..3.502 |
+| 9 / none | 3.507 | 3.499..3.501 |
+| 5.1 / one frame | 3.510 | 3.499..3.501 |
+
+The revised candidate uses G = 0.25 and adds a permanent phase-0 pair case
+alongside the delayed-current case. These focused results do not replace the
+full grids. Scratch source and configuration differ from the merged candidate
+only in G; evidence is in `/tmp/cv72-g025-clean/` and
+`/tmp/cv72-g025-mac-cases/`.
 
 ## Validation
 
@@ -130,7 +147,20 @@ included in the production candidate.
   under that mutation. The shortened run fails the empty-window guard.
 - The merged ESP32-S3 build passes (`0x1b8210` bytes, 4% partition space free),
   as do the fresh-cache docs build, rendered-page check and cross-link check.
-  Both 26-case grids, the 190-case stock suite and Linux host units remain pending.
+  Linux [stock validation](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46044300389)
+  passes all 190 scenarios and the host units (38 PASS, one known XFAIL).
+  The [pinned unit run](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46044294907)
+  confirms those unit counts.
+- The merged Linux [phase grid](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46044294877)
+  passes 25 of 26 cases, including all 13 delayed-current cases. Cell phase 0,
+  no added current delay, fails the entry gate (printed peak 3.516 V). The
+  rounded print does not establish the exact excess above 3.515 V.
+- The merged Mac grid completes 26 fresh runs: 22 PASS, four entry failures.
+  Phase 0 fails with both current-delay settings (printed peak 3.516 V), phase
+  9 fails without extra delay (3.516 V), and default phase 5.1 fails with delay
+  (3.517 V). Every steady band passes. Thus G = 0.2 is not accepted as a
+  phase-robust fix. Evidence: `/tmp/cv72-g02-mac-grid/`. A paired phase-0 trace
+  and a bounded intermediate-gain diagnostic are being evaluated.
 
 ### Empty-window guard review
 
@@ -140,7 +170,7 @@ check; NaN bounds also fail the comparison. This is a nonempty-window check,
 not validation of every plant sample. Adding this requirement cannot convert an
 existing failure to a pass, and the voltage limits remain unchanged.
 
-Both pair scenarios invoke it. A shortened `SIM_T=300` delayed-pair run fails
+All three pair scenarios invoke it. A shortened `SIM_T=300` delayed-pair run fails
 with `no steady hold samples`; a full run passes. There is no result cache.
 Final validation records the candidate revision, including the simulator and
 BMS producer, alongside the controller; diagnostic and reused logs remain

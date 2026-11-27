@@ -982,7 +982,7 @@ public:
     // (tau BLIND_TAU_S), as the expiry latch would end it; the floor holds for any number of units on the bus.
     void _cvHoldStep(bool step, float iout, float ibatCap) {
         // The per-frame correction damps the two-unit hold with a one-frame-late BMS current sample.
-        constexpr float K_UP = 0.5f, K_DOWN = 1.5f, G = 0.2f, STEP_UP_A = 2.f, HEADROOM_A = 2.f, BLIND_TAU_S = 20.f;
+        constexpr float K_UP = 0.5f, K_DOWN = 1.5f, G = 0.25f, STEP_UP_A = 2.f, HEADROOM_A = 2.f, BLIND_TAU_S = 20.f;
         constexpr float RISE_VS = 0.00025f, AHEAD_S = 36.f, R_OHM = 0.0015f; // [V/s] (3 mV per 12 s frame), [s], [Ohm]
         constexpr uint32_t RISE_DT_MIN_US = 3000000, RISE_DT_MAX_US = 30000000; // frame spacing for a rise (4 s BMS: jitter)
         constexpr uint32_t BLIND_S = 20; // 5 ibat frames

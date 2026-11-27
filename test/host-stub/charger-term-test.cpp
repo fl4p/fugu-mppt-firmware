@@ -1314,7 +1314,7 @@ static void test_bal_low_line_no_hold_cuts_at_band() {
 
 // look-ahead on the cell rise, 10 A, cell 3.460 -> 3.490 V in 10 mV steps: 12 s apart it brakes (0.83 mV/s); 60 s
 // apart (lost frames, 0.17 mV/s) or republished every 12 s between the steps it keeps the plain law (10.47 A at 3.490 V:
-// the limit rises 0.2 x 0.47 A = 0.093 A per ibat frame)
+// the limit rises 0.25 x 0.47 A = 0.117 A per ibat frame)
 static void test_hold_rise_frame_spacing() {
     for (int mode = 0; mode < 3; ++mode) { // 0: 12 s, 1: 60 s, 2: republished every 12 s, a step every 60 s
         BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
@@ -1336,7 +1336,7 @@ static void test_hold_rise_frame_spacing() {
         const float S = c.params.tail_c_rate * c.params.Cbat / (c.params.cv_eoc - c.params.cv_min);
         // mode 0 sees the 12 s rise: forecast error -0.020 V with K_DOWN -> -G*K_DOWN*0.020*S
         // modes 1/2 miss it: error +0.010 V with K_UP -> +G*K_UP*0.010*S
-        const float expect = mode ? 0.2f * 0.5f * 0.010f * S : -0.2f * 1.5f * 0.020f * S;
+        const float expect = mode ? 0.25f * 0.5f * 0.010f * S : -0.25f * 1.5f * 0.020f * S;
         printf("  rise look-ahead, cell frames %d s apart%s: limit %.2f -> %.2f A at 3.490 V\n", per,
                mode == 2 ? " (republished)" : "", before, after);
         CHECK(c.termCond.cvHold(), "in hold (mode %d)", mode);
