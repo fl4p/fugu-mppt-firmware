@@ -1095,6 +1095,45 @@ static void test_bal_torn_clock() {
     CHECK(!c.balanceDue(), "torn us read during skip: not due (age %u)", c.balanceAgeS());
 }
 
+// Re-entry after the cell left the hold (gap: no BMS frames for 280 s, the run pauses and resumes; else the PV drops
+// to 0.3 A for 300 s): ibat stays at or below the hold's current at cv_eoc and the cell gets back without overshoot.
+// Back within 20 min, no stall at a low current. This plant's polarization is fast; the field's slower rebuild and
+// its overshoot are in mppt-sim cv-hold-regap/-recloud.
+static void test_hold_reentry(bool gap) {
+    BatteryCharger c; c.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    c.termCond.reset();
+    c.balanceNow();
+    Plant pl;
+    pl.untilHold(c);
+    float ih = 0;
+    for (int s = 0; s < 600; ++s) pl.run(c, 1), ih += s >= 540 ? pl.ibat / 60 : 0;
+    bool paused = false;
+    if (gap) {
+        pl.bms.cells = pl.bms.ibatOn = false;
+        for (int s = 0; s < 280; ++s) pl.run(c, 1), paused |= c.termCond.stalePaused();
+        pl.bms.cells = pl.bms.ibatOn = true;
+    } else {
+        pl.ipv[0] = 0.3f;
+        pl.run(c, 300);
+        pl.ipv[0] = 35.f;
+    }
+    const float low = pl.vcell();
+    float imax = 0, vmax = 0;
+    int back = -1;
+    for (int s = 0; s < 1500; ++s) {
+        pl.run(c, 1);
+        vmax = std::max(vmax, pl.vcell());
+        if (back < 0 && pl.vcell() >= 3.5f - 0.002f) back = s;
+        if (back < 0 && s > 20) imax = std::max(imax, pl.ibat);
+    }
+    printf("  re-entry after %s: hold %.1f A, cell %.3f, back at cv_eoc after %d s, ibat <= %.1f A on the way, max %.3f\n",
+           gap ? "a 280 s BMS gap" : "a 300 s cloud", ih, low, back, imax, vmax);
+    CHECK(!gap || paused, "re-entry: the stale gap pauses the run");
+    CHECK(low < 3.47f && c.termCond.cvHold() && !(bool) c.termCond, "re-entry: below the band (%.3f), in the hold", low);
+    CHECK(imax <= ih + 1.f, "re-entry: ibat %.1f A above the hold's %.1f A", imax, ih);
+    CHECK(back >= 0 && back < 1200 && vmax <= 3.5f + 0.005f, "re-entry: back after %d s, max %.3f", back, vmax);
+}
+
 // BMS frames stop mid-hold for gapS (11-23: 150-211 s gaps): the limit decays instead of freezing open loop,
 // the expiry latch is unchanged, a short gap resumes from the decayed limit without overshoot. units: 1 or 2 on a bus.
 static void test_hold_blind_decay(int units, int gapS) {
@@ -1661,6 +1700,8 @@ int main() {
     test_hold_sweep_keeps_limit(true);
     test_hold_sweep_keeps_limit(false);
     test_hold_pv_limited_recovers();
+    test_hold_reentry(true);
+    test_hold_reentry(false);
     test_hold_stale_releases_limit();
     test_hold_floor_warning();
     test_hold_entry_40a_two_units();

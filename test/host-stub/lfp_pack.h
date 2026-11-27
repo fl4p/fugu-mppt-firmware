@@ -88,19 +88,25 @@ struct LfpPack {
 // ah +10 (where the 3.500 V hold current is down to 4.7 A, ~0.02 C), 0.02 V/Ah ramped in over 5 Ah.
 // At the field's hold entries the model is -36..+27 mV off (mean -2 mV), low after a discharge or rest. SIM_PACK_RP
 // scales rp: 1.25 puts the worst entry (11:45, -36 mV) at -9 mV, every other one 6-66 mV high (a pessimistic plant).
+// SIM_PACK_TAU scales tauP. After a 4-5 min rest the field cell rebuilt ~1.2 mV/s at 15-20 A (11-25), the model 2-3x
+// slower; tauP x0.35 matches the rebuild, at the cost of the 11-23 replay.
 inline void topOfCharge(LfpPack &p, float a = 0.f) {
     p.r0 = 0.0021f, p.rp = 0.0194f, p.rpd = 0.0039f, p.tauP = 410.f, p.qR = 17.7f, p.iRef = 10.f, p.n = 1.19f;
     if (const char *e = getenv("SIM_PACK_RP")) p.rp *= strtof(e, nullptr);
+    if (const char *e = getenv("SIM_PACK_TAU")) p.tauP *= strtof(e, nullptr);
     p.dvdah = 0.0003f, p.knee = 0.02f, p.kneeAh = 10.f, p.kneeW = 5.f;
     p.place(3.348f, a, 17.4f);
 }
 
-// BMS publisher: an ibat frame every periodI, a highest-cell frame every periodC [s], the first at phase + period.
+// BMS publisher: an ibat frame every periodI, a highest-cell frame every periodC [s] (or the intervals cycC[0..nCyc)
+// in turn), the first at phase + period.
 // Values are rounded to qI / qV (the BMS text frames; 0 = exact); lagI: an ibat frame carries the sample taken at the
 // frame before. cells / ibatOn false: those frames stop (a gap). poll() once per step, then deliver() to every charger
 // on the BMS: the same BatteryState calls as the MQTT callbacks in BatteryCharger::beginMqtt().
 struct BmsFeed {
     float periodI = 4.f, periodC = 12.f, phaseI = 0.f, phaseC = 0.f, qI = 0.f, qV = 0.f;
+    const float *cycC = nullptr;
+    int nCyc = 0;
     bool lagI = false, cells = true, ibatOn = true;
     bool dueI = false, dueC = false;
     float ibat = 0.f, vcell = 0.f;
@@ -115,7 +121,7 @@ struct BmsFeed {
             iPrev = iNow;
         }
         if (t >= nextC) {
-            nextC += periodC;
+            nextC += nCyc ? cycC[kC++ % nCyc] : periodC;
             dueC = cells;
             vcell = q(vNow, qV);
         }
@@ -129,6 +135,7 @@ struct BmsFeed {
 
 private:
     double nextI = -1, nextC = -1;
+    int kC = 0;
     float iPrev = 0.f;
     static float q(float v, float step) { return step > 0 ? std::round(v / step) * step : v; }
 };

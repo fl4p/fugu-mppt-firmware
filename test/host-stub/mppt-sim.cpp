@@ -177,6 +177,15 @@
 //                      cv_hold_band (fails on charger.h before bd9581b7: unit 2 holds at ~3.37 V), a hold, the cell <=
 //                      cv_eoc + 15 mV from the first hold on (the cv-hold-pair/-load tolerance), both units latched or in
 //                      a hold shorter than cv_hold_max_s at the end; reports Ah/Wh into the pack and the time at the top
+//     cv-hold-regap    no BMS frames for 280 s from 800 s mid-hold (stale pause, resume at ~3.36 V); cv-hold-recloud:
+//                      light to 5 % for 300 s, back over 200 s (cell ~3.37 V). Both: pack 5 Ah above the fit's 0 (hold
+//                      ~5 A), tauP x0.35 (the field's polarization rebuild, unless SIM_PACK_TAU), 700 W per unit, the
+//                      measured BMS cell intervals, bat_c 245. The hold re-enters with an overshoot (field 11-25:
+//                      3.521 / 3.519 V; here 3.513 / 3.530 V): re-entry peak <= cv_ceiling - 10 mV, back at cv_eoc
+//                      within 1200 s after the event.
+//     cv-hold-recloud-early  the cloud at 300 s, the fit's tauP, while the cell still comes down from the entry peak
+//                      (3.505 V), same checks. Entry peaks not checked (see runCvHold).
+//                      SIM_RECLOUD=low_s,back_s,light  SIM_RE_AT=t  SIM_PACK_A0=ah
 //     all: no ceiling latch, the plant's highest cell stays below cv_ceiling. Unit 2's output current follows
 //     min(its PV current, Iout_max(), the current that puts its sensed Vout at Vout_max()) with a 0.3 s lag: no
 //     tracking loss, PD loop or diode emulation. Its charger updates every 3 s with main.cpp's authority (running and
@@ -4066,7 +4075,8 @@ static const char *topState(const BatteryCharger *c) {
 
 static int runCvHold(const std::string &name, const std::string &sc) {
     if (sc != "cv-hold-pair" && sc != "cv-hold-offset" && sc != "cv-hold-gap" && sc != "cv-hold-load" &&
-        sc != "cv-hold-reboot" && sc != "cv-hold-mask" && sc != "cv-hold-day") {
+        sc != "cv-hold-reboot" && sc != "cv-hold-mask" && sc != "cv-hold-day" && sc != "cv-hold-regap" &&
+        sc != "cv-hold-recloud" && sc != "cv-hold-recloud-early") {
         printf("unknown scenario %s\n", sc.c_str());
         return 1;
     }
@@ -4088,6 +4098,33 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     if (day) { // 70 Ah below the fit's ah 0 (2026-11-23 09:00, ~80 % SoC by the BMS)
         topOfCharge(T.pack, -70.f);
         T.bal = false, T.loadW = 0, tEnd = 16000;
+    }
+    // re-entries (fry + flat 2026-11-25): the hold left mid-run, then PV well above the hold current. The fit rebuilds
+    // the polarization 2-3x slower than the field did after these rests (lfp-pack-test), so: tauP x 0.35, the pack 5 Ah
+    // above the fit's ah 0 (hold ~5 A), 700 W per unit; the BMS cell frames at the measured MQTT intervals.
+    // regap: no BMS frames for 280 s from 800 s (the stale pause from 980 s); recloud: light to 5 % from 800 s for
+    // 300 s, back over 200 s. recloud-early: the cloud at 300 s, the fit's tauP, while the cell still comes down
+    // from the entry peak. The entry peak at 2 x 700 W is not checked: 3.535 V with tauP x 0.35, which overstates
+    // the build-up from bulk (11-25 replay: +86 mV at the cloud), 3.513 V with the fit's tauP (cv-hold-pair checks
+    // the entry at ~2 x 20 A).
+    static constexpr float CYC_C[] = {12.5f, 8.8f, 11.4f, 3.9f, 12.1f};
+    const bool reEarly = sc == "cv-hold-recloud-early", recloud = reEarly || sc == "cv-hold-recloud";
+    const bool re = recloud || sc == "cv-hold-regap";
+    double evAt = -1, evLen = 0;
+    if (re) {
+        topOfCharge(T.pack, 5.f);
+        if (!getenv("SIM_PACK_TAU") && !reEarly) T.pack.tauP *= 0.35f;
+        T.pv = 700, T.bms.cycC = CYC_C, T.bms.nCyc = 5, tEnd = reEarly ? 3000 : 2400, evAt = reEarly ? 300 : 800;
+        if (const char *e = getenv("SIM_RE_AT")) evAt = atof(e);
+        if (sc == "cv-hold-regap") T.gap[0] = evAt, T.gap[1] = evLen = 280;
+    }
+    float rc[3] = {300, 200, .05f}; // cv-hold-recloud: s at the low, s back, light at the low
+    if (const char *e = getenv("SIM_RECLOUD")) sscanf(e, "%f,%f,%f", rc, rc + 1, rc + 2);
+    if (recloud) evLen = 15 + rc[0];
+    if (const char *e = getenv("SIM_PACK_A0")) {
+        const float tau = T.pack.tauP;
+        topOfCharge(T.pack, atof(e));
+        T.pack.tauP = tau;
     }
     if (const char *e = getenv("SIM_T")) tEnd = atof(e);
     if (const char *e = getenv("SIM_PV_W")) T.pv = atof(e);
@@ -4142,7 +4179,10 @@ static int runCvHold(const std::string &name, const std::string &sc) {
     std::vector<std::string> holds;
     float cl[4] = {-1, 0, 1, 15}; // SIM_CLOUD=t,len,light,ramp s: one cloud on both units' PV
     if (const char *e = getenv("SIM_CLOUD")) sscanf(e, "%f,%f,%f,%f", cl, cl + 1, cl + 2, cl + 3);
-    if (day || cl[0] >= 0) wx.cloud = {{0.f, 1.f}};
+    if (day || re || cl[0] >= 0) wx.cloud = {{0.f, 1.f}};
+    float reMin = 9, rePeak = 0, reIhold = 0;
+    double reBand = -1, reMinAt = -1;
+    int reN = 0;
     for (double nextTr = 0; tNow() < tEnd && (endAt < 0 || tNow() < endAt);) {
         const double tb = tNow();
         if (day) {
@@ -4175,6 +4215,18 @@ static int runCvHold(const std::string &name, const std::string &sc) {
         if (!day && cl[0] >= 0) {
             const float g = 1 - (1 - cl[2]) * (float) std::clamp(std::min(tb - cl[0], cl[0] + cl[1] - tb) / cl[3], 0.0, 1.0);
             wx.cloud[0].second = g, T.pv = pv0 * g;
+        }
+        if (recloud) { // 15 s down to rc[2], rc[0] s, rc[1] s back
+            const double u = tb - evAt;
+            const float g = u < 0 ? 1.f : u < 15 ? 1 - (1 - rc[2]) * (float) (u / 15) : u < 15 + rc[0] ? rc[2]
+                            : u < 15 + rc[0] + rc[1] ? rc[2] + (1 - rc[2]) * (float) ((u - 15 - rc[0]) / rc[1]) : 1.f;
+            wx.cloud[0].second = g, T.pv = pv0 * g;
+        }
+        if (re && tb >= evAt) { // after the event: the dip's low, the peak after it, time back at cv_eoc, the hold current
+            if (T.vcell < reMin && reBand < 0) reMin = T.vcell, reMinAt = tb;
+            if (tb > evAt + evLen) rePeak = std::max(rePeak, T.vcell);
+            if (reBand < 0 && tb > evAt + evLen && T.vcell >= eoc - 0.002f) reBand = tb;
+            if (tb >= tEnd - 300) reIhold += T.ibat, ++reN;
         }
         if (rebootAt >= 0 && tb >= rebootAt) {
             printf("%9.2f >>> unit 2 reboots (cell %.3f)\n", tb, T.vcell);
@@ -4245,6 +4297,15 @@ static int runCvHold(const std::string &name, const std::string &sc) {
         need(latches.empty(), "latched");
     }
     if (sc == "cv-hold-load" || sc == "cv-hold-mask") need(holdAt >= 0 && peak <= eoc + 0.015f, "peak > cv_eoc + 15 mV");
+    if (re) {
+        printf("== CVHOLD %s re-entry: event %.0f+%.0f s, cell low %.3f at %.0f s, peak %.4f after it, back at cv_eoc - 2 mV"
+               " %.0f s after the event's end, hold %.1f A over the last 300 s\n", name.c_str(), evAt, evLen, reMin,
+               reMinAt, rePeak, reBand < 0 ? -1. : reBand - evAt - evLen, reN ? reIhold / reN : NAN);
+        printf("== CVHOLD %s re-entry peak %+.1f mV over cv_eoc, %.1f mV below the ceiling\n", name.c_str(),
+               (rePeak - eoc) * 1e3f, (ceil - rePeak) * 1e3f);
+        need(holdAt >= 0 && rePeak <= ceil - 0.010f, "re-entry peak > cv_ceiling - 10 mV");
+        need(reBand >= 0 && reBand - evAt - evLen <= 1200, "not back at cv_eoc within 1200 s");
+    }
     if (sc == "cv-hold-mask") need(holdAt >= T.load[1], "hold entered below the band");
     if (day) {
         std::string hs;
@@ -4444,6 +4505,7 @@ static int simMain(int argc, char **argv) {
         std::string c = "charger.conf:vout_max=29,charger.conf:vout_max_fallback=26.8,charger.conf:cv_eoc=3.5,"
                         "charger.conf:cv_float=3.35,charger.conf:bat_c=280,charger.conf:ibat_max=40,"
                         "charger.conf:cv_hold_max_s=5400,charger.conf:balance_interval=30,charger.conf:balance_hold_s=7200";
+        if (sc == "cv-hold-regap" || sc.rfind("cv-hold-recloud", 0) == 0) c += ",charger.conf:bat_c=245"; // the 11-25 pack
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
     }

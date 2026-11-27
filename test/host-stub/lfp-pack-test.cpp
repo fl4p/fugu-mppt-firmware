@@ -5,7 +5,8 @@
 //
 // replay of the measured pack current (highest cell and pack voltage), the error at each hold entry, CV holds at
 // 3.500 V from the field state at four hold starts, the taper of one long hold, the relaxation after the 13:33 hold and
-// a 0.5 A trickle.
+// a 0.5 A trickle. Validation on the 2026-11-25 record (data/bms-top-2026-11-25.csv): the normal entry and the two
+// re-entries, each from the state fitted to the 10 min before it.
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -20,7 +21,7 @@ static std::vector<Row> g_d;
 static constexpr float DT = 20.f, VHOLD = 3.5f;
 static constexpr double T_REST = 13 * 3600 + 44 * 60 - 10 * 3600; // ah 0 of the fit: the 13:44 rest
 
-static bool load(const char *path) {
+static bool load(const char *path, std::vector<Row> &g_d = ::g_d) {
     FILE *f = fopen(path, "r");
     if (!f) return false;
     char ln[512];
@@ -167,6 +168,66 @@ static void test_relax() {
     CHECK(worst < 0.02f, "relaxation off by %.0f mV", worst * 1e3f);
 }
 
+// 11-25 windows: replay from t0 with the start charge a0 and an OCV shift dv picked on the hold before it (the record
+// is another day: SoC and the high cell's offset are unknown), then model vs field in the window. Field 11:27 and 12:05:
+// after 4-5 min near 0 A the cell relaxed ~110 mV and climbed back at ~1.2 mV/s at 15-20 A. The model follows the cloud
+// (12:05, +2 mV), but on this day it is optimistic at the entry (-46 mV) and after the BMS gap (-22 mV): its
+// polarization rebuilds 2-3x slower there; a fast RC branch, a faster charging tau or a refit on both days did not
+// fix it. The bounds hold those errors (lo: optimistic, model below the field peak).
+static void test_reentries() {
+    std::vector<Row> d;
+    const char *path = "test/host-stub/data/bms-top-2026-11-25.csv";
+    if (!load(path, d)) {
+        CHECK(false, "cannot read %s", path);
+        return;
+    }
+    constexpr float D = 10;
+    auto at = [](int h, int m, int s = 0) { return (double) (h * 3600 + m * 60 + s - 10 * 3600); };
+    struct W { const char *nm; double t0, p0, p1, w0, w1; float lo; } ws[] = {
+        {"entry 11:04", at(10, 50), at(10, 54), at(11, 3), at(11, 3), at(11, 13), -0.05f},
+        {"BMS gap 11:21..11:26", at(11, 10), at(11, 14), at(11, 21, 20), at(11, 26), at(11, 29, 30), -0.03f},
+        {"cloud 12:00..12:05", at(11, 40), at(11, 50), at(11, 59, 30), at(12, 4), at(12, 10), -0.015f}};
+    for (auto &w: ws) {
+        const size_t k0 = (size_t) (w.t0 / D);
+        auto run = [&](float a0, float dv, std::vector<float> &m) {
+            LfpPack p;
+            topOfCharge(p, a0);
+            for (double &o: p.ocv) o += dv;
+            p.y = d[k0].i, p.step(d[k0].i, 0);
+            m.assign(d.size(), NAN);
+            for (size_t k = k0; k < d.size() && d[k].t <= w.w1; ++k) p.step(d[k].i, D), m[k] = p.vcellHigh(d[k].i);
+        };
+        auto rms = [&](const std::vector<float> &m, double a, double b) {
+            double se = 0;
+            int n = 0;
+            for (size_t k = k0; k < d.size() && d[k].t <= b; ++k)
+                if (d[k].t >= a && !std::isnan(d[k].v)) se += std::pow(m[k] - d[k].v, 2), ++n;
+            return (float) std::sqrt(se / std::max(n, 1)) * 1e3f;
+        };
+        std::vector<float> m;
+        float best = 1e9, ba = 0, bd = 0;
+        for (float a0 = -60; a0 <= 15; a0 += 2.5f)
+            for (float dv = -0.06f; dv <= 0.0601f; dv += 0.01f) {
+                run(a0, dv, m);
+                const float e = rms(m, w.p0, w.p1);
+                if (e < best) best = e, ba = a0, bd = dv;
+            }
+        run(ba, bd, m);
+        size_t kp = 0;
+        float mmax = 0;
+        for (size_t k = k0; k < d.size() && d[k].t <= w.w1; ++k)
+            if (d[k].t >= w.w0) {
+                if (!std::isnan(d[k].v) && (!kp || d[k].v > d[kp].v)) kp = k;
+                mmax = std::max(mmax, m[k]);
+            }
+        printf("  11-25 %-20s: fit a0 %5.1f Ah, OCV %+3.0f mV, rms %4.1f mV before; window rms %4.1f mV, field peak "
+               "%.4f V, model there %.4f (%+5.1f mV), model max %.4f\n", w.nm, ba, bd * 1e3f, best, rms(m, w.w0, w.w1),
+               d[kp].v, m[kp], (m[kp] - d[kp].v) * 1e3f, mmax);
+        CHECK(best < 15 && mmax - d[kp].v > w.lo && mmax - d[kp].v < 0.03f, "%s: model max %.4f vs field peak %.4f",
+              w.nm, mmax, d[kp].v);
+    }
+}
+
 // both chargers at their 0.25 A floor: 0.5 A net into the pack after the 13:33 hold, 2 h
 static void test_trickle() {
     LfpPack p = stateAt(idx(clock(13, 33, 20)));
@@ -192,6 +253,7 @@ int main() {
     test_taper();
     test_relax();
     test_trickle();
+    test_reentries();
     printf("%s (%d failures)\n", g_fail ? "FAILED" : "OK", g_fail);
     return g_fail != 0;
 }

@@ -391,6 +391,19 @@ floor is safe however many chargers share the pack, and it matches where the
 limit, so the current ramps back up at the upward step limit instead of
 stepping. The 180 s expiry and its exits do not change.
 
+The hold has two known overshoot limits:
+
+- Re-entry: a BMS data gap or a cloud dip lets the highest cell fall below
+  the approach band, and its polarization relaxes. When the data or the sun
+  comes back, the polarization rebuilds faster than the cell loop lowers the
+  current, and the cell overshoots `cv_eoc` by about 20 mV (measured). The
+  peak stays below the ceiling cutoff (3.55 V with `cv_eoc` at 3.50 V).
+- Cycling load: a load that switches on and off faster than the cell frames
+  arrive can push the highest cell above `cv_ceiling` between two frames,
+  where the ceiling check does not see it. In simulation, a 900 W load
+  cycling 30 s on and 30 s off took the cell to 3.557 V with no frame above
+  the ceiling. Field data has not shown this so far.
+
 When the hold ends in termination, the output voltage limit glides from the
 bus voltage as the converter reads it to the float voltage, so the output does
 not step. After termination the float and recharge rules above apply
