@@ -63,6 +63,11 @@ mode 0, replaced here. Root's ESP-IDF build passes.
 approach recovery 312 → 308 s, 40 A entry peak 3.505 → 3.508, sibling peak 3.506 → 3.508 (both
 ≤ 3.515). Every other assertion passes on both.
 
+**Full host suite** (`host-tests.sh -j 4`, candidate): 37 PASS, 1 XFAIL (the known `bms-cutoff-test`),
+0 FAIL, rc 0 on Mac. The final Linux run at `3a4cccd6` also passed with these counts:
+[run 46023141321](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46023141321),
+Ubuntu 26.04 / Clang 21.1.8. This includes the replacement assertion and all four new regression cases.
+
 **Regression** (`test_hold_lookahead_gain_from_measured_error`), exact step `G·gain·eff·S`, ±1 mA
 (`S = 93.333 A/V`):
 
