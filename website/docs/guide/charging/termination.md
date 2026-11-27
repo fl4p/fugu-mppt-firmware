@@ -516,7 +516,9 @@ Limits and deferral:
 The console command `balance` shows the state (off, days to the next run, due,
 running or the deferral reason, and the in-band time); `balance now` makes a
 run due, `balance skip` marks it done. During a run `status` reports
-`CV HOLD balance (<in band>/<balance_hold_s>s, ilim <amps>A)`. Parallel
+`CV HOLD balance (<in band>/<balance_hold_s>s, ilim <amps>A)`. The telemetry
+fields `chg` and `bal` carry the same state and in-band time
+([Telemetry fields](../../reference/telemetry-fields.md#chg)). Parallel
 chargers on one pack each run their own balance hold on the same BMS data, with
 the same current regulation as the CV hold.
 

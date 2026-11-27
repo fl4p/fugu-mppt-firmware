@@ -1424,6 +1424,10 @@ public:
     [[nodiscard]] uint8_t holidayGaps() const { return _hGaps; }
     [[nodiscard]] float holidayDischargeH() const { return _hDisS * (1.f / 3600.f); }
     [[nodiscard]] bool chargeBlocked() const { return _coldBlocked; }
+    // 0 charging, 1 CV hold, 2 balance hold, 3 partial hold, 4 blocked (cold), 5 terminated (float)
+    [[nodiscard]] uint8_t state() const {
+        return bool(termCond) ? 5 : _coldBlocked ? 4 : _partialHold ? 3 : termCond.cvHold() ? 1 + balanceRunning() : 0;
+    }
     // the pack wants no charge (terminated, at the partial ceiling, or too cold) or is held at cv_eoc
     [[nodiscard]] bool chargeHold() const {
         return bool(termCond) || _partialHold || _coldBlocked || termCond.cvHold() || termCond.stalePaused();

@@ -69,6 +69,11 @@ interval of 1 s or more, every point carries all fields.
 | `rect_off`    | counts | int   | every 40th    | Active rectifier timing offset                                                  |
 | `heap`        | bytes  | int   | every 40th    | Free heap                                                                        |
 | `heap_min`    | bytes  | int   | every 40th    | Lowest free heap since boot                                                      |
+| `vcell`       | V      | float | every 40th, BMS fresh | Highest cell voltage from the BMS, as the charger uses it (`status` `vcell_high`). Absent while the value is stale |
+| `bms_age`     | s      | int   | every 40th, after the first BMS value | Age of the last BMS cell voltage                             |
+| `chg`         |        | int   | every 40th    | Charger state (`status` `Charger:` line), see below                             |
+| `bal`         | s      | int   | every 40th    | In-band time of the due top-balancing run (`balance` `x/…s`); 0 when no run is due |
+| `ah_full`     | Ah     | float | every 40th    | Charge deficit since the last full charge (`status` `ahSinceFull`), from the BMS charge while fresh, else the integrated battery current |
 | `pwm_ls_duty` | counts | int   | every 10th, converter enabled | Rectifier-switch on-time                                         |
 | `pwm_ls_max`  | counts | int   | every 10th, converter enabled | Maximum allowed rectifier on-time                                |
 | `pwm_dcm`     |        | bool  | every 10th, converter enabled | Converter operates in discontinuous conduction mode              |
@@ -89,6 +94,27 @@ The `mppt_state` field reports the control mode.
 | 3     | `CP`    | Power limited (thermal derating / `P_max`)      |
 | 4     | `MPPT`  | Tracking the maximum power point                |
 | 5     | `Sweep` | Global sweep or fade to a target duty           |
+
+### `chg`
+
+The `chg` field reports the charger state, in the order the `status` command checks it.
+
+| Value | State          | Meaning                                                  |
+|-------|----------------|----------------------------------------------------------|
+| 0     | `charging`     | Charging toward the termination line                     |
+| 1     | `CV HOLD`      | Highest cell held at `cv_eoc`                            |
+| 2     | `CV HOLD balance` | CV hold of a top-balancing run                        |
+| 3     | `PARTIAL HOLD` | Load-following at the partial-charge ceiling             |
+| 4     | `BLOCKED`      | Charging blocked, pack too cold                          |
+| 5     | `TERMINATED`   | Terminated, floating at `cv_float`                       |
+
+A hold paused for stale [BMS data](../guide/charging/bms-integration.md) reports 0, also during a top-balancing run; `vcell` is then absent.
+
+`bal` counts while a run is due, including the time between hold sessions. It never reports the full
+`balance_hold_s`: when the run completes, is skipped or ends early, `bal` drops to 0 together with the
+due flag, so the console log tells which.
+
+For the charge stages, see [Charge termination](../guide/charging/termination.md).
 
 ### `cv_lim_idx`
 

@@ -2246,10 +2246,9 @@ static void cmdStatus(cmd *) {
                  (unsigned long) p.balance_hold_s, chg.Iout_max());
     else
         snprintf(hold, sizeof(hold), "CV HOLD (%lus, ilim %.1fA)", (unsigned long) chg.termCond.cvHoldS(), chg.Iout_max());
-    UART_LOG("Charger: %s", (bool) chg.termCond ? "TERMINATED (float)"
-                            : chg.chargeBlocked() ? "BLOCKED (pack cold)"
-                            : chg.partialHold() ? "PARTIAL HOLD (load-following)"
-                            : chg.termCond.cvHold() ? hold : "charging");
+    const char *const st[]{"charging", hold, hold, "PARTIAL HOLD (load-following)", "BLOCKED (pack cold)",
+                           "TERMINATED (float)"};
+    UART_LOG("Charger: %s", st[chg.state()]);
     UART_LOG("  Vbat_max=%.2fV%s Vout_max=%.2fV  Ibat_lim=%.1fA Iout_max=%.1fA", p.Vbat_max,
              p.awaitingDetect() ? " (auto, no pack yet)" : p.vbatAuto ? " (auto)" : "", chg.Vout_max(), p.Ibat_lim,
              chg.Iout_max());
