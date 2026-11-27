@@ -25,7 +25,7 @@ of them except `scope-test` (an endless streaming prototype), `converter-test` (
 `conf-hash-test` (a helper that `test/host_py/test_conf_hash.py` builds), in parallel (`-j N`, default 4) or the ones named, and exits non-zero if any fails; `--list` prints the names.
 Known failures are reported as `XFAIL` with their reason. The header comment of each test gives its compile command. Shims for the ESP-IDF and Arduino headers live in `test/host-stub/`
 (`esp/`, `freertos/`, `mqtt-stub/`, and the `arduino-shim` submodule). Some tests also compile firmware sources, for
-example `src/sim/vconv.cpp` or `src/usb/vfat.cpp`. The following command builds and runs one test:
+example `src/sim/vconv.cpp` or `components/virtual-fat12/src/vfat.cpp`. The following command builds and runs one test:
 
 ```bash
 clang++ -std=gnu++17 -fexceptions -I test/host-stub -I src \

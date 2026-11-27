@@ -20,7 +20,8 @@
 #include "esp_private/usb_phy.h"
 #include <tusb.h>
 
-#include "vfat.h"
+#include "vfat/vfat.h"
+#include "conf_drive.h"
 #include "../conf_stage.h"
 #include "cli.h"
 #include "logging.h"
@@ -143,7 +144,7 @@ static void buildVolume() {
         }
         while (auto *de = readdir(d.get())) {
             if (de->d_type != DT_REG) continue;
-            if (!vfat::validName(de->d_name)) {
+            if (!confdrive::validName(de->d_name)) {
                 ESP_LOGW(TAG, "drive: hiding %s", de->d_name);
                 continue;
             }
@@ -155,7 +156,7 @@ static void buildVolume() {
             budget -= f.data.size();
             files.push_back(std::move(f));
         }
-        std::unique_ptr<vfat::Volume> vol(new vfat::Volume(OVERLAY_MAX));
+        std::unique_ptr<vfat::Volume> vol(new vfat::Volume(OVERLAY_MAX, confdrive::naming()));
         if (!vol->build(std::move(files), (uint32_t) esp_random())) {
             ESP_LOGE(TAG, "drive: conf files don't fit");
             return;
@@ -188,7 +189,7 @@ static Commit commit() {
         if (d.empty()) return Commit::Unchanged;
         for (auto &u: d.upsert) {
             if (!u.data.compare(0, 3, "\xEF\xBB\xBF")) u.data.erase(0, 3);
-            if (!vfat::validConfText(u.data, err)) {
+            if (!confdrive::validConfText(u.data, err)) {
                 UART_LOG("usb drive: %s %s, nothing applied", u.name.c_str(), err.c_str());
                 return Commit::Rejected;
             }

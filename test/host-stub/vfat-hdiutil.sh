@@ -7,7 +7,7 @@ set -euo pipefail
 CONF=${1:-config/fmetal/conf}
 W=$(mktemp -d /tmp/vfat-rt.XXXXXX)
 BIN=$W/vfat-test
-clang++ -std=gnu++20 -I src -o "$BIN" test/host-stub/vfat-test.cpp src/usb/vfat.cpp
+clang++ -std=gnu++20 -I components/virtual-fat12/include -I src -o "$BIN" test/host-stub/vfat-test.cpp components/virtual-fat12/src/vfat.cpp
 "$BIN"
 "$BIN" gen "$CONF" "$W/img.bin"
 fsck_msdos -n "$W/img.bin" >/dev/null

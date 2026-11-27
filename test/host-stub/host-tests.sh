@@ -47,7 +47,7 @@ TESTS=(
   "tracker-window-test|-std=gnu++20 -O2 -fexceptions -DMOCK=1 -I $H -I src||"
   "vconv-test|-std=gnu++17 -fexceptions -I $H -I src|$VC|"
   "vedirect-test|-std=gnu++20||"
-  "vfat-test|-std=gnu++20 -I src|src/usb/vfat.cpp|"
+  "vfat-test|-std=gnu++20 -I components/virtual-fat12/include -I src|components/virtual-fat12/src/vfat.cpp|"
   "wire-guard-test|-std=gnu++20 -O2 -fexceptions -I src||"
 )
 

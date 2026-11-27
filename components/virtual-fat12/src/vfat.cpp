@@ -1,4 +1,4 @@
-#include "vfat.h"
+#include "vfat/vfat.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -44,58 +44,51 @@ bool iequals(const std::string &a, const std::string &b) {
 
 uint32_t clustersFor(size_t bytes) { return (bytes + SECTOR - 1) / SECTOR; }
 
-}
-
-bool validName(const std::string &n) {
-    if (n.size() < 6 || n.size() > 64 || !iequals(n.substr(n.size() - 5), ".conf")) return false;
-    for (size_t i = 0; i < n.size() - 5; ++i) {
-        char c = n[i];
-        if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-'))
-            return false;
+// A name FAT long names allow: printable ASCII, no reserved byte, and not ending in a space or dot
+// (either would be stripped by a host, so the name would not survive collect()).
+bool lfnNameOk(const std::string &n) {
+    if (n.empty() || n.size() > Volume::MAX_NAME_BYTES) return false;
+    if (n.back() == ' ' || n.back() == '.') return false;
+    for (char c: n) {
+        unsigned char u = (unsigned char) c;
+        if (u < 0x20 || u > 0x7E) return false;
+        switch (c) {
+            case '"': case '*': case '/': case ':': case '<': case '>': case '?': case '\\': case '|':
+                return false;
+        }
     }
     return true;
 }
 
-bool validConfText(const std::string &t, std::string &err) {
-    if (t.size() > 16384) {
-        err = "too large";
-        return false;
+// Legal 8.3 character (already uppercased); anything else becomes '_' so the alias is a valid SFN
+// even when the long name holds a byte the short name may not (a space, '+', ...).
+char sfnChar(char c) {
+    if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;
+    switch (c) {
+        case '$': case '%': case '\'': case '-': case '_': case '@': case '~':
+        case '!': case '(': case ')': case '{': case '}': case '^': case '#': case '&':
+            return c;
     }
-    unsigned ln = 0;
-    for (size_t i = 0; i < t.size();) {
-        size_t e = t.find('\n', i);
-        if (e == std::string::npos) e = t.size();
-        ++ln;
-        std::string line = t.substr(i, e - i);
-        i = e + 1;
-        if (line.size() > 254) { // ConfFile parses 255-byte fgets() chunks
-            err = "line " + std::to_string(ln) + ": too long";
-            return false;
+    return '_';
+}
+
+}
+
+bool Volume::tracked(const std::string &name, bool hasLfn, const uint8_t *sfn) const {
+    if (name.empty() || name[0] == '.') return false;
+    const char *ext = _naming.ext;
+    if (!ext) return true;
+    size_t el = strlen(ext);
+    if (name.size() > el && iequals(name.substr(name.size() - el), ext)) return true;
+    if (!hasLfn && el >= 4) {
+        char u[3];
+        for (int i = 0; i < 3; ++i) {
+            char c = ext[1 + i];
+            u[i] = (c >= 'a' && c <= 'z') ? c - 32 : c;
         }
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        for (char c: line)
-            if (c != '\t' && (c < 0x20 || c > 0x7E)) {
-                err = "line " + std::to_string(ln) + ": non-ASCII or control char";
-                return false;
-            }
-        line = line.substr(0, line.find('#'));
-        size_t b = line.find_first_not_of(" \t");
-        if (b == std::string::npos) continue;
-        size_t eq = line.find('=');
-        size_t ke = eq == std::string::npos ? 0 : line.find_last_not_of(" \t", eq ? eq - 1 : 0);
-        if (eq == std::string::npos || eq <= b || ke == std::string::npos || ke < b) {
-            err = "line " + std::to_string(ln) + ": expected key=value";
-            return false;
-        }
-        for (size_t k = b; k <= ke; ++k) {
-            char c = line[k];
-            if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-')) {
-                err = "line " + std::to_string(ln) + ": bad key";
-                return false;
-            }
-        }
+        if (!memcmp(sfn, u, 3)) return true; // sfn points at the 8.3 extension field
     }
-    return true;
+    return false;
 }
 
 void Volume::clear() {
@@ -142,24 +135,36 @@ bool Volume::build(std::vector<File> files, uint32_t volumeId) {
     for (auto &f: files) {
         uint32_t nc = clustersFor(f.data.size());
         size_t nlfn = (f.name.size() + 12) / 13;
-        if (!validName(f.name) || next + nc > CLUSTERS + 2 || e + 32 * (nlfn + 1) > end) {
+        size_t availEntries = (size_t)(end - e) / 32;
+        bool dup = false;
+        for (auto &g: _img) if (iequals(g.name, f.name)) { dup = true; break; }
+        // Skip anything collect() would reject, so a build() that reports success is always collectable.
+        if (!lfnNameOk(f.name) || nlfn > MAX_LFN_ENTRIES || f.data.size() > MAX_FILE_BYTES || dup ||
+            !tracked(f.name, true, nullptr) || (_naming.valid && !_naming.valid(f.name)) ||
+            next + nc > CLUSTERS + 2 || nlfn + 1 > availEntries) {
             all = false;
             continue;
         }
 
-        // short name BASE~N.CON, unique by index
+        // short name BASE~N.EXT, unique by index; taken from the file name, not the policy extension
         uint8_t sn[11];
         memset(sn, ' ', 11);
-        size_t dot = f.name.size() - 5, k = 0;
-        for (size_t i = 0; i < dot && k < 5; ++i) {
+        size_t dot = f.name.rfind('.');
+        size_t baseLen = dot == std::string::npos ? f.name.size() : dot;
+        size_t extOff = dot == std::string::npos ? f.name.size() : dot + 1;
+        size_t k = 0;
+        for (size_t i = 0; i < baseLen && k < 5; ++i) {
             char c = f.name[i];
-            sn[k++] = (c >= 'a' && c <= 'z') ? c - 32 : c;
+            sn[k++] = sfnChar(c >= 'a' && c <= 'z' ? c - 32 : c);
         }
         unsigned idx = _img.size() + 1;
         char tail[6];
         int tl = snprintf(tail, sizeof tail, "~%u", idx);
         memcpy(sn + std::min<size_t>(k, 8 - tl), tail, tl);
-        memcpy(sn + 8, "CON", 3);
+        for (size_t i = 0; i < 3 && extOff + i < f.name.size(); ++i) {
+            char c = f.name[extOff + i];
+            sn[8 + i] = sfnChar(c >= 'a' && c <= 'z' ? c - 32 : c);
+        }
         uint8_t cs = lfnChecksum(sn);
 
         for (size_t n = nlfn; n >= 1; --n, e += 32) {
@@ -283,7 +288,7 @@ bool Volume::collect(std::vector<File> &out, std::string &err) const {
         }
         if ((e[11] & 0x3F) == ATTR_LFN) {
             int seq = e[0] & 0x1F;
-            if ((e[0] & 0xA0) || seq == 0 || seq > 20 || e[12] || get16(e + 26)) return fail("bad long name entry");
+            if ((e[0] & 0xA0) || seq == 0 || seq > (int) MAX_LFN_ENTRIES || e[12] || get16(e + 26)) return fail("bad long name entry");
             if (e[0] & 0x40) {
                 if (lfnNext >= 0) return fail("orphan long name");
                 lfn.assign(seq * 13, '\0');
@@ -321,13 +326,12 @@ bool Volume::collect(std::vector<File> &out, std::string &err) const {
         }
         if (e[11] & ATTR_VOL) continue;
 
-        // every entry claims its clusters, so a conf file cross-linked with junk is caught too
+        // every entry claims its clusters, so a tracked file cross-linked with junk is caught too
         bool dir = e[11] & ATTR_DIR;
-        bool conf = name[0] != '.' && ((name.size() > 5 && iequals(name.substr(name.size() - 5), ".conf")) ||
-                                       (!haveLfn && !memcmp(e + 8, "CON", 3)));
-        if (conf && (dir || !validName(name))) return fail(name + ": invalid conf entry");
+        bool conf = tracked(name, haveLfn, e + 8);
+        if (conf && (dir || !lfnNameOk(name) || (_naming.valid && !_naming.valid(name)))) return fail(name + ": invalid name");
         uint32_t size = get32(e + 28), c = get16(e + 26), need = dir ? CLUSTERS : clustersFor(size);
-        if (conf && size > 64 * 1024) return fail(name + ": too large");
+        if (conf && size > MAX_FILE_BYTES) return fail(name + ": too large");
         File f{name, {}};
         for (uint32_t n = 0; n < need && !(dir && n && c >= 0xFF8); ++n) {
             if (c < 2 || c >= CLUSTERS + 2 || used[c]) return fail(name + ": bad cluster chain");

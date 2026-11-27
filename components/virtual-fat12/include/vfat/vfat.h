@@ -25,14 +25,24 @@ struct Diff {
     bool empty() const { return upsert.empty() && removed.empty(); }
 };
 
-// [A-Za-z0-9_-]+\.conf
-bool validName(const std::string &name);
-
-// Strict key=value check (printable ASCII, every non-comment line has a key and '=').
-bool validConfText(const std::string &text, std::string &err);
+// Which directory entries the volume tracks as files.
+//   ext   tracked extension, case-insensitive, with the dot (".conf"). nullptr tracks every
+//         non-hidden entry. A long name must end with `ext`; an 8.3 short name without a long-name
+//         entry carries at most three extension characters, matched against the truncated `ext`
+//         (".conf" -> "CON").
+//   valid strict name check for a tracked entry; nullptr accepts any tracked name.
+// `ext` must outlive the Volume (a string literal is fine); it is not copied.
+struct Naming {
+    const char *ext = nullptr;
+    bool (*valid)(const std::string &name) = nullptr;
+};
 
 class Volume {
 public:
+    static constexpr uint32_t MAX_FILE_BYTES = 64 * 1024;
+    static constexpr uint32_t MAX_NAME_BYTES = 255; // FAT long-name maximum
+    // The LFN ordinal field is 1..20; 20 entries cover 255 name bytes plus the terminator.
+    static constexpr uint32_t MAX_LFN_ENTRIES = 20;
     static constexpr uint32_t TOTAL_SECTORS = 4096;
     static constexpr uint32_t FAT_SECTORS = 12;
     static constexpr uint32_t ROOT_ENTRIES = 64;
@@ -43,9 +53,13 @@ public:
     static_assert(CLUSTERS < 4085 - 16, "must stay FAT12");
     static_assert((CLUSTERS + 2) * 3 / 2 <= FAT_SECTORS * SECTOR, "FAT too small");
 
-    explicit Volume(uint16_t maxOverlaySectors = 128) : _maxOverlay(maxOverlaySectors) {}
+    explicit Volume(uint16_t maxOverlaySectors = 128, Naming naming = {})
+        : _maxOverlay(maxOverlaySectors), _naming(naming) {}
 
-    // Lays out files with valid names. false if some were skipped (invalid name or no space).
+    // Lays out files with tracked names. false if some were skipped: untracked name, a name with a
+    // byte FAT does not allow (control, > 0x7E, "* / : < > ? \\ |, trailing space or dot) or over
+    // MAX_NAME_BYTES, data over MAX_FILE_BYTES, a name duplicate (case-insensitive) of one already
+    // laid out, or no space. Whatever it builds, collect() can read it back.
     bool build(std::vector<File> files, uint32_t volumeId);
 
     void clear();
@@ -55,7 +69,7 @@ public:
     // false: out of range or overlay full
     bool write(uint32_t lba, const uint8_t *buf);
 
-    // Host view of all valid *.conf entries. false (with err) if any of them is inconsistent.
+    // Host view of all tracked entries. false (with err) if any of them is inconsistent.
     bool collect(std::vector<File> &out, std::string &err) const;
 
     // the files the volume was built from
@@ -69,12 +83,14 @@ private:
         uint8_t d[SECTOR];
     };
 
+    bool tracked(const std::string &name, bool hasLfn, const uint8_t *sfn) const;
     uint16_t fatGet(uint32_t c) const;
     void fatSet(uint32_t c, uint16_t v);
     uint8_t *overlayFind(uint32_t lba) const;
     void readData(uint32_t lba, uint8_t *buf) const;
 
     uint16_t _maxOverlay;
+    Naming _naming;
     uint32_t _volId = 0;
     std::vector<File> _img;
     std::vector<uint16_t> _imgCluster;
