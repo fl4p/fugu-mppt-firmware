@@ -1,6 +1,6 @@
 # Pmini telemetry
 
-Pmini is an opt-in codec for binary UDP, BLE NUS telemetry, and leased MQTT
+Pmini is the default adaptive codec for binary UDP, BLE NUS telemetry, and leased MQTT
 telemetry. Firmware OTA still uses its existing transforms. Existing text,
 raw-binary (codec 0), and tamp (codec 1) receivers remain supported when pmini
 is disabled. Receivers must support codec 2 before it is enabled.
@@ -8,10 +8,12 @@ is disabled. Receivers must support codec 2 before it is enabled.
 ## Enable
 
 `CONFIG_FUGU_WITH_TELE_PMINI` defaults on when binary telemetry is compiled.
-Runtime configuration defaults **off** (`tele.conf pmini=0`). In the config
-editor, `tele.conf` now exposes the `pmini` boolean.
+Runtime configuration defaults **on** when compiled in. A missing `tele.conf pmini`
+key enables it; an explicit `pmini=0` keeps the legacy raw/tamp wire. Text UDP
+telemetry is unchanged. The config editor exposes this default as `pmini=1`.
 
-For UDP, after updating the Python receiver:
+Havan's relay supports codec 2. Update any other receivers before using the new
+default. For UDP, select the binary wire (and clear any explicit opt-out):
 
 ```text
 set-config tele.conf binary 1

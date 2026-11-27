@@ -942,7 +942,7 @@ const META = {
 
   // tele.conf
   influxdb_host:{unit:"",desc:"InfluxDB host IP for UDP telemetry (port 8086)",type:"string"},
-  pmini:{unit:"",desc:"Opt-in adaptive pmini telemetry (codec 2), with raw/tamp fallback. Update receivers first; batches wait up to 1000 ms. Requires CONFIG_FUGU_WITH_TELE_PMINI. Restart the telemetry sink after changing.",type:"bool"},
+  pmini:{unit:"",desc:"Default-on adaptive pmini telemetry (codec 2), with raw/tamp fallback. Update receivers first; batches wait up to 1000 ms. Requires CONFIG_FUGU_WITH_TELE_PMINI. Restart the telemetry sink after changing.",type:"bool"},
   binary:{unit:"",desc:"1 = binary symbol-table wire (sym_line_protocol.h, tamp-compressed); 0 = text influx. Needs CONFIG_FUGU_WITH_TELE_BINARY (or BLE_TELE); other builds send text",type:"bool"},
   ble:{unit:"",desc:"Allow the BLE telemetry stream (tele-ble command; needs CONFIG_FUGU_WITH_BLE_TELE)",type:"bool"},
   adv_ms:{unit:"ms",desc:"BLE advertising telemetry broadcast refresh (CONFIG_FUGU_WITH_BLE_ADV), 0=off, min 100",type:"int"},
@@ -1310,7 +1310,7 @@ const DEFAULTS = {
   "log_level":"\"info\"","password":"\"\"","username":"\"\"",
   // tele.conf
   "adv_ms":"500","binary":"0","ble":"1","idle_interval_ms":"900000","influxdb_host":"\"\"",
-  "pmini":"0",
+  "pmini":"1",
   // ftp.conf
   "pasv_port":"50009",
   // telnet.conf
