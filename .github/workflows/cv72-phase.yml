@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  CANDIDATE_SHA: "f0ebdf4352e73bae823037ff8a255cf8f6b234e9"
+  CANDIDATE_SHA: "cbbb692b3a048344ff4c37d0329c9e74dae1a859"
 
 jobs:
   phase:
