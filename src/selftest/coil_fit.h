@@ -311,7 +311,7 @@ inline Result fit(const float *d, const float *vin, const float *vout, const flo
 
 // on-time offset of r: 0 applicable; 1 not estimated (under kMinFitPts points), 2 duty span under 2x, 3 error (noise
 // and systematic) over kDlTol, 4 FAIL: offset or its error beyond kDlMax, or not computable. Both bounds act alone, so
-// a larger offset or error never turns 4 into a fallback (1-3, which persist the uncorrected L).
+// a larger offset or error never turns 4 into 0, 2 or 3.
 inline int dlStatus(const Result &r) {
     const float u = std::hypot(r.dlse, r.dlsys);
     if (!(std::fabs(r.dl) + 2 * u <= kDlMax)) return r.n < kMinFitPts ? 1 : 4;
@@ -336,10 +336,12 @@ inline Result fitOnTime(const float *d, const float *vin, const float *vout, con
     return r;
 }
 
-// the L to persist from fit r0 (offset 0) and fitOnTime() r, st (NAN: none): r's on applied, r0's on fallback
-inline float persistL(const Result &r0, const Result &r, int st) {
-    const float L = st ? r0.L : r.L;
-    return st != 4 && L > kLMin && L < kLMax ? L : NAN;
+// the L to persist from fit r0 (offset 0) and fitOnTime() status st (NAN: none). One run does not separate the on-time
+// offset from an L(Ipk) slope, so a corrected L is never returned; r0's only with the offset evaluated in bounds (st 0, 2,
+// 3) and r0 itself: kMinFitPts points, ring resolved (finite errors), L plausible.
+inline float persistL(const Result &r0, int st) {
+    return (st == 0 || st == 2 || st == 3) && r0.n >= kMinFitPts && std::isfinite(r0.se + r0.sys) && r0.L > kLMin &&
+           r0.L < kLMax ? r0.L : NAN;
 }
 
 }

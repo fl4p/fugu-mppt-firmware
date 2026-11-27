@@ -267,11 +267,29 @@ total: the device reads the averages directly and needs no console polling. `ls`
 dwell. `apply` writes `coil.conf::L0` (next boot) or `rect_offset_ns` with `rect_offset_drv` and
 `rect_offset_cal=1`, or 2 when the offset was clamped to +125 ns (live at once). Either is written
 to flash only after the converter has been disabled, because a flash write stalls the control loop.
-`L0` is not written when the run is marked `DISTURBED`, the on-time offset fails, or `L` is not a
-finite value between 1 µH and 2 mH. Like the
-script, it reports the physical inductance. Unlike the script, it also fits the
-[on-time offset](#on-time-offset) and corrects `L` for it. A median-only version of the command agreed with the script to within ~2 % on board A
-of §9.
+Like the script, it reports the physical inductance. Unlike the script, it also fits the
+[on-time offset](#on-time-offset) and corrects `L` for it. A median-only version of the command
+agreed with the script to within ~2 % on board A of §9.
+
+`apply` writes only the uncorrected ring-fit `L`, and only when every check below holds:
+
+| Check | Refused when |
+|---|---|
+| Sweep | a protection trip, shutdown or disable ended it (a planned stop at the current, peak-current, CCM or voltage limit is fine) |
+| Current zero (`Iout`, on a boost `Iin`) | it moved by more than 0.02 A (`DISTURBED`) or was not read |
+| Fit | under 16 points, or no ring resolved: the median fallback states no error |
+| On-time offset | not estimated (under 16 points), or it fails the ±400 ns bound |
+| Value | not finite between 1 µH and 2 mH |
+
+A single run never writes the on-time corrected `L`. Over one sweep the offset is nearly collinear
+with a slope of the coil's own `L(Ipk)` (see [On-time offset](#on-time-offset)), so one run cannot
+tell which of the two it measured. When an offset is present, the written uncorrected value carries
+its bias, about −3 % per +100 ns on the converter model. Agreement of the offset fitted at two
+switching frequencies (`f=`) would identify it; that pair rule is not implemented. A run that
+reaches the fit ends its log with either `-> coil.conf L0=<L> uncorrected` or
+`not for coil.conf: <reason>`. A run that stops earlier (too few points, a failed precharge or
+frequency change) names its error and writes nothing. A well-damped switch node, with ring ripple
+under 1 %, leaves the fit without a resolved ring, so such a board cannot `apply`.
 
 The command starts only from a converter stopped with `dc 0` (manual PWM, duty 0, converter off)
 and leaves it there; `mppt` resumes tracking. Manual PWM keeps the tracker, its sweeps and its
@@ -299,12 +317,13 @@ offset is applied, followed by the same two lines as `L(Ipk) uncorrected`.
 
 The result line names the value it reports, `on-time corrected` or `uncorrected`, and ends with the
 uncorrected `L` for comparison. The on-time line gives the fitted offset, its noise and systematic
-errors (one standard deviation) and the duty span of the points. `<state>` is `applied`, or why the
-uncorrected `L` is reported instead (see [On-time offset](#on-time-offset)); an offset not shown
-within ±400 ns fails the run and `apply` does not write `L0`.
+errors (one standard deviation) and the duty span of the points. `<state>` is `applied` (to the
+reported `L`, not to the value `apply` writes), or why the uncorrected `L` is reported instead (see
+[On-time offset](#on-time-offset)); an offset not shown within ±400 ns fails the run and `apply`
+does not write `L0`.
 
 The `Iout zero` line gives the current read with the converter off before and after the sweep. If
-it moved by more than 0.02 A, the line ends with `DISTURBED`, and `apply` does not write `L0`. The
+it moved by more than 0.02 A, the line ends with `DISTURBED`. The
 first `L(Ipk)` line gives `L` per bin of peak coil current with two relative errors: noise, and the
 shift that the `Iout` and on-time offset bounds can cause in that bin. The second gives the apparent
 slope with its noise error, the slope the offset bounds can produce, and the resulting range for
@@ -373,7 +392,9 @@ stops on the battery current, with fixed voltage and current trips as the hard l
 A boost with input `Vin` and output `Vout` is the buck with input `Vout` and output `Vout − Vin` at
 the same duty. Mirroring the switch node (`v → Vout − v`) keeps the coil voltage in both intervals,
 and the coil current is the boost's input current `Iin`. Each row is mapped this way and then goes
-through the buck formulas, the `Iin` floor and the ring fit unchanged. In DCM:
+through the buck formulas, the `Iin` floor and the ring fit unchanged. The command therefore needs
+a measured `Iin` and refuses to run when `Iin` is computed from `Iout` at a fixed efficiency
+(`lv_i_ch=255`). In DCM:
 
 ```
 Iin = Vin·Vout·D² / (2·L·fsw·(Vout − Vin))
@@ -434,11 +455,18 @@ real waveform matches. A deviation biases `Iout` and therefore `L`:
 - LS too long: held past the zero crossing, the inductor current goes negative and pulls
   charge back to the input → net `Iout` *reduced* → `L` over-estimated.
 
-In DCM the firmware turns the low side off at the ratio `rectCtrlRatio(M)` computed with 1 %
-worst-case voltage errors on each side, about 2 % before the ideal zero crossing, and the body
-diode finishes the discharge. A reverse-current notch therefore does not occur in a normal `l0`
-sweep, and the tail at `−(Vout+Vf)` changes `Iout` by well under 0.1 %. The oscillation of `L` in
-a fine duty sweep is the switch-node ring of §7, not SR timing.
+With sync rectification on, the firmware turns the low side off in DCM at the ratio
+`rectCtrlRatio(M)` computed with 1 % worst-case voltage errors on each side, about 2 % before the
+ideal zero crossing, and the body diode finishes the discharge. The tail at `−(Vout+Vf)` then
+changes `Iout` by well under 0.1 %.
+
+`measure-coil l0` does not turn sync rectification on itself. Manual PWM enables it only with
+`limits.conf::reverse_current_paranoia=0`. With the default `reverse_current_paranoia=1` the low
+side stays at its minimum pulse (about 2 µs, which keeps the bootstrap supply charged) and the body
+diode carries the rest of each discharge. That is the first case above, and it biases `L` upward,
+by an estimated 1–1.6 %. The sweep header records the regime: `rect=sync` or `rect=LSmin+diode`.
+A reverse-current notch does not occur in either regime. The oscillation of `L` in a fine duty
+sweep is the switch-node ring of §7, not SR timing.
 
 `Iout`, and the `L` derived from it, is therefore least biased when LS turns off exactly at the zero
 crossing, the peak of an LS sweep at fixed duty. Measuring at or near that per-point optimum removes

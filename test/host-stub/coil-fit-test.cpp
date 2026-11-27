@@ -5,7 +5,8 @@
 // false positives at k = 0, recovery of -1 and -3 %/A) and the Iout zero reads (a stale zero offset biases
 // L by +14 % with a small stated error unless corrected; a drifting zero flags the run; an irradiance ramp
 // does not bias), and the stated errors (noise, systematic) against the actual ones, also with on-time offsets and
-// Iout gain errors. `--fit <file>` instead fits the datasets of a whitespace file (rows "D Vin Vout Iout", blank
+// Iout gain errors, and the value persistL() lets `apply` write (never the corrected L, nothing without evidence).
+// `--fit <file>` instead fits the datasets of a whitespace file (rows "D Vin Vout Iout", blank
 // line between datasets, first line of each "fsw zsig ton") and prints "L f Lmed se sys k kse ksys nb
 // [lo hi Lb seb sysb]..." per dataset (parity check against etc/measure_coil.py, see etc/test_measure_coil_fit.py).
 //
@@ -123,6 +124,12 @@ struct Rnd { // random board and source
         voc = 55 + 25 * U(rng), vbat = 25.5f + 3 * U(rng);
     }
 };
+
+// coilfit::persistL(); also builds against the former persistL(r0, r, st), so the known-bad cases can be run there
+template<class R> static float persist(const R &r0, const R &r, int st) {
+    if constexpr (requires { coilfit::persistL(r0, r, st); }) return coilfit::persistL(r0, r, st);
+    else return coilfit::persistL(r0, st);
+}
 
 static float rmsOf(const std::vector<float> &e) {
     float s = 0;
@@ -287,7 +294,7 @@ static int testOnTime(int trials) {
     for (const auto &c: cases) {
         std::mt19937 rng(555);
         std::vector<float> e0, e1, ed, zd;
-        int applied = 0, kept = 0, n = 0, st[5] = {};
+        int applied = 0, kept = 0, corr = 0, n = 0, st[5] = {};
         for (int t = 0; t < trials; ++t) {
             const Rnd b(rng);
             Opt o;
@@ -301,7 +308,8 @@ static int testOnTime(int trials) {
             const auto r0 = coilfit::fit(d, vi, vo, io, m, (float) kFsw, z.sig);
             int s = 0;
             const auto r1 = coilfit::fitOnTime(d, vi, vo, io, m, (float) kFsw, z.sig, r0, s);
-            ++n, ++st[s], kept += coilfit::persistL(r0, r1, s) == coilfit::persistL(r0, r1, s);
+            const float pl = persist(r0, r1, s);
+            ++n, ++st[s], kept += pl == pl, corr += pl == pl && pl != r0.L;
             // the plant's L at the points' mean Ipk (k: L = L0 (1 - k Ipk) per cycle)
             float ipk = 0;
             for (int i = 0; i < m; ++i) ipk += coilfit::ipkDcm(d[i], vi[i], vo[i], io[i]) / (float) m;
@@ -315,9 +323,11 @@ static int testOnTime(int trials) {
         }
         printf("on-time %+.0f ns, coil slope %+.1f %%/A, %s, %d sweeps: uncorrected L err mean %+.2f%% rms %.2f%% | applied"
                " %d (status 2/3/4: %d/%d/%d): corrected L err mean %+.2f%% rms %.2f%%, offset err mean %+.0f rms %.0f ns, "
-               "rms z %.2f\n", c.hoff * 6.25f, -c.k * 100, c.isc < 5 ? "soft" : "stiff", n, 100 * meanOf(e0),
+               "rms z %.2f | persisted %d\n", c.hoff * 6.25f, -c.k * 100, c.isc < 5 ? "soft" : "stiff", n, 100 * meanOf(e0),
                100 * rmsOf(e0), applied, st[2], st[3], st[4], 100 * meanOf(e1), 100 * rmsOf(e1), meanOf(ed), rmsOf(ed),
-               rmsOf(zd));
+               rmsOf(zd), kept);
+        if (corr) ++fail, printf("  FAIL: %d corrected L persisted (one run does not validate the offset)\n", corr);
+        if (c.hoff == 0 && c.k == 0 && c.isc > 5 && 3 * kept < 2 * n) ++fail, printf("  FAIL: clean sweeps refused\n");
         if (c.hoff * 6.25e-9f > coilfit::kDlMax) { // out of range: reported (status 4), nothing persisted
             if (kept || 3 * st[4] < 2 * n) ++fail, printf("  FAIL: out-of-range offset: %d persisted\n", kept);
         } else if (c.k == 0 && c.isc > 5 && !(3 * applied >= 2 * n && std::fabs(meanOf(e1)) < 0.5f && rmsOf(e1) < 1.f &&
@@ -347,7 +357,7 @@ static int testOnTimeTail() {
             const auto r0 = coilfit::fit(d, vi, vo, io, 48, fsw, 0.002f);
             int st;
             const auto r = coilfit::fitOnTime(d, vi, vo, io, 48, fsw, 0.002f, r0, st);
-            const float l = coilfit::persistL(r0, r, st);
+            const float l = persist(r0, r, st);
             ++nt;
             if (l == l) ++nk, printf("  FAIL: offset %+.0f ns, residual %.0f %%: status %d, %.2f uH persisted\n",
                                      dl * 1e9f, a * 100, st, l * 1e6f);
@@ -362,11 +372,43 @@ static int testOnTimeTail() {
         const auto r0 = coilfit::fit(d, vi, vo, io, 48, f, 0.002f);
         int st;
         const auto r = coilfit::fitOnTime(d, vi, vo, io, 48, f, 0.002f, r0, st);
-        const float l = coilfit::persistL(r0, r, st);
+        const float l = persist(r0, r, st);
         if (l == l && !(std::fabs(l / L - 1) < 0.05f)) ++nf, printf("  FAIL: non-finite case %d persisted %g\n", k, l);
     }
     printf("on-time tail: %d/%d offset/residual cases persisted, non-finite inputs: %d bad\n", nk, nt, nf);
     return fail + (nf > 0);
+}
+
+// missing evidence persists nothing: 48.6 uH, 80/26.6 V, 39 kHz, D 0.075..0.215, on-time +600 ns (out of range) over
+// 3, 15, 16 and 48 points (under kMinFitPts the offset is not estimated; persisting the uncorrected L there wrote
+// ~36 uH), with a 10 % 320 kHz node ring (resolved from 16 points: the offset bound refuses) and without (no stated L
+// error); without an offset the ringing 48-point sweep is written, within 1 %
+static int testPersist() {
+    const float L = 48.6e-6f, fsw = 39000, vi0 = 80, vo0 = 26.6f;
+    float d[48], vi[48], vo[48], io[48];
+    int fail = 0;
+    for (float a: {0.1f, 0.f})
+        for (float dl: {600e-9f, 0.f})
+            for (int n: {3, 15, 16, 48}) {
+                for (int i = 0; i < n; ++i) {
+                    d[i] = 0.075f + (float) i * 0.14f / (float) (n - 1), vi[i] = vi0, vo[i] = vo0;
+                    const float de = d[i] + dl * fsw;
+                    io[i] = (vi0 - vo0) * vi0 * de * de / (2 * vo0 * fsw * L) *
+                            (1 + a * std::cos(6.2831853f * 320e3f * (1 - de * vi0 / vo0) / fsw));
+                }
+                const auto r0 = coilfit::fit(d, vi, vo, io, n, fsw, 0.002f);
+                int st;
+                const auto r = coilfit::fitOnTime(d, vi, vo, io, n, fsw, 0.002f, r0, st);
+                const float l = persist(r0, r, st);
+                const bool want = a > 0 && dl == 0 && n == 48, never = n < 16 || dl > 0 || a == 0;
+                const bool bad = want ? !(std::fabs(l / L - 1) < 0.01f)
+                                      : never && (l == l || (a > 0 && dl > 0 && n >= 16 && !r0.nh)); // offset gate refuses
+                fail += bad;
+                printf("persist: ring %.0f %%, %+.0f ns, %d pts, %s: status %d, uncorrected %.2f uH, %s%.2f uH%s\n",
+                       a * 100, dl * 1e9f, n, r0.nh ? "ring fit" : "no ring fit", st, r0.L * 1e6f,
+                       l == l ? "persisted " : "nothing persisted ", l * 1e6f, bad ? "  FAIL" : "");
+            }
+    return fail;
 }
 
 static int fitFile(const char *path) {
@@ -456,6 +498,7 @@ int main(int argc, char **argv) {
     fail += testOffsets(argc > 3 ? atoi(argv[3]) : 16);
     fail += testOnTime(argc > 3 ? atoi(argv[3]) : 16);
     fail += testOnTimeTail();
+    fail += testPersist();
     printf("coil-fit-test: %s\n", fail ? "FAIL" : "PASS");
     return fail ? 1 : 0;
 }

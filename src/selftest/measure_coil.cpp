@@ -186,8 +186,10 @@ static float sweepL0(const MeasArgs &a) {
         return NAN;
     }
 
-    UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f%s",
-             fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0, boost ? " boost" : "");
+    // manual PWM enables sync rect only without reverse_current_paranoia, else the LS stays at its minimum pulse
+    UART_LOG("measure-coil L0: fsw=%.0f pwmMax=%u band %d..%d step %d  Vin=%.2f Vout=%.2f M=%.3f%s rect=%s",
+             fsw, pwmMax, h_lo, h_hi, step, vin0, vout0, vout0 / vin0, boost ? " boost" : "",
+             mppt.limits.reverse_current_paranoia ? "LSmin+diode" : "sync");
     const uint32_t zDwell = max<uint32_t>(a.dwellMs, 2000);
     if (boost) { // the battery feeds the coil through the backflow switch; the output charges to it through the HS diode
         // the switch's gate pump runs off the bootstrap supply: switch at one refresh pulse (2 us LS) per period
@@ -225,6 +227,7 @@ static float sweepL0(const MeasArgs &a) {
     float d[MEAS_MAX_PTS], vi[MEAS_MAX_PTS], vo[MEAS_MAX_PTS], io[MEAS_MAX_PTS];
     uint8_t row[MEAS_MAX_PTS]; // sweep position of each point, for the zero interpolation
     int n = 0, rows = 0;
+    bool fault = false;
     for (int H = h_lo; H <= h_hi && n < MEAS_MAX_PTS; H += step) {
         const float vin = sensors.Vin->ewm.avg.get(), vout = sensors.Vout->ewm.avg.get();
         if (boost ? !(vout > vin + 2.0f) : !(vin > vout + 1.0f)) {
@@ -235,7 +238,7 @@ static float sweepL0(const MeasArgs &a) {
         if (boost && (float) H / pwmMax > 0.9f * (1 - vin / vout)) { UART_LOG("  near CCM; stopping"); break; }
         Reading r{};
         settleAndRead((uint16_t) H, a.dwellMs, r);
-        if (s_tripped || stopped()) { UART_LOG("  converter disabled (protection?); aborting"); break; }
+        if (s_tripped || stopped()) { UART_LOG("  converter disabled (protection?); aborting"); fault = true; break; }
         float D = (float) r.H / converter.periodCounts(), bi = r.vin, bo = r.vout; // period basis, as dcmCurrent()
         if (boost) coilfit::asBuck(bi, bo);
         float L = (r.iout <= 0.02f || bi <= bo || bo <= 0) ? NAN : (bi - bo) * bi * D * D / (2.0f * bo * fsw * r.iout);
@@ -252,8 +255,10 @@ static float sweepL0(const MeasArgs &a) {
         if (!r.dcm) { UART_LOG("  entered CCM; stopping"); break; }
         if (boost && r.vout > s_hvTrip - 2.0f) { UART_LOG("  Vout %.2f near %.1f; stopping", r.vout, s_hvTrip); break; }
     }
+    fault |= rows && (s_tripped || stopped());
     const float z1 = readZero(zDwell);
     const bool disturbed = !(fabsf(z1 - z0) <= coilfit::kZeroTol); // also: z1 unread
+    fault |= s_tripped || cancelled();
     const float zsig = coilfit::zeroCorrect(io, n, z0, z1 == z1 ? z1 : z0, row, rows);
     float iMaxSeen = 0;
     for (int i = 0; i < n; ++i) iMaxSeen = max(iMaxSeen, io[i]);
@@ -286,10 +291,13 @@ static float sweepL0(const MeasArgs &a) {
              disturbed ? "; DISTURBED: moved > 0.02 A, L not for coil.conf" : "");
     if (!st) logSplit(ft, " at the fitted on-time offset (slope 0 assumed)");
     logSplit(f0, st ? "" : " uncorrected");
-    const float l = coilfit::persistL(f0, ft, st);
-    if (st != 4 && l != l) UART_LOG("measure-coil: L implausible, not for coil.conf");
-    if (disturbed || l != l) return NAN;
-    UART_LOG("  -> coil.conf L0=%.6e   note: scales with Iout cal & period%s", l, st ? "; on-time offset not corrected" : "");
+    const float l = coilfit::persistL(f0, st);
+    const char *no = fault ? "sweep aborted (trip or shutdown)" : disturbed ? "zero moved" : st == 4 ? "on-time FAIL"
+                     : st == 1 || !std::isfinite(f0.se + f0.sys) ? "fit not evaluated (too few points or no ring)"
+                     : l != l ? "L implausible" : nullptr;
+    if (no) { UART_LOG("measure-coil: not for coil.conf: %s", no); return NAN; }
+    UART_LOG("  -> coil.conf L0=%.6e uncorrected (one run does not validate the on-time offset)   note: scales with %s "
+             "cal & period", l, iName);
     return l;
 }
 
@@ -403,8 +411,8 @@ static void measureCoilTask(void *arg) {
         UART_LOG("measure-coil: RT transition timed out");
     } else if (!sensors.Vin || !sensors.Vout || !coilI()) {
         UART_LOG("measure-coil: missing Vin/Vout/I sensor");
-    } else if (!converter.boost() && mppt.sensorPhysicalI != sensors.Iout) { // buck: the RT's BF request reads it
-        UART_LOG("measure-coil: needs a physical Iout sensor");
+    } else if (coilI()->isVirtual) { // computed from the other side at a fixed efficiency
+        UART_LOG("measure-coil: needs a physical %s sensor", converter.boost() ? "Iin" : "Iout");
     } else {
         if (a.ls) sweepLs(a); else l0 = sweepL0(a);
     }

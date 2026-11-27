@@ -34,6 +34,9 @@
 //                              #   -ton with a plant LS on-time offset of +100 ns and no coil DC bias
 //                              # mc-boost-open: the same with the output unloaded, the 80 V trip
 //                              # mc-boost-bfopen: the same with the backflow switch stuck open: the start aborts
+//                              # mc-boost-virt: the firmware task with Iin computed from Iout: refused
+//                              # mc-flat-trip-late: a shutdown after 20 DCM rows: fitted, nothing for coil.conf
+//                              # mc-flat-ring: mc-flat with flat's switch-node ring on: the clean run writes L
 //                              # dcd-stop-flat|fry: manual ramp-down from CCM that stops just below Vout/Voc (dcd-slow-*: 3x slower)
 //                              # dcd-ccm-flat|fry: deep CCM, P&O and a slow power-limiter retreat
 //                              # dcd-hv-step|train-flat|fry: 700-count duty cut at Vin ~80 V near the CCM boundary, one
@@ -2143,7 +2146,7 @@ static coilfit::Result mcFit(const float *d, const float *vi, const float *vo, c
     printf("  measure: uncorrected L %.2f uH slope %+.2f %%/A | on-time %+.0f +-%.0f noise +-%.0f syst ns, span %.2f, status %d"
            " | corrected L %.2f uH +-%.1f/%.1f %% slope %+.2f %%/A | ring %.0f kHz %.1f periods\n", a.L * 1e6f, a.k * 100, b.dl * 1e9f, b.dlse * 1e9f,
            b.dlsys * 1e9f, b.dspan, g_mcSt, b.L * 1e6f, b.se * 100, b.sys * 100, b.k * 100, a.f * 1e-3f, a.periods);
-    if (coilfit::persistL(a, b, g_mcSt) != coilfit::persistL(a, b, g_mcSt)) printf("  measure: L not persisted\n");
+    if (coilfit::persistL(a, g_mcSt) != coilfit::persistL(a, g_mcSt)) printf("  measure: L not persisted\n");
     return g_mcSt ? a : b;
 }
 // -ton scenarios: the plant's on-time offset (vconv.conf t_on_ofs) against the estimate; L vs lPlant
@@ -2379,9 +2382,11 @@ static coilfit::Result simMeasureL0Boost(int steps, uint32_t dwellMs, double &se
 //   -ton: plant LS on-time +100 ns (t_on_ofs), k 0: the estimate vs the plant's offset, corrected vs uncorrected L. Per pass: L vs the plant's L at the fitted
 //   rows' mean Ipk within 3 %, the slope vs -k (printed), Vout below 80 V, Iin below 8 A, no protection trip.
 // mc-boost-open: the output unloaded (string disconnected): the trip stops it at 80 V.
+// mc-boost-virt: the firmware task (not the replica above) with a physical HV shunt and Iin computed from it: refused.
 // All start from the night state: C_in and the string at 6.85 V, the battery behind its open backflow switch (in_bf), whose
 // gate pump runs only while the converter switches. mc-boost-bfopen: that switch stuck open, the start must abort.
 static float g_mcVinOfs[2] = {0, 0};
+static int runMcBoostVirt(const std::string &name);
 static int runMcBoost(const std::string &name) {
     int f = 0;
     auto chk = [&](bool c, const char *w) {
@@ -2405,6 +2410,7 @@ static int runMcBoost(const std::string &name) {
     run(5, 0);
     printf("== %s: plant L0 %.1f uH, k %.1f %%/A, Vin %.2f Vout %.2f, fsw %.0f Hz, %s\n", name.c_str(), g_vconv.getL() * 1e6f,
            k * 100, g_vconv.getVin(), g_vconv.getVout(), converter.realizedFreqHz(), modeStr());
+    if (name == "mc-boost-virt") return runMcBoostVirt(name);
     const size_t trips0 = g_trips.size();
     double secs = 0;
     std::string stop;
@@ -2455,7 +2461,8 @@ static struct {
                 // closed from outside (the request stays cancelled), 9 the reverse-current tick between an LS row and
                 // the next pin, 10 a shutdown racing the task's cleanup (another thread, paused inside shutdownDcdc),
                 // 11 256 reverse ticks in a row from that point (an 8-bit clamp count wraps), 12 a shutdown between
-                // the task's next pin and the RT tick after it, 13 as 11, then the clamp count advanced by 2^32 - 256
+                // the task's next pin and the RT tick after it, 13 as 11, then the clamp count advanced by 2^32 - 256,
+                // 14 shutdown after 20 DCM rows (enough for a fit)
     bool injected, reqKept, revBad, lsBad, lsStop, lsMode, pinWait, lsCommitBad, armed;
     int wrapN, wrapSkip; // reverse ticks done, ticks since the 2^32 skip (inject 11)
     uint32_t taskLsWrites; // LS driver writes from the task (outside the RT ticks), inject 12
@@ -2464,7 +2471,10 @@ static struct {
     double tPub, tInject = -1, tAbort = -1;
     float L = NAN;
     int pts = -1;
-    bool disturbed, peakLs, done, refused;
+    bool disturbed, peakLs, done, refused, persist; // persist: the task logged an L for coil.conf (Lp), else why not
+    int dcmRows;
+    float Lp = NAN;
+    char why[64];
     float ipk, ipkPl; // largest DCM row Ipk (L-free), the plant's
 } g_mc;
 
@@ -2520,7 +2530,7 @@ static void mcLog(const char *msg) {
     float rD, rVi, rVo, rI;
     char rM[4];
     if (sscanf(msg, " %u %f %f %f %f %3s", &rH, &rD, &rVi, &rVo, &rI, rM) == 6 && !strcmp(rM, "DCM"))
-        g_mc.ipk = std::max(g_mc.ipk, coilfit::ipkDcm(rD, rVi, rVo, rI));
+        g_mc.ipk = std::max(g_mc.ipk, coilfit::ipkDcm(rD, rVi, rVo, rI)), ++g_mc.dcmRows;
     unsigned row;
     float a, b, c;
     char m[4];
@@ -2556,7 +2566,9 @@ static void mcLog(const char *msg) {
         g_mc.done = true;
         if (g_raceThread.joinable()) g_raceStage.store(3), g_raceThread.join(), g_simShutdownSeam = nullptr;
     }
-    if (strstr(msg, "needs a physical Iout")) g_mc.refused = true;
+    if (strstr(msg, "needs a physical")) g_mc.refused = true;
+    if (const char *p = strstr(msg, "-> coil.conf L0=")) g_mc.persist = true, g_mc.Lp = (float) atof(p + 16);
+    if (const char *p = strstr(msg, "not for coil.conf: ")) snprintf(g_mc.why, sizeof g_mc.why, "%s", p + 19);
     if (strstr(msg, "aborting") && g_mc.tAbort < 0) g_mc.tAbort = tNow();
     if (strstr(msg, "LS clamped by reverse-current protection")) g_mc.lsStop = true;
 }
@@ -2620,6 +2632,12 @@ static void mcTick() {
             mppt.bflow.enable(true);
             g_mc.tInject = tNow();
             break;
+        case 14:
+            if (!mid || g_mc.dcmRows < 20) return;
+            printf("== inject: shutdown after %d DCM rows at t=%.3f (D %u)\n", g_mc.dcmRows, tNow(), ctrl);
+            mppt.shutdownDcdc("inject", 5);
+            g_mc.tInject = tNow();
+            break;
         default:
             return;
     }
@@ -2639,6 +2657,10 @@ static void mcTick() {
 //   -revtick: a tick whose fast samples reverse while the EWM still shows forward current: protect() opens the BF and
 //     updateManual() must not close it again.
 //   -trip0: a shutdown without backoff mid-ramp (as calibration does).
+//   -trip-late: a shutdown after 20 DCM rows: the rows are still fitted and logged, but no L for coil.conf (nor after
+//     any other shutdown or disable mid-sweep), refused as aborted.
+//   -ring: flat's switch-node ring on (the others run without): the ring fit states its error, and the clean run's
+//     uncorrected L goes to coil.conf, within 3 % of the plant.
 //   -trip-close: a shutdown, then the BF closed from outside: the RT opens it while the request is cancelled.
 //   -trip*: PWM stays off from the shutdown to the end of the task, which stops within 0.2 s.
 //   -ls, -ls-trip-pub: `measure-coil ls`; the RT closes BF and sync rect.
@@ -2656,6 +2678,25 @@ static void mcTick() {
 //     filtered current's lag, that ramp kept the CCM rect window below D = M, the coil current reversed and
 //     highD-bflowOpen tripped (field flat 2026-11-24).
 //   All: no reverse plant output current under an LS window until the converter first turns off.
+static int runMcBoostVirt(const std::string &name) {
+    int f = 0;
+    auto chk = [&](bool c, const char *w) {
+        printf("== %s %s: %s\n", name.c_str(), c ? "ok" : "FAIL", w);
+        f += !c;
+    };
+    const size_t trips0 = g_trips.size();
+    g_mc = {};
+    g_mc.tPub = -1;
+    g_simDelayHook = simDelay, g_simRunTasks = true;
+    const bool started = measureCoilStart(false, false, 0, 0);
+    g_simDelayHook = nullptr, g_simRunTasks = false;
+    chk(started && g_mc.done, "the task ran to its end");
+    chk(g_mc.refused && !g_mc.dcmRows && !g_mc.persist, "refused without a physical Iin, no rows");
+    chk(g_trips.size() == trips0 && converter.disabled(), "no trip, off");
+    printf("== SUMMARY %s: %s (%d failures)\n", name.c_str(), f ? "FAILED" : "OK", f);
+    return f != 0;
+}
+
 static int runMcFlat(const std::string &sc, const std::string &name) {
     int f = 0;
     auto chk = [&](bool c, const char *w) {
@@ -2669,7 +2710,7 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
                   : sc == "mc-flat-off" ? 3 : sc == "mc-flat-revtick" ? 4 : sc == "mc-flat-trip-stray" ? 5
                   : sc == "mc-flat-ls-revtick" ? 6 : sc == "mc-flat-trip0" ? 7 : sc == "mc-flat-trip-close" ? 8
                   : sc == "mc-flat-ls-repin" ? 9 : sc == "mc-flat-latch-race" ? 10 : sc == "mc-flat-ls-wrap" ? 11
-                  : sc == "mc-flat-ls-stale" ? 12 : sc == "mc-flat-ls-wrap32" ? 13 : 0;
+                  : sc == "mc-flat-ls-stale" ? 12 : sc == "mc-flat-ls-wrap32" ? 13 : sc == "mc-flat-trip-late" ? 14 : 0;
     settle(30);
     for (double dl = tNow() + 120; tNow() < dl && !(g_vconv.getVin() * g_vconv.pvCurrent(g_vconv.getVin()) > 140.f);)
         run(0.5, 0);
@@ -2724,9 +2765,18 @@ static int runMcFlat(const std::string &sc, const std::string &name) {
     if (g_mc.inject) {
         chk(g_mc.injected, "fault injected");
         const int i = g_mc.inject;
-        chk(g_trips.size() - trips0 <= (i == 1 || i == 2 || i == 5 || i == 7 || i == 8 || i == 10 || i == 12),
+        chk(g_trips.size() - trips0 <= (i == 1 || i == 2 || i == 5 || i == 7 || i == 8 || i == 10 || i == 12 || i == 14),
             "the sweep stopped: no protection trip but the injected one");
+        if (!ls && (i <= 3 || i == 5 || i == 7 || i == 8 || i == 14))
+            chk(!g_mc.persist && (g_mc.L != g_mc.L || strstr(g_mc.why, "aborted")),
+                "no L for coil.conf from a sweep a shutdown or disable ended, refused as aborted");
     }
+    if (g_mc.inject == 14)
+        chk(g_mc.pts >= coilfit::kMinFitPts && strstr(g_mc.why, "aborted"), "the aborted sweep still fitted its rows");
+    printf("== %s: coil.conf %s%.2f uH%s%s\n", name.c_str(), g_mc.persist ? "" : "refused (", g_mc.Lp * 1e6f,
+           g_mc.persist ? "" : "): ", g_mc.why);
+    if (sc == "mc-flat-ring") // the plant rings: the fit states its error, a clean run is written
+        chk(g_mc.persist && fabsf(g_mc.Lp / g_vconv.getL() - 1) < 0.03f, "clean run: uncorrected L for coil.conf within 3 %");
     if (g_mc.inject == 1 || g_mc.inject == 2 || g_mc.inject == 7) chk(!g_mc.reqKept, "the shutdown cancelled the request");
     if (g_mc.inject == 4 || g_mc.inject == 6 || g_mc.inject == 9)
         chk(!g_mc.revBad, "BF stays open after the reverse-current tick");
@@ -4491,6 +4541,7 @@ static int simMain(int argc, char **argv) {
     }
     const bool dcd = sc.rfind("dcd-", 0) == 0, dcdFry = dcd && sc.size() > 4 && !sc.compare(sc.size() - 4, 4, "-fry");
     if (dcdFry) setenv("SIM_RING", "fry-off", 0), setenv("SIM_ADC_HZ", "513", 0);
+    if (sc == "mc-flat-ring") setenv("SIM_RING", "flat", 0);
     const bool flatTake = sc == "bf-daily-flat" || sc.rfind("mc-flat", 0) == 0 || sc.rfind("bf-flat-ccm", 0) == 0 ||
                           (dcd && !dcdFry);
     if (flatTake) setenv("SIM_RING", "flat-off", 0), setenv("SIM_ADC_HZ", "1469", 0);
@@ -4506,6 +4557,7 @@ static int simMain(int argc, char **argv) {
                         "sensor.conf:hv_v_filt_len=20,sensor.conf:lv_v_filt_len=20,sensor.conf:lv_i_filt_len=20,"
                         "limits.conf:lv_i_max=32,board.conf:bflow_bat=1";
         if (sc == "mc-boost-dark-lowf") c += ",board.conf:pwm_freq=21500";
+        if (sc == "mc-boost-virt") c += ",sensor.conf:lv_i_ch=255,sensor.conf:hv_i_ch=2"; // Iin from Iout
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
         setenv("SIM_CONF", c.c_str(), 1);
         setenv("SIM_ADC_HZ", "513", 0);
