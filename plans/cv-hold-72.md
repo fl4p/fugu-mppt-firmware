@@ -43,6 +43,10 @@ charger gain-scheduling candidate is included.
 | Fixed reference, original charger, default phase | 3.500..3.502 | 3.505 | PASS |
 | Fixed reference, original charger, phase 1 | 3.499..3.501 | 3.507 | PASS |
 
+Re-running phase 1 on final candidate `f0ebdf43`, based on current `main`
+`2fc28a71`, also passes at 3.499..3.501 V with a 3.507 V entry peak. Its log is
+`/tmp/cv72-final-candidate-phase1.log`.
+
 Printed voltages are rounded to 1 mV; the baseline's own assertion reports a
 failure, so its printed 3.510 V is not evidence of equality to the limit.
 The baseline above was rebuilt on current `main`; initial candidate results came
@@ -61,10 +65,28 @@ Local evidence: `/tmp/cv72-current-main-baseline-phase1.log`,
   makes five regression checks fail. The unit test does not instantiate MPPT;
   its fixed reference is repeated locally, so integration needs simulator coverage.
 - Worker host suite: 38 PASS, one existing XFAIL (`bms-cutoff-test`).
-- Pending on the final candidate: 26 phase/lag cases, all stock MPPT scenarios,
-  Linux host units, ESP-IDF build and independent final review.
+- Independent review of `f0ebdf43` found no blockers and reproduced the five
+  failures under the constructor mutation.
+- ESP-IDF 6.0.3 ESP32-S3 build passed. The image is `0x1b8060` bytes with 4% of
+  the smallest application partition free. No cycle-level cost measurement was
+  made; the phase-1 simulation reports zero allocations and frees in its RT loop.
+- The documentation build with a fresh cache and the cross-link check passed.
+- Linux [stock suite](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46038412150):
+  186 simulator scenarios completed without failures; host units 38 PASS and one
+  existing XFAIL. The separately pinned
+  [unit run](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46038398604)
+  confirms the same counts.
+- Linux [26-case phase/lag grid](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46038398925):
+  20 PASS, six FAIL. All 13 cases with no extra current-frame delay pass. With
+  `lagI=1` (one four-second-old current frame, not a one-second delay), phase 1
+  fails low at 3.486 V; phases 3, 4, 5, 7 and 8 exceed the entry limit, peaking at
+  3.521–3.524 V. These runs use Ubuntu 26.04, Clang 21.1.8, x86_64, glibc 2.43,
+  image `20261122.9.1`, and candidate `f0ebdf43`.
+- The macOS 26-case candidate grid and diagnosis of the delayed-current cases
+  remain in progress. A corresponding baseline grid has not been run, so these
+  six failures have not been classified as pre-existing or introduced.
 
 No test threshold was widened. Stock simulator cases include report-only cases;
 completion of the suite does not assert every reported statistic or every limiter
 selection transition. No hardware run or output-waveform measurement has been
-made. Issue #72 remains open pending final validation.
+made. Issue #72 remains open; the candidate is not ready to land on `main`.
