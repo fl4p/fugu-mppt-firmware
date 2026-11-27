@@ -1,7 +1,9 @@
 // Standalone host test for the native MTP2 encoder.
-// Build from the repository root:
-//   c++ -std=c++17 -O2 -Isrc/tele src/tele/pmini_codec.cpp \
-//       test/host-stub/pmini-codec-test.cpp -o /tmp/pmini-codec-test
+// Build with CMake/CTest or compile with -I native and native/pmini_codec.cpp.
+// Assertions include encoder calls and must execute in Release builds too.
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 
 #include "pmini_codec.h"
 

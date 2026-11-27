@@ -1,6 +1,6 @@
 {
   "project": "pmini",
-  "revision": "5e80ea4b39d5209846beac6f1602d882af1547a8",
+  "revision": "a40626d9b987f8c5b69d8dbf33af41c9c37b8344",
   "files": [
     {
       "source": "native/pmini_codec.cpp",
@@ -15,7 +15,7 @@
     {
       "source": "tests/native_golden.cpp",
       "path": "third_party/pmini/tests/native_golden.cpp",
-      "sha256": "47893ab93d273cae55bf5d26a4fd921d33863ce3cb6b9b5874bd5c410bb97eec"
+      "sha256": "4fa262c2c416ca170f12b4ecc3a1162019f6a92257289f7147105e2f905d215f"
     },
     {
       "source": "LICENSE",
@@ -27,5 +27,6 @@
       "path": "etc/config-tool/pmini.js",
       "sha256": "b7172de5c3c34a40460872c204894e739a938e60361c12384ca840c63996a2aa"
     }
-  ]
+  ],
+  "repository": "https://github.com/fl4p/pmini"
 }

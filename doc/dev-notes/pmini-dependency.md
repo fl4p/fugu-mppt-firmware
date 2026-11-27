@@ -21,10 +21,10 @@ Run upstream CMake/CTest and `tests/test_portable.py`, then fugu's native
 `test/host-stub/pmini-tests.sh`, Python `test_teledec_pmini.py`, and config-tool
 Node tests. Review changes to the generic codec independently of PMA2.
 
-The upstream repository currently has no configured remote. The extraction is
-prepared locally; publish the standalone repository at the owner's chosen remote
-before publishing integration commits that reference its revision. Vendoring
-keeps builds reproducible without network fetches or an invented repository URL.
+The upstream repository is [fl4p/pmini](https://github.com/fl4p/pmini), private
+because its existing history includes vehicle-derived example profiles. Vendored
+snapshots keep public firmware builds reproducible without private-repository
+access. Publish upstream and fugu-py commits before the firmware integration.
 
 ## Extraction validation (2026-11-27)
 
@@ -47,5 +47,21 @@ cap removed and a standalone UMD export; PMA2 keeps that cap at its boundary.
   38.3 us/encode. This includes no packet assembly and is not a device timing.
 
 No new device flash, receiver deployment or full firmware build was performed.
-No remote was created and no commits were pushed. The live deployment remains
-unchanged. Publish pmini and fugu-py commits before the firmware integration.
+The native wrapper cross-compiled warning-clean for ESP32 and ESP32-S3. The live
+deployment remains unchanged.
+
+## Review closure
+
+Independent review verified codec/Python byte identity and reran portable,
+PMA2 and browser-loader tests. It found that CMake Release disabled the inherited
+assert-based native test. The test now explicitly keeps assertions active, and
+CI runs the Release configuration. A deliberately corrupted golden compiled
+with `-DNDEBUG` exits with an assertion failure; the correct golden passes and
+reports 75 encoded bytes. Release CTest took 0.22 s on the host.
+
+Test-check review: malformed inputs still fail explicitly; invalid dimensions
+remain rejected at zero and the upper boundary; CMake invokes the real encoder;
+the test checks exact wire bytes and the dependency manifests hash actual source;
+no verification state is cached; host/cross-compile/device verification remain
+distinguished above; the known-bad golden fails; assertions were restored rather
+than removing the check. The native codec itself is unchanged.
