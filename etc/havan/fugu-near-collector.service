@@ -1,0 +1,15 @@
+[Unit]
+Description=Fugu MPPT near-point probe collector (MQTT pv/log/+ -> JSONL archive)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10s
+User=fab
+WorkingDirectory=/home/fab/pv
+ExecStart=/home/fab/miniconda3/bin/python3 near_collector.py --env /home/fab/pv/fugu-tools/mqtt.env --archive /home/fab/pv/near --log /home/fab/pv/near_collector.log
+
+[Install]
+WantedBy=multi-user.target
