@@ -1,6 +1,6 @@
 {
   "project": "pmini",
-  "revision": "a40626d9b987f8c5b69d8dbf33af41c9c37b8344",
+  "revision": "abaf35c35aca33f19d4e780a2af12b6ac8236713",
   "files": [
     {
       "source": "native/pmini_codec.cpp",
