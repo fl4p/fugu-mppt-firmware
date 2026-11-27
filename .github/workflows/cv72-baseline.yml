@@ -3,11 +3,12 @@ name: cv72 baseline reproduce
 # Temporary, isolated validation branch workflow. Reproduces the cv-hold-pair /
 # cv-hold-load CI failures at two revisions on the exact runner image the failing
 # run used (ubuntu-26.04), to separate revision from toolchain/OS confound.
-# Scoped to investigate/cv72-baseline only; no source or threshold changes.
+# No source or threshold changes. Baseline already accepted (run 46016392083).
+#
+# Dispatch-only: the candidate workflow (cv72-candidate.yml) owns the push trigger,
+# so pushing the branch does not re-run this baseline.
 
 on:
-  push:
-    branches: [investigate/cv72-baseline]
   workflow_dispatch:
 
 jobs:

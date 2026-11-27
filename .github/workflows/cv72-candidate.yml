@@ -1,0 +1,139 @@
+name: cv72 candidate validation
+
+# Candidate-fix validation on the actual CI image (ubuntu-26.04, clang 21).
+# Runs ALL 10 cv-hold scenarios across 4 shards, plus charger-term-test. Keeps full
+# logs / env / sha / rc artifacts. No source or threshold edits.
+#
+# PREPARED, NOT PUSHED. Set env.CANDIDATE_SHA to the parent-supplied candidate SHA,
+# then push investigate/cv72-baseline to trigger.
+
+on:
+  push:
+    branches: [investigate/cv72-baseline]
+  workflow_dispatch:
+
+concurrency:
+  group: cv72-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CANDIDATE_SHA: "FILL_CANDIDATE_SHA"
+
+jobs:
+  cv-hold:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: checkout candidate
+        run: |
+          if [ "$CANDIDATE_SHA" = "FILL_CANDIDATE_SHA" ]; then
+            echo "ERROR: CANDIDATE_SHA is not set"; exit 1
+          fi
+          git checkout --detach "$CANDIDATE_SHA"
+          echo "checked_out_sha=$(git rev-parse HEAD)"
+
+      - name: runner and toolchain identity
+        run: |
+          mkdir -p out
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "checked_out_sha=$(git rev-parse HEAD)"
+            echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+            echo "arch=$(uname -m)"
+            echo "os=$(head -2 /etc/os-release | tr '\n' ' ')"
+            echo "clang=$(clang++ --version | head -1)"
+            echo "gcc=$(g++ --version | head -1)"
+            echo "glibc=$(ldd --version | head -1)"
+            echo "shard=${{ matrix.shard }}"
+          } | tee out/env.txt
+
+      - name: select this shard's cv-hold scenarios
+        run: |
+          set -o pipefail
+          LIST="$(test/host-stub/mppt-sim.sh --list)"
+          TOTAL="$(printf '%s\n' $LIST | grep -c '^cv-hold-' || true)"
+          if [ "$TOTAL" -ne 10 ]; then
+            echo "ERROR: expected 10 cv-hold scenarios, found $TOTAL"; exit 1
+          fi
+          S="$(printf '%s\n' $LIST | grep '^cv-hold-' | awk -v k=${{ matrix.shard }} '(NR-1)%4==k')"
+          if [ -z "$S" ]; then
+            echo "ERROR: empty scenario selection for shard ${{ matrix.shard }}/4"; exit 1
+          fi
+          echo "scenarios:" $S
+          printf '%s\n' $S > out/scenarios.list
+
+      - name: run shard scenarios
+        run: |
+          set -o pipefail
+          S="$(tr '\n' ' ' < out/scenarios.list)"
+          if [ -z "${S// }" ]; then echo "ERROR: empty scenario list"; exit 1; fi
+          OUT="$PWD/out/mppt-sim" bash test/host-stub/mppt-sim.sh $S > out/sim.log 2>&1 && rc=0 || rc=$?
+          echo "$rc" > out/rc.txt
+          echo "SIM_RC=$rc"
+          grep -E '^######## |^== CVHOLD' out/sim.log || true
+
+      - name: assert shard result
+        run: |
+          rc="$(cat out/rc.txt)"
+          echo "shard ${{ matrix.shard }}/4 simulator rc=$rc"
+          exit "$rc"
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv72-candidate-shard${{ matrix.shard }}
+          path: out/
+
+  charger-term:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: checkout candidate
+        run: |
+          if [ "$CANDIDATE_SHA" = "FILL_CANDIDATE_SHA" ]; then
+            echo "ERROR: CANDIDATE_SHA is not set"; exit 1
+          fi
+          git checkout --detach "$CANDIDATE_SHA"
+          echo "checked_out_sha=$(git rev-parse HEAD)"
+
+      - name: identity
+        run: |
+          mkdir -p out
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "checked_out_sha=$(git rev-parse HEAD)"
+            echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+            echo "arch=$(uname -m)"
+            echo "os=$(head -2 /etc/os-release | tr '\n' ' ')"
+            echo "clang=$(clang++ --version | head -1)"
+            echo "glibc=$(ldd --version | head -1)"
+          } | tee out/env.txt
+
+      - name: run charger-term-test
+        run: |
+          OUT="$PWD/out/ht" bash test/host-stub/host-tests.sh -j 1 charger-term-test > out/ht.log 2>&1 && rc=0 || rc=$?
+          echo "$rc" > out/rc.txt
+          echo "CHARGER_TERM_RC=$rc"
+          cat out/ht.log || true
+
+      - name: assert charger-term result
+        run: |
+          rc="$(cat out/rc.txt)"
+          echo "charger-term-test rc=$rc"
+          exit "$rc"
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv72-candidate-charger-term
+          path: out/
