@@ -48,7 +48,7 @@ static size_t rawCap() {
 }
 static size_t outCap() {
 #ifdef CONFIG_FUGU_WITH_TELE_PMINI
-    if (packetEncoder) return 12288;
+    if (packetEncoder) return 2 * TelePacketBatch::CAP;
 #endif
     return OUT_CAP;
 }

@@ -1,0 +1,21 @@
+{
+  "packets": 212,
+  "codecs": {
+    "1": 4,
+    "2": 208
+  },
+  "decoded_points": 8194,
+  "errors": [],
+  "max_payload": 1041,
+  "sample_age_ms": {
+    "min": 147.377685546875,
+    "median": 604.9090576171875,
+    "p99": 1041.794189453125,
+    "max": 1162.58154296875,
+    "over_2000": 0
+  },
+  "pmini_bytes": 126048,
+  "same_packet_tamp_bytes": 220639,
+  "raw_bytes": 421592,
+  "pmini_vs_tamp_saving_pct": 42.87138719809281
+}

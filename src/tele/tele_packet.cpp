@@ -3,7 +3,7 @@
 
 namespace {
 // Strict canonical length prefix; no out-of-range pointer arithmetic.
-bool frameEnds(const std::string &raw, std::vector<size_t> &ends) {
+bool frameEnds(std::string_view raw, std::vector<size_t> &ends) {
     size_t at = 0;
     while (at < raw.size()) {
         uint64_t n = 0; unsigned shift = 0, count = 0; uint8_t byte;
@@ -22,24 +22,40 @@ bool frameEnds(const std::string &raw, std::vector<size_t> &ends) {
 }
 }
 
-bool TelePacketEncoder::split(const std::string &raw, size_t limit, std::vector<std::string> &out, PminiPacket &candidate) {
+bool TelePacketEncoder::split(std::string_view raw, size_t limit, std::vector<std::string> &out, PminiPacket &candidate) {
     std::vector<size_t> ends;
     if (!frameEnds(raw, ends)) return false;
-    std::string best(1, '\0'); best += raw;
-    std::string compressed(1, '\1');
-    if (tamp_.packet(reinterpret_cast<const uint8_t *>(raw.data()), raw.size(), compressed) && compressed.size() < best.size())
-        best.swap(compressed);
-    compressed.assign(1, '\2');
-    if (candidate.packet(reinterpret_cast<const uint8_t *>(raw.data()), raw.size(), compressed) && compressed.size() < best.size())
-        best.swap(compressed);
-    if (best.size() <= limit) { out.push_back(std::move(best)); return true; }
+    // Try pmini before allocating tamp's worst-case output buffer. Never keep
+    // a full raw candidate alive alongside the adapter's scratch space.
+    PminiPacket trial = candidate;
+    std::string best(1, '\2');
+    const bool encoded = trial.packet(reinterpret_cast<const uint8_t *>(raw.data()), raw.size(), best);
+    if (!encoded) best.clear();
+    {
+        std::string compressed(1, '\1');
+        if (tamp_.packet(reinterpret_cast<const uint8_t *>(raw.data()), raw.size(), compressed) &&
+            (best.empty() || compressed.size() < best.size())) best.swap(compressed);
+    }
+    if (best.empty() || raw.size() + 1 < best.size()) {
+        best.assign(1, '\0'); best.append(raw.data(), raw.size());
+    }
+    if (best.size() <= limit) {
+        // A fallback may contain the heartbeat table needed by the NEXT batch,
+        // even when earlier data has unknown SIDs. Do not apply it retroactively.
+        if (!encoded && !trial.observeTables(reinterpret_cast<const uint8_t *>(raw.data()), raw.size())) return false;
+        out.push_back(std::move(best));
+        candidate = std::move(trial);
+        return true;
+    }
+    // Recursive children only see state from packets actually retained.
+    std::string().swap(best);
     if (ends.size() < 2) return false;
     const size_t cut = ends[ends.size() / 2 - 1];
     return split(raw.substr(0, cut), limit, out, candidate) && split(raw.substr(cut), limit, out, candidate);
 }
 
-bool TelePacketEncoder::pack(const std::string &raw, size_t limit, std::vector<std::string> &out) {
-    if (raw.empty() || raw.size() > TelePacketBatch::CAP || limit < 2) return false;
+bool TelePacketEncoder::pack(std::string_view raw, size_t limit, std::vector<std::string> &out) {
+    if (raw.empty() || raw.size() > TelePacketBatch::MAX_RAW_INPUT || limit < 2) return false;
     try {
         std::vector<std::string> packets;
         PminiPacket candidate = pmini_;
