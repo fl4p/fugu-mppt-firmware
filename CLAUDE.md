@@ -477,7 +477,7 @@ curl -sG http://tm.fabi.me:8086/query --data-urlencode db=ha_van \
 Fields: `Ui`=Vin, `Uo`=Vout, `P`=power, `I`=Iout, `pwm_duty`=HS count, `cv_lim_idx`=active CV
 limiter, `lag`=loop latency, `mcu_temp`/`ntc_temp`, `mppt_state`, `P_max_today`=today's peak power (W). `device` is a tag (`fry`/`flat`).
 Measurement `sweep_ascii` holds sweep curves (P vs Vin, 100 bins, ~16 power levels, `row_step` W) backfilled from the
-console log's ASCII charts by `etc/sweep_ascii_backfill.py` (from 2026-11-17); full-resolution curves go to `sweep`.
+console log's ASCII charts by `etc/sweep_ascii_backfill.py` (from 2026-11-13); full-resolution curves go to `sweep`.
 
 Every global sweep curve (since 2026-11-27) is in measurement `sweep` of the same db, written by the havan unit
 `fugu-sweep-collector` (`etc/havan/`, which fetches `sweep-curve` after each sweep): tags `device`, `src=fw`; one point per
