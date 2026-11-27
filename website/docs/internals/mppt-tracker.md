@@ -471,7 +471,9 @@ only (no limiter, sweep, fade, charge hold, rect-cal run, manual, PSU or PV emul
    [rising light](#rising-light) the bound is not applied.
 3. The scan holds the operating point, waits for the power filter to settle (`powerSettleMs()`, at most 1 s),
    and averages the power for 100 ms ($P_0$). It then steers $V_{in}$ to each candidate in turn (duty
-   $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. Each measurement also
+   $D\sqrt{V_{in}/V_c}$ each loop tick, at most the fade step), settles, and averages again. If $V_{in}$ reached
+   the target within 1 % and then swings more than 2 % away again (an overshoot, seen at low power, where $V_{in}$
+   follows the duty slowly), the probe travels and settles again. Each measurement also
    waits until the low side has faded back in (see [schedule and cost](#schedule-and-cost)). Finally it returns
    to the start point and measures $P_0'$. A scan that is not done after 30 s ends at the start point.
 4. Each probe is compared with $\max(P_0, P_0')$, so a change of irradiance during the scan cannot make a probe
@@ -492,20 +494,29 @@ that already gives several times the power is skipped.
 
 A scan therefore counts as being in rising light when the power is more than 15 % above a reference. After a
 sweep the reference is its MPP, or the power 5 s into tracking if that is higher (light that rose during the
-sweep). A scan that moves raises it to the power of the probe it moves to, and a scan in rising light to its
-own start power. Such a scan:
+sweep). A scan that moves raises it to the power of the probe it moves to. A scan in rising light:
 
 * skips the current bound of step 2 and probes every reachable lower candidate;
 * runs down to 1 % of `limits.conf::p_max` instead of 5 %;
-* raises the reference, so the next scan in rising light needs another 15 % rise.
+* raises the reference to its end power if it stays, the light held steady and no probe came within 6 % of the
+  operating point, so the next scan in rising light needs another 15 % rise. A scan with no candidate (near-point
+  probes only) raises it too.
+
+A scan in rising light that the light change check rejected, or whose best probe came within 6 %, keeps the
+reference: the re-scan 60 s later (see [schedule and cost](#schedule-and-cost)) runs in rising light again, also
+below 5 % of `p_max`. Outside rising light no scan runs below 5 %, so neither does that re-scan.
 
 Its probes count as currents seen in step 2. A lower maximum that a probe found about as bright as the operating
-point, or brighter, therefore stays a candidate in the following scans once the light stops rising. A probe that
-came within 6 % of the operating point is repeated 60 s later by the usual re-scan.
+point, or brighter, therefore stays a candidate in the following scans once the light stops rising.
 
 In falling light (dusk, a cloud) the power stays below the reference, so the floor stays at 5 % and the bound
 applies. On an unshaded string the rising-light scans find nothing and only cost their probes. Between two
-sweeps, a rise from $P$ to $P'$ adds at most about $\log(P'/P)/\log 1.15$ of them.
+sweeps, a rise from $P$ to $P'$ adds at most about $\log(P'/P)/\log 1.15$ of them, plus the re-scans.
+
+The detector sees only the power at the operating point. That power is limited by the shaded substrings, so it
+rises only if their light rises too, for example with diffuse light in the morning. If the shaded substrings stay
+as dark as at the sweep while the others brighten, the power stays below the reference, no scan in rising light
+runs, and the lower maximum is found only by the next global sweep.
 
 ### Near-point probes
 
@@ -606,6 +617,8 @@ A scan starts in these cases:
 
 A passing cloud changes the power by more than that every few seconds, so most cloud edges do not trigger a scan; a
 shadow that moves across the string over minutes does.
+
+A scan due during a flash operation starts once it has finished; the scan start runs from flash.
 
 A flagged sweep can start a scan as soon as the reference is taken, without a trigger (see
 [Sweep verdict](#sweep-verdict)).

@@ -361,7 +361,9 @@ void MpptController::update() {
         !batteryFull && !converter.boost()) {
         const uint16_t d = converter.getCtrlOnPwmCnt();
         const float t = scan.update(nowMs, sensors.Vin->med3.get(), sensors.Vin->ewm.avg.get(), power, d,
-                                    1.05f * vinFloor(true), 25 * sweepMinPower(), [this] { return powerSettleMs(); },
+                                    1.05f * vinFloor(true), // a start runs from flash
+                                    flashOpActive() ? std::numeric_limits<float>::max() : 25 * sweepMinPower(),
+                                    [this] { return powerSettleMs(); },
                                     converter.lsFading() && !converter.forcedPwm_());
         if (!std::isnan(t)) {
             // the tracker pauses; back at the start point it carries on, on another peak it restarts
