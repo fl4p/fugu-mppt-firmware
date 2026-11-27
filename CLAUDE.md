@@ -66,7 +66,8 @@ NAT router), sends `ota <url>` to each, then prints a before/after version table
 reboots them into the new image. Confirm versions in the after-table.
 
 **fry/flat image: `etc/fleet-build.sh [rev]`** (default HEAD) builds the production config (`sdkconfig.d/fleet`, IDF 6.0.3)
-in a clean, reused detached worktree `../fugu-fleet-wt` (`build/fleet/`), refuses a dirty worktree and prints the .bin
+in a clean, reused detached worktree `../fugu-fleet-wt` (`build/fleet/`), refuses a dirty worktree and a default HEAD
+that is behind origin/main (pass `origin/main` or the rev; a named older rev only warns), and prints the .bin
 path, version and sha256. Builds queue on the `lock.sh` lock `fleet-wt` (`FLEET_LOCK_WAIT`, default 1800 s), so two
 sessions never build there at once; the .bin is only stable until the next build, so OTA it right after. Never ship a
 main-checkout build: it carries other sessions' uncommitted edits.
@@ -75,7 +76,8 @@ main-checkout build: it carries other sessions' uncommitted edits.
 ../fugu-fleet-wt/build/fleet/fugu-firmware.bin -n`, then without `-n`. Devices go one after the other; a failure stops
 the rest. It reads the broker and credentials from `etc/mqtt.env` (main checkout's as fallback), tunnels through
 `havan-ts` when the broker is not directly reachable, locks onto the exact hostname and runs pre-flight checks (also in
-`-n`): image flags, a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
+`-n`): its own checkout behind origin/main in the OTA tooling or with `etc/fugu`/`etc/idf-devtools` checked out
+behind their pins (refused unless `--allow-stale-tools`; a stale checkout once lost a failed OTA's ELF), image flags, a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
 uncommitted firmware inputs; non-firmware dirt does not block), conf keys the image fails setup on (renamed or role
 keys, from `get-config`; refused even with `--yes`, prints the `migrate_side_keys.py` two-step fix; an unreadable conf
 file asks), rect-cal running/unsaved, a sweep or top-balance run

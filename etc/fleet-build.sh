@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build the fry/flat production image (sdkconfig.d/fleet, ESP-IDF 6.0.3) of a commit in a clean, reused
 # detached worktree, so no uncommitted edit of the main checkout ships.
-#   etc/fleet-build.sh [git-rev]      default HEAD of the main checkout
+#   etc/fleet-build.sh [git-rev]      default HEAD of the main checkout, refused when behind origin/main
 # Env: FLEET_WT  worktree (default <main checkout>/../fugu-fleet-wt), build dir build/fleet inside it.
 #      FLEET_LOCK_WAIT  seconds to queue for lock.sh lock fleet-wt (default 1800); no lock.sh = unlocked.
 # Prints the .bin path, version and sha256; feed it to `etc/ota_mqtt.py --bin <path>`.
@@ -10,6 +10,12 @@ main=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-di
 main=$(dirname "$main")
 wt=${FLEET_WT:-$(dirname "$main")/fugu-fleet-wt}
 rev=$(git -C "$main" rev-parse --verify "${1:-HEAD}^{commit}")
+
+# HEAD behind origin/main is refused (build origin/main, or name the rev); a named older rev only warns
+if [ -z "${FLEET_BUILD_LOCKED:-}" ]; then
+    strict=; [ -n "${1:-}" ] || strict=--strict
+    python3 "$(dirname "$0")/checkout_fresh.py" rev --repo "$main" $strict "$rev" || exit $?
+fi
 
 # one build at a time in the shared worktree: queue on lock fleet-wt (up to FLEET_LOCK_WAIT s)
 lk=${LOCK_SH:-$HOME/bin/lock.sh}

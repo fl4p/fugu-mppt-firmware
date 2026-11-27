@@ -128,7 +128,19 @@ no-argument `pwm-freq`) or can't be determined. See [OTA over Wi-Fi](../guide/up
 
 `ota_mqtt.py` updates devices through their MQTT console (`cmd_input=1`, see [MQTT topics](mqtt.md)), one after
 the other, and stops at the first failure. Broker and credentials come from `$MQTT_HOST`, `$MQTT_PORT`,
-`$MQTT_USER` and `$MQTT_PASS` (filled from `etc/mqtt.env`). For each device it:
+`$MQTT_USER` and `$MQTT_PASS` (filled from `etc/mqtt.env`).
+
+Before the first device it fetches `origin/main` and refuses to run when its own checkout is older:
+
+- behind `origin/main` in the OTA tooling (`ota_mqtt.py`, `ota_common.py`, `ota-via-relay.sh`, `fugu_console.py`,
+  `migrate_side_keys.py`, `checkout_fresh.py`, `protected-devices`, or the `etc/fugu` and `etc/idf-devtools` pins)
+- `etc/fugu` or `etc/idf-devtools` checked out at an older commit than the checkout pins, or not checked out
+- no `origin/main` to compare with
+
+An image commit behind `origin/main` only prints a warning. When the fetch fails, it compares with the
+last fetched `origin/main` and says so.
+
+For each device it:
 
 1. Locks onto the exact hostname and reads `bootinfo`.
 2. Runs pre-flight checks: image flags, an unconfirmed running image, a `-dirty` image, conf keys the new image
@@ -161,6 +173,7 @@ refused, and 2 on a setup error.
 | `--retries N`               | Retries after a failed download, default 2 (`--retry-backoff`, default `30,90` s). A broker link lost after `ota` was sent is not retried: it is recorded as `lost`, check `bootinfo` |
 | `--yes`                     | Accept the guard prompts                                                   |
 | `--allow-driver-change`     | Push across a gate-driver change or an unverified driver                   |
+| `--allow-stale-tools`       | Run although this checkout's OTA tooling is older than `origin/main`        |
 | `--broker`, `--port`        | MQTT broker, default `$MQTT_HOST`, `$MQTT_PORT`                            |
 
 ## ota_ble.py

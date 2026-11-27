@@ -54,7 +54,8 @@ The host tools in `etc/` include:
 |---|---|
 | `etc/fugu_console.py` | Console client over serial, telnet, BLE, BLE proxy or MQTT |
 | `etc/ota.py`, `etc/ota_mqtt.py`, `etc/ota_ble.py` | Firmware updates over Wi-Fi (HTTP or the MQTT console) and BLE |
-| `etc/fleet-build.sh` | Builds the production image (`sdkconfig.d/fleet`) of a commit in a clean worktree |
+| `etc/fleet-build.sh` | Builds the production image (`sdkconfig.d/fleet`) of a commit in a clean worktree; refuses a default `HEAD` behind `origin/main` |
+| `etc/checkout_fresh.py` | Compares a checkout or a revision with `origin/main`; used by `fleet-build.sh` and `ota_mqtt.py` |
 | `etc/e2e-test/` | End-to-end test suite, see [Testing](testing.md) |
 | `etc/config-tool/` | `conf-editor.html` single-page [config editor](../reference/config-editor.md), `conf-tool.py` |
 | `etc/scope.py` | Launcher for the adcscope client, see [Measurements](../lab/measurements.md#adc-noise) |

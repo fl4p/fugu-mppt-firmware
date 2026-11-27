@@ -51,6 +51,7 @@ from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E
                         require_elf_archive)
 from ota_common import confirm as yes_no  # noqa: E402
 import migrate_side_keys as msk  # noqa: E402
+import checkout_fresh  # noqa: E402
 import rich  # noqa: E402,F401  (result table; fail before the OTA, not after it)
 
 elf_archive = require_elf_archive()  # vendored submodule (etc/idf-devtools); fail before any OTA
@@ -320,6 +321,35 @@ def firmware_dirt(bin_path):
 def image_git_sha(version):
     m = re.search(r'-g([0-9a-f]{7,})', version or '')
     return m[1] if m else None
+
+
+def tools_fresh(args, image):
+    """Refuse OTA tooling older than origin/main (warn with --allow-stale-tools); warn on an old image."""
+    head = checkout_fresh.compare(REPO_ROOT)
+    why = checkout_fresh.stale_tools(REPO_ROOT, head)
+    if why is None:
+        why = [f'cannot compare {REPO_ROOT} with origin/main (or a tooling submodule is not checked out), '
+               'OTA tooling freshness unverified']
+    elif head['fetch_error']:
+        print(f'WARNING: compared with {checkout_fresh.provenance(head)}')
+    for w in why or ():
+        print(f"{'WARNING' if args.allow_stale_tools else 'refusing'}: {w}")
+    sha = image_git_sha(image['version'])
+    c = checkout_fresh.compare(REPO_ROOT, sha, do_fetch=False) if sha and head else None
+    if c is not None:
+        c['fetch_error'] = head['fetch_error']
+    if c is None:
+        print(f"WARNING: image commit {sha or '?'} unknown here, cannot compare it with origin/main")
+    elif c['behind'] or c['ahead']:
+        print(f"WARNING: image commit {sha} is {c['behind']} behind and {c['ahead']} ahead of "
+              f"{checkout_fresh.provenance(c)}")
+    if not why or args.allow_stale_tools:
+        return True
+    print('update the checkout (or run from a worktree at origin/main), or pass --allow-stale-tools')
+    if args.dry_run:
+        args.would_refuse = args.tools_refused = True
+        return True
+    return False
 
 
 def last_record(device):
@@ -826,11 +856,13 @@ def main():
                     help='gateway Wi-Fi TX power during the transfer, dBm (20)')
     ap.add_argument('--no-gw-boost', action='store_true',
                     help='leave the gateway TX power alone')
+    ap.add_argument('--allow-stale-tools', action='store_true',
+                    help='run although this checkout\'s OTA tooling is behind origin/main')
     args = ap.parse_args()
     for s in (signal.SIGTERM, signal.SIGHUP):
         signal.signal(s, lambda *_: sys.exit(143))  # run the finally blocks and atexit
     args.bin = os.path.abspath(args.bin)
-    args.would_refuse = False
+    args.would_refuse = args.tools_refused = False
     sys.stdout.reconfigure(line_buffering=True)
     names = [n.strip() for n in args.name.split(',') if n.strip()]
 
@@ -848,6 +880,8 @@ def main():
     print(f"image: {image['project']} {image['version']} (built {image['date']} {image['time']}, "
           f"IDF {image['idf']}), sha256 {args.bin_sha[:16]}, {args.bin}")
     print(f'owner: {args.who}')
+    if not tools_fresh(args, image):
+        return 1
 
     ssh_dest = relay_ssh_dest()
     try:
@@ -873,7 +907,7 @@ def main():
 
     results = {}
     for name in names:
-        prior, args.would_refuse = args.would_refuse, False
+        prior, args.would_refuse = args.would_refuse, args.tools_refused
         results[name] = run_device(args, name, image, server, gw, locks)
         if args.would_refuse and not results[name]:
             results[name] = 'refuse'
