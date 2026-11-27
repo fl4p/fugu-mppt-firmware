@@ -10,6 +10,7 @@
 #include "telemetry.h"
 #include "tele_core.h"
 
+void teleUdpResetPackets();
 void teleUdpLoadCompressor();  // telemetry.cpp: cache the UDP wire's compressor
 
 extern MpptController mppt;
@@ -48,6 +49,7 @@ protected:
     void onStop() override {                            // delete the task -> frees CPU + its stack
         g_teleUdpActive = false;
         if (_flushTask) { vTaskDelete(_flushTask); _flushTask = nullptr; }
+        teleUdpResetPackets();
     }
     void onTick() override {
         mppt.telemetry();   // produce only; flushTask does the compress+send

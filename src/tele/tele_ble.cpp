@@ -8,6 +8,12 @@
 #include "telemetry.h"
 #include "tele_core.h"
 #include "compress.h"
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+#include "tele_packet.h"
+#include <memory>
+static std::unique_ptr<TelePacketEncoder> packetEncoder;
+static uint64_t firstPointMs = 0;
+#endif
 #include "../conf.h"
 #include "../mppt.h"
 
@@ -34,6 +40,19 @@ static size_t droppedBytes = 0;
 static time_ms lastFlushMs = 0;
 static constexpr size_t RAW_CAP = 1024;      // heap is tight (no-PSRAM ~27 KB free); keep the
 static constexpr size_t OUT_CAP = 3072;      // stream's footprint small, drop-newest covers bursts
+static size_t rawCap() {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) return TelePacketBatch::CAP;
+#endif
+    return RAW_CAP;
+}
+static size_t outCap() {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) return 12288;
+#endif
+    return OUT_CAP;
+}
+static void packetize(time_ms nowMs);
 static constexpr time_ms FLUSH_MS = 250;     // ship a partial batch after this long
 
 class TeleTxCallbacks : public BLECharacteristicCallbacks {
@@ -63,6 +82,9 @@ static void teleBleStop() {
     std::string().swap(outBuf);
     std::string().swap(packedBuf);
     outHead = 0;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    packetEncoder.reset(); firstPointMs = 0;
+#endif
     delete comp;
     comp = nullptr;
     teleLoadWireConf();   // un-force g_teleBinary (back to tele.conf::binary)
@@ -87,9 +109,12 @@ const char *teleBleSetStreaming(bool on) {
     // Reserve everything up front so the streaming path never allocates (see txBuf note in
     // console_ble.cpp — growing strings on this heap is how the device dies).
     try {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+        if (telePminiConfigured()) packetEncoder.reset(new TelePacketEncoder());
+#endif
         comp = new TampCompress();
-        rawBatch.reserve(RAW_CAP + 64);
-        outBuf.reserve(OUT_CAP + 64);
+        rawBatch.reserve(rawCap() + 64);
+        outBuf.reserve(outCap() + 64);
         packedBuf.reserve(RAW_CAP * 3 / 2);
     } catch (const std::bad_alloc &) {
         teleBleStop();
@@ -110,13 +135,31 @@ void teleBleEnqueue(const std::string &frame) {
     static TaskHandle_t owner = nullptr;
     if (!owner) owner = xTaskGetCurrentTaskHandle();
     assert(xTaskGetCurrentTaskHandle() == owner);
-    if (rawBatch.size() + frame.size() > RAW_CAP) { droppedBytes += frame.size(); return; }
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder && !rawBatch.empty() && rawBatch.size() + frame.size() > rawCap()) packetize(wallClockMs());
+    if (rawBatch.empty()) firstPointMs = wallClockMs();
+#endif
+    if (rawBatch.size() + frame.size() > rawCap()) { droppedBytes += frame.size(); return; }
     try { rawBatch += frame; } catch (const std::bad_alloc &) { droppedBytes += frame.size(); }
 }
 
 // <0x7E><varint len><cid><payload> — payload identical to one UDP telemetry datagram.
 static void packetize(time_ms nowMs) {
     packedBuf.clear();
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) {
+        try {
+            std::vector<std::string> packets;
+            if (!packetEncoder->pack(rawBatch, 1440, packets)) droppedBytes += rawBatch.size();
+            else for (const auto &packet : packets) {
+                if (outBuf.size() - outHead + packet.size() + 6 > outCap()) { droppedBytes += packet.size(); continue; }
+                outBuf += '\x7e'; putVarint(outBuf, packet.size()); outBuf += packet;
+            }
+        } catch (const std::bad_alloc &) { droppedBytes += rawBatch.size(); }
+        rawBatch.clear(); firstPointMs = 0; lastFlushMs = nowMs;
+        return;
+    }
+#endif
     try {
         if (comp->packet((const uint8_t *) rawBatch.data(), rawBatch.size(), packedBuf)) {
             if (outBuf.size() - outHead + packedBuf.size() + 6 > OUT_CAP) {
@@ -145,9 +188,11 @@ void teleBleTick(time_ms nowMs) {
     mppt.telemetry();   // produces points when the WiFi TelemetryService isn't ticking
 
     size_t chunk = bleConsoleChunk();
-    if (!rawBatch.empty() &&
-        (rawBatch.size() >= comp->maxBatchRaw(chunk) || nowMs - lastFlushMs > FLUSH_MS))
-        packetize(nowMs);
+    bool due = rawBatch.size() >= comp->maxBatchRaw(chunk) || nowMs - lastFlushMs > FLUSH_MS;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) due = rawBatch.size() >= rawCap() || nowMs - firstPointMs >= TelePacketBatch::WAIT_MS;
+#endif
+    if (!rawBatch.empty() && due) packetize(nowMs);
 
     while (outHead < outBuf.size()) {
         // Leave more msys_1 headroom (floor 10 of 12 blocks) than the console drain (floor 8): telemetry is the

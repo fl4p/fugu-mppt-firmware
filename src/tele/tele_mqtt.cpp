@@ -6,11 +6,23 @@
 #include "mqtt.h"
 #include "telemetry.h"
 #include "tele_core.h"
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+#include "tele_packet.h"
+#include <memory>
+static std::unique_ptr<TelePacketEncoder> packetEncoder;
+static uint64_t firstPointMs = 0;
+#endif
 
 static const char *TAG = "telemqtt";
 
 static constexpr size_t CAP = 1024;
 static constexpr time_ms FLUSH_MS = 500;
+static size_t batchCap() {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) return TelePacketBatch::CAP;
+#endif
+    return CAP;
+}
 
 // buf[0] is the compressor id (0 = uncompressed), kept so a publish needs no second buffer
 static std::string buf;
@@ -30,6 +42,9 @@ uint32_t teleMqttLeaseLeftS(time_ms nowMs) {
 
 static void stop() {
     leaseUntilMs = 0;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    packetEncoder.reset(); firstPointMs = 0;
+#endif
     std::string().swap(buf);
     teleLoadWireConf();
 }
@@ -49,11 +64,17 @@ const char *teleMqttLease(uint32_t seconds) {
         if (heap_caps_get_free_size(MALLOC_CAP_DEFAULT) < 16 * 1024)
             return "low heap";
         try {
-            buf.reserve(CAP + 64 + 1);
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+            if (telePminiConfigured()) packetEncoder.reset(new TelePacketEncoder());
+#endif
+            buf.reserve(batchCap() + 64 + 1);
             buf.assign(1, '\0');
             topic = "pv/tele/" + getHostname();
         } catch (const std::bad_alloc &) {
             std::string().swap(buf);
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+            packetEncoder.reset();
+#endif
             return "out of memory";
         }
         g_teleBinary = true;
@@ -68,6 +89,20 @@ const char *teleMqttLease(uint32_t seconds) {
 }
 
 static void flush(time_ms nowMs) {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) {
+        try {
+            std::vector<std::string> packets;
+            if (buf.size() > 1) {
+                if (!packetEncoder->pack(buf.substr(1), 1440, packets)) dropped += buf.size() - 1;
+                else for (const auto &p : packets)
+                    if (!MQTT.publish(topic.c_str(), p.data(), p.size(), 0, false)) dropped += p.size();
+            }
+        } catch (const std::bad_alloc &) { dropped += buf.size() > 1 ? buf.size() - 1 : 0; }
+        buf.assign(1, '\0'); firstPointMs = 0; lastFlushMs = nowMs;
+        return;
+    }
+#endif
     if (buf.size() > 1 && !MQTT.publish(topic.c_str(), buf.data(), buf.size(), 0, false))
         dropped += buf.size() - 1;
     buf.assign(1, '\0');
@@ -78,9 +113,14 @@ void teleMqttEnqueue(const std::string &frame) {
     if (!teleMqttActive()) return;
     // A frame that does not fit ships the batch first: drop-newest would preferentially lose the
     // largest frames, which are the symbol-table heartbeats a late subscriber needs.
-    if (buf.size() - 1 + frame.size() > CAP && MQTT.isConnected()) flush(lastFlushMs);
-    if (buf.size() - 1 + frame.size() > CAP) dropped += frame.size();
-    else buf += frame;
+    if (buf.size() - 1 + frame.size() > batchCap() && MQTT.isConnected()) flush(lastFlushMs);
+    if (buf.size() - 1 + frame.size() > batchCap()) dropped += frame.size();
+    else {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+        if (buf.size() == 1) firstPointMs = wallClockMs();
+#endif
+        try { buf += frame; } catch (const std::bad_alloc &) { dropped += frame.size(); }
+    }
 }
 
 void teleMqttTick(time_ms nowMs) {
@@ -102,5 +142,9 @@ void teleMqttTick(time_ms nowMs) {
         wasConnected = true;
     }
     teleProducePoint();
-    if (buf.size() > 1 && (buf.size() - 1 >= CAP - 128 || nowMs - lastFlushMs > FLUSH_MS)) flush(nowMs);
+    bool due = buf.size() - 1 >= CAP - 128 || nowMs - lastFlushMs > FLUSH_MS;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (packetEncoder) due = buf.size() - 1 >= batchCap() || nowMs - firstPointMs >= TelePacketBatch::WAIT_MS;
+#endif
+    if (buf.size() > 1 && due) flush(nowMs);
 }

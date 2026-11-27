@@ -69,7 +69,7 @@ void teleLoadWireConf() {
 #endif
 }
 
-moodycamel::ReaderWriterQueue<std::string> pointsQ{};
+moodycamel::ReaderWriterQueue<QueuedTelePoint> pointsQ{};
 
 void telemetryAddPoint(TelePoint &p, uint16_t maxQueue) {
     assert(p.hasTime());
@@ -79,5 +79,16 @@ void telemetryAddPoint(TelePoint &p, uint16_t maxQueue) {
 #endif
     teleMqttEnqueue(wire);
     if (g_teleUdpActive && pointsQ.size_approx() < maxQueue)
-        pointsQ.enqueue(std::move(wire));
+        pointsQ.enqueue(QueuedTelePoint{std::move(wire), uint64_t(esp_timer_get_time()) / 1000});
+}
+
+bool telePminiConfigured() {
+    ConfFile conf{"/littlefs/conf/tele.conf"};
+    const bool requested = conf.getLong("pmini", 0) != 0;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    return requested;
+#else
+    if (requested) ESP_LOGW("tele", "pmini requested but not compiled; using legacy telemetry");
+    return false;
+#endif
 }

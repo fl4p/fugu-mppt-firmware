@@ -211,6 +211,16 @@ config FUGU_WITH_TELE_BINARY
         Compiles the binary sym_line_protocol wire and the tamp compressor, chosen at runtime by
         tele.conf binary=1. Without it the UDP wire is text only. Selected by FUGU_WITH_BLE_TELE.
 
+config FUGU_WITH_TELE_PMINI
+    bool "Pmini columnar telemetry codec"
+    default y
+    depends on FUGU_WITH_TELE_BINARY
+    help
+        Native pmini MTP2 encoder and bounded packet framing. Enable at runtime
+        with tele.conf pmini=1 after updating receivers. Batches for up to 1800 ms,
+        falling back to raw/tamp when smaller or when a schema is unsupported.
+        Additional heap is required during encoding; OTA compression is unchanged.
+
 config FUGU_WITH_BLE_ADV
     bool "BLE telemetry broadcast (advertising data)"
     default n

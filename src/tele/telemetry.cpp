@@ -24,6 +24,25 @@
 #include "../conf.h"
 #include "tele_core.h"
 #include "../etc/idle_profile.h"
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+#include "tele_packet.h"
+#include <memory>
+static std::unique_ptr<TelePacketEncoder> s_packetEncoder;
+static TelePacketBatch s_packetBatch;
+static std::vector<std::string> s_packetPending;
+static size_t s_packetHead = 0;
+#endif
+
+void teleUdpResetPackets() {
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    s_packetEncoder.reset();
+    s_packetBatch = TelePacketBatch{};
+    s_packetPending.clear(); s_packetHead = 0;
+#endif
+    QueuedTelePoint stale;
+    while (pointsQ.try_dequeue(stale)) {}
+}
+
 static Compressor *s_teleCompressor = nullptr;   // cached compressor for the binary wire
 
 
@@ -312,6 +331,12 @@ static void udpFlushString(const IPAddress &host, uint16_t port, String &msg) {
 void teleUdpLoadCompressor() {
 #ifdef WITH_TELE_BINARY
     s_teleCompressor = g_teleBinary ? &compressorByName("tamp") : nullptr;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (g_teleBinary && telePminiConfigured()) {
+        s_packetEncoder.reset(new (std::nothrow) TelePacketEncoder());
+        if (!s_packetEncoder) ESP_LOGW("tele", "pmini unavailable: allocation failed, using tamp");
+    }
+#endif
 #endif
 }
 
@@ -349,14 +374,55 @@ void TelemetryService::flushTask(void *arg) {
 void TelemetryService::flushQueue(const IPAddress &addr) {
     if (noSsid) return;
     constexpr auto port = 8086;
+#ifdef CONFIG_FUGU_WITH_TELE_PMINI
+    if (g_teleBinary && s_packetEncoder) {
+        const auto sendOne = [&]() {
+            if (s_packetHead < s_packetPending.size()) {
+                const auto &p = s_packetPending[s_packetHead++];
+                const auto sent = udpSend(p.data(), p.size(), addr, port);
+                bytesSent += sent;
+                if (sent != p.size()) ESP_LOGW("tele", "UDP telemetry send failed: dropped %u bytes", unsigned(p.size() - sent));
+                if (s_packetHead == s_packetPending.size()) { s_packetPending.clear(); s_packetHead = 0; }
+            }
+        };
+        if (!s_packetPending.empty()) { sendOne(); return; }
+        const uint64_t now = uint64_t(esp_timer_get_time()) / 1000;
+        const auto pack = [&]() {
+            if (!s_packetBatch.raw.empty() && !s_packetEncoder->pack(s_packetBatch.raw, CONFIG_TCP_MSS, s_packetPending))
+                ESP_LOGW("tele", "pmini batch encode failed, dropped %u bytes", unsigned(s_packetBatch.raw.size()));
+            s_packetBatch.clear();
+        };
+        try {
+            // Deadline checked even when no new point arrives. Do not renew it per sample.
+            if (s_packetBatch.due(now)) { pack(); sendOne(); return; }
+            QueuedTelePoint queued;
+            while (pointsQ.try_dequeue(queued)) {
+                const auto &point = queued.wire;
+                if (!s_packetBatch.fits(point.size())) {
+                    pack();
+                    if (!s_packetBatch.append(point, queued.producedMs)) ESP_LOGW("tele", "oversize telemetry point dropped");
+                    sendOne(); return;
+                }
+                s_packetBatch.append(point, queued.producedMs);
+                if (s_packetBatch.due(now)) { pack(); sendOne(); return; }
+            }
+            if (teleSparse() || s_packetBatch.due(now)) { pack(); sendOne(); }
+        } catch (const std::bad_alloc &) {
+            s_packetBatch.clear(); s_packetPending.clear(); s_packetHead = 0;
+            ESP_LOGW("tele", "pmini batch OOM, dropped pending telemetry");
+        }
+        return;
+    }
+#endif
     if (g_teleBinary && s_teleCompressor) {
         Compressor &comp = *s_teleCompressor;
         const size_t cap = comp.maxBatchRaw(CONFIG_TCP_MSS);
         static std::string batch;
-        std::string frame;
+        QueuedTelePoint queued;
         try {
             if (batch.capacity() < cap) batch.reserve(cap); // once: growing by doubling held up to 2x cap
-            while (pointsQ.try_dequeue(frame)) {
+            while (pointsQ.try_dequeue(queued)) {
+                const auto &frame = queued.wire;
                 if (!batch.empty() && batch.size() + frame.size() > cap) {  // batch full -> send, carry frame over
                     sendBinaryBatch(addr, port, comp, batch);                // one full datagram per call
                     batch += frame;                                         // keeps the reserved buffer
@@ -374,8 +440,9 @@ void TelemetryService::flushQueue(const IPAddress &addr) {
     } else {
         constexpr size_t MTU = CONFIG_TCP_MSS;
         static String msg;
-        std::string lp;
-        while (pointsQ.try_dequeue(lp)) {
+        QueuedTelePoint queued;
+        while (pointsQ.try_dequeue(queued)) {
+            const auto &lp = queued.wire;
             if (msg.length() && msg.length() + lp.length() + 1 > MTU) {  // full -> send, carry line over
                 udpFlushString(addr, port, msg);
                 msg = String(lp.c_str()); msg += '\n';
@@ -399,5 +466,3 @@ void dcdcDataChanged(const ADC_Sampler &dcdc, const Sensor &sensor) {
         telemetryAddPoint(point, 600);
     }
 }
-
-

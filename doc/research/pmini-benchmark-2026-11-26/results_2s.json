@@ -1,0 +1,173 @@
+{
+  "sources": {
+    "fry": {
+      "query": "SELECT * FROM mppt WHERE device='fry' AND time >= '2026-11-25T10:00:00Z' AND time < '2026-11-25T12:00:00Z' ORDER BY time ASC LIMIT 2048",
+      "sha256": "2b4761b42fba95921d1c72757b682174ace1202b7dba16d9d50a17170fe3c678",
+      "n": 2048,
+      "start_ms": 1795600800019,
+      "end_ms": 1795600845650,
+      "median_interval_ms": 21,
+      "fields": [
+        "I",
+        "Ui",
+        "Uo",
+        "P",
+        "E",
+        "E_today",
+        "pwm_dir_f",
+        "mppt_state",
+        "P_max_today",
+        "Ro",
+        "Rc",
+        "Rb",
+        "wf",
+        "Pw",
+        "mcu_temp",
+        "ntc_temp",
+        "lag",
+        "rect_off",
+        "heap",
+        "heap_min",
+        "pwm_duty",
+        "pwm_ls_duty",
+        "pwm_ls_max",
+        "pwm_dcm"
+      ],
+      "fmt": "<IIIfffffffiffffifffiiiiiiiB"
+    },
+    "flat": {
+      "query": "SELECT * FROM mppt WHERE device='flat' AND time >= '2026-11-25T10:00:00Z' AND time < '2026-11-25T12:00:00Z' ORDER BY time ASC LIMIT 2048",
+      "sha256": "5a3d8d887c21713f2b71a59382fc99bc04c4dd23855dcd11e3a612788c23166e",
+      "n": 2048,
+      "start_ms": 1795600800012,
+      "end_ms": 1795600842961,
+      "median_interval_ms": 21,
+      "fields": [
+        "I",
+        "Ui",
+        "Uo",
+        "P",
+        "E",
+        "E_today",
+        "pwm_dir_f",
+        "mppt_state",
+        "P_max_today",
+        "wf",
+        "mcu_temp",
+        "ntc_temp",
+        "lag",
+        "rect_off",
+        "heap",
+        "heap_min",
+        "pwm_duty",
+        "pwm_ls_duty",
+        "pwm_ls_max",
+        "pwm_dcm",
+        "cv_lim_idx"
+      ],
+      "fmt": "<IIIfffffffififfiiiiiiiBi"
+    }
+  },
+  "results": [
+    {
+      "device": "fry",
+      "policy": "latency-1800ms",
+      "batches": 25,
+      "rows": 2048,
+      "mean_rows": 81.92,
+      "tamp_wire": 52054,
+      "tamp_steady": 49548,
+      "pmini": 21557,
+      "tamp_columnar": 60851,
+      "raw_columnar": 215090,
+      "pmini_saving_pct": 56.49269395333818,
+      "pmini_max_packet": 957,
+      "workspace_buffer_bytes": 24547,
+      "roundtrips": 25,
+      "median_batch_span_ms": 1788,
+      "host_median_us": {
+        "tamp": 221.208,
+        "pmini": 3826.875
+      }
+    },
+    {
+      "device": "fry",
+      "policy": "latency-2000ms",
+      "batches": 23,
+      "rows": 2048,
+      "mean_rows": 89.04347826086956,
+      "tamp_wire": 51886,
+      "tamp_steady": 49358,
+      "pmini": 21146,
+      "tamp_columnar": 60413,
+      "raw_columnar": 215086,
+      "pmini_saving_pct": 57.15790753272012,
+      "pmini_max_packet": 1047,
+      "workspace_buffer_bytes": 24979,
+      "roundtrips": 23,
+      "median_batch_span_ms": 1995,
+      "host_median_us": {
+        "tamp": 266.959,
+        "pmini": 4316.5
+      }
+    },
+    {
+      "device": "flat",
+      "policy": "latency-1800ms",
+      "batches": 24,
+      "rows": 2048,
+      "mean_rows": 85.33333333333333,
+      "tamp_wire": 51278,
+      "tamp_steady": 48896,
+      "pmini": 22477,
+      "tamp_columnar": 58775,
+      "raw_columnar": 190512,
+      "pmini_saving_pct": 54.031004581151834,
+      "pmini_max_packet": 1025,
+      "workspace_buffer_bytes": 24460,
+      "roundtrips": 24,
+      "median_batch_span_ms": 1784.0,
+      "host_median_us": {
+        "tamp": 222.45850000000002,
+        "pmini": 3466.687
+      }
+    },
+    {
+      "device": "flat",
+      "policy": "latency-2000ms",
+      "batches": 22,
+      "rows": 2048,
+      "mean_rows": 93.0909090909091,
+      "tamp_wire": 51186,
+      "tamp_steady": 48801,
+      "pmini": 22101,
+      "tamp_columnar": 58321,
+      "raw_columnar": 190508,
+      "pmini_saving_pct": 54.711993606688395,
+      "pmini_max_packet": 1121,
+      "workspace_buffer_bytes": 24892,
+      "roundtrips": 22,
+      "median_batch_span_ms": 1991.0,
+      "host_median_us": {
+        "tamp": 248.5205,
+        "pmini": 3706.083
+      }
+    }
+  ],
+  "fingerprints": {
+    "/Users/fab/dev/pv/fugu-mppt-firmware/src/tele/sym_line_protocol.h": "b092ad747bb7ec405ce7081a1e10bd960d5e78c7e0056c9dbb7d993ca35351a9",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/src/tele/tamp_compress.cpp": "6deafbc28465604d98398828b552c3939fd302f9801c6eb01132203ff9830fd3",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/doc/research/pmini-benchmark-2026-11-26/run_2s.py": "7ab7b379dff090b461b440397fec759b5b84555449b64eb8073e33df4d05275e",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/doc/research/pmini-benchmark-2026-11-26/bridge.cpp": "6d477ce986080c956fc2e89c75bf45bf4f5ae1d127b6e45d72319d15466f8837",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/common.c": "b7cf00c4f88581d5504d37273d20c4fa28b4bbcb3fa7b8328cb7916798185b4d",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/decompressor.h": "ff70f781773b9af65ed6fd513bd60d6667fc656e15f7b5e0234fea0ca8d25e77",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/compressor_find_match_desktop.c": "a2a2aa4f2a0fc4cde88acc6a267f5fe703a467f12ab9f46342d6d8e15e28de70",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/compressor.c": "7a594218f2d26735e23a42345f9c624bdfe310956ad66fb9b6be04a57ebfe3cc",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/common.h": "2d2f421b5cc15b81920a3aea814943a664e34b7191fce4981f85c06dbae0a84d",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/decompressor.c": "e1302d91ec897b2622cfbd0f839eb816af899cf1249bed34b52f269e1d708fb6",
+    "/Users/fab/dev/pv/fugu-mppt-firmware/components/tamp/tamp/_c_src/tamp/compressor.h": "86005fb97b3fbad47c0b8ae79e3d7883289e0006f381bd88174894d880c18594",
+    "/Users/fab/dev/esp/pmini/pmini/pmini.py": "e2726cf1c7c50b80e024b6680ab51593252e5b0fc0e426baf30ae967ada2f5b6",
+    "/Users/fab/dev/esp/pmini/pmini/pmini_py.py": "238489ee1a15c1ecba328d8264807e6a45b7614ccd46c00ebabd452a63d68f28"
+  },
+  "python": "3.14.0 (v3.14.0:ebf955df7a8, Oct  7 2025, 08:20:14) [Clang 16.0.0 (clang-1600.0.26.6)]"
+}
