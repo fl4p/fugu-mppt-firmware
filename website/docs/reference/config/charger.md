@@ -13,7 +13,7 @@ sidebar_position: 6
 | `cv_eoc`            | V    | float | 3.5        | End-of-charge voltage of highest cell at tail current; must be ≥ `cv_float` |
 | `cv_float`          | V    | float | 3.325      | Float cell voltage where termination line meets zero current   |
 | `cv_ceiling`        | V    | float | cv_eoc+0.05 | Hard per-cell ceiling: latch termination if highest cell reaches it, regardless of current (backstops cv_eoc on imbalanced packs). Must be ≥ `cv_eoc` |
-| `vout_max_fallback` | V    | float | cells × `cv_float` | Max output voltage when BMS data is missing, also the float target after termination. Must be greater than `vout_offset_max`. Not allowed with `vout_max=auto` |
+| `vout_max_fallback` | V    | float | cells × `cv_float` | Max output voltage when [BMS data](../../guide/charging/bms-integration.md) is missing, also the float target after termination. Must be greater than `vout_offset_max`. Not allowed with `vout_max=auto` |
 | `ibat_max`          | A    | float | 20         | Maximum battery charge current limit                           |
 | `bat_c`             | Ah   | float | unset → termination line and EOC feedback disabled (see [LFP charging](../../guide/charging/lfp-charging.md)) | Effective battery pack capacity |
 | `tail_c_rate`       | C    | float | 0.05       | End-of-charge tail current as fraction of capacity; must be > 0 |
