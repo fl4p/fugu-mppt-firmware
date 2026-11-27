@@ -55,7 +55,7 @@ flowchart LR
 ## MPPT
 
 The tracker starts with a global sweep from duty 0 upwards, captures the maximum power point, then follows it with
-fast and later slow perturb-and-observe. A new sweep runs every 30 minutes, and `sweep` starts one on demand. The
+fast and later slow perturb-and-observe. A new sweep runs every 30 minutes (`tracker.conf::sweep_interval`), and `sweep` starts one on demand. The
 periodic sweep waits while the charger holds (terminated, partial-charge ceiling, too cold, stale BMS data) or the output is
 voltage-limited. See [Sweep gating](../internals/mppt-tracker.md#when-the-tracker-does-not-sweep).
 

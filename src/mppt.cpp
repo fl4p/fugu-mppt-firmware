@@ -107,7 +107,7 @@ void MpptController::update() {
         if (i > 1.03f * _svI) _svI = i, _resweepAt = (nowMs + 5000) | 1, retry = false;
     }
     if (!g_app.psuMode() && !_sweeping && !batteryFull && !inBackoff() && !flashOpActive() &&
-        (grew || retry || sinceSweepUs > 30 * 60000000)) {
+        (grew || retry || sinceSweepUs > (time_us) sweepInterval * 1000000)) {
         ESP_LOGI("mppt", "%s sweep & sensor calibration", grew ? "power-doubled" : retry ? "retry" : "periodic");
         g_app.maxLoopLag = 0; // restart the lag window so telemetry tracks per-sweep peak, not all-time
         if (retry) _resweepAt = 0;
@@ -636,6 +636,7 @@ void MpptController::begin(const ConfFile &trackerConf, const ConfFile &boardCon
     sweepSpeed = std::max(0.1f, trackerConf.getFloat("sweep_speed", 4.0f));
     sweepVerify = std::max(0.f, trackerConf.getFloat("sweep_verify", 0.1f));
     sweepPace = std::clamp(trackerConf.getFloat("sweep_pace", 4.0f), 1.f, 8.f);
+    sweepInterval = (uint16_t) std::clamp(trackerConf.getLong("sweep_interval", 1800), 60L, 65535L);
     scan.n = scan.saved = std::min<uint8_t>(6, trackerConf.getByte("pv_substrings", 0)); // learned, 0 = learn again
     scan.interval = (uint16_t) std::clamp(trackerConf.getLong("scan_interval", 300), 0L, 65535L);
     scan.trigger = trackerConf.getByte("scan_trigger", 1);

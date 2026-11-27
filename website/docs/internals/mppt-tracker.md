@@ -21,7 +21,7 @@ Tracking runs in three phases:
    a major drop in power (clouds, partial shading), a limiter, or 45 s without a direction reversal switches
    back to fast tracking.
 
-A new global sweep runs every 30 minutes so the tracker does not stay on a local maximum, which happens with
+A new global sweep runs every 30 minutes (`sweep_interval`) so the tracker does not stay on a local maximum, which happens with
 partially shaded strings. A sweep takes about 5–15 s, longer when a limiter holds the ramp back (see
 [Global sweep](#global-sweep)). Sweeping too often or too slowly costs yield. On a buck, once a sweep has shown a
 shaded string, a [partial peak scan](#partial-peak-scan) checks the other local maxima in a few seconds (at most
@@ -54,7 +54,7 @@ stateDiagram-v2
 
 | Transition | Label | Condition |
 |---|---|---|
-| → Sweep | start | Boot, `sweep` command, 30 min, low-light power ×2, or re-sweep |
+| → Sweep | start | Boot, `sweep` command, `sweep_interval` (30 min), low-light power ×2, or re-sweep |
 | Sweep → ReturnPass | 2+ maxima | Limiter or max duty on a bright buck sweep with 2+ local maxima above 1.05 times the Vin floor, at most 6 recorded (see [Return pass](#return-pass)) |
 | Sweep → FadeToMPP | sweep end | Limiter or max duty, otherwise |
 | Sweep → Backoff | low power | Best power < 0.2 % of `p_max` |
@@ -645,6 +645,7 @@ The tracker reads these keys from `tracker.conf`:
 |----------------------------------------------------------------------|---------|------------------------------------------------------|
 | [`sweep_speed`](../reference/config/tracker.md)                      | 4.0     | Sweep speed; scales the per-tick cap and the limit-tracking gain (min 0.1) |
 | [`sweep_pace`](../reference/config/tracker.md)                       | 4.0     | Largest sweep speed-up where Vin moves slowly, 1..8; 1 = off |
+| [`sweep_interval`](../reference/config/tracker.md)                   | 1800    | Global sweep period [s], 60..65535                   |
 | [`sweep_verify`](../reference/config/tracker.md)                     | 0.10    | [Sweep verdict](#sweep-verdict) tolerance; 0 = off   |
 | [`target_duty_cycle`](../reference/config/tracker.md)                | absent  | Fixed duty fraction; if set (0 included) disables sweep and P&O |
 | [`scan_interval`](../reference/config/tracker.md)                    | 300     | Partial peak scan period [s]; 0 = triggered only     |

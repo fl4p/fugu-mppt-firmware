@@ -282,7 +282,7 @@ The RT loop never sleeps voluntarily — it blocks waiting for the next ADC samp
 3. **PD controllers** (`src/pd_control.h`) — five units: `VinCTRL`, `IinCTRL`, `VoutCTRL`, `IoutCTRL`, `PowerCTRL` (
    thermal derate). The smallest response wins each tick; if negative, MPPT halts and duty decreases proportionally.
 4. **MPPT tracker** (`src/tracker.h`) — three phases: global sweep (0→max duty, captures peak), fast P&O around the
-   captured MPP, then slow P&O. Re-sweep every 30 min or on major power change.
+   captured MPP, then slow P&O. Re-sweep every `tracker.conf::sweep_interval` (30 min) or on major power change.
 5. **PWM update** via `SynchronousConverter` (`src/buck.h`) — uses Vin/Vout and coil L to compute when the LS rectifier
    may turn on (diode emulation, CCM↔DCM), with a slow fade-in and reverse-current pullback. `L0` in `coil.conf` is
    undershot by 5% (`InductivityDcBias`) to model core saturation. See `website/docs/internals/diode-emulation.md`.

@@ -346,6 +346,7 @@ private:
     uint32_t _paceT = 0;         // [us] time at the pace anchor
     float cIn = 1e-3f;           // [F] converter.conf::c_in, input capacitance (sweep slow-down)
     float sweepVerify = 0.1f; // tracker.conf::sweep_verify, 0 = off
+    uint16_t sweepInterval = 1800; // tracker.conf::sweep_interval [s]
 
 public:
     Limits limits{};
