@@ -1336,7 +1336,70 @@ static void test_hold_rise_frame_spacing() {
         printf("  rise look-ahead, cell frames %d s apart%s: limit %.2f -> %.2f A at 3.490 V\n", per,
                mode == 2 ? " (republished)" : "", before, after);
         CHECK(c.termCond.cvHold(), "in hold (mode %d)", mode);
-        CHECK(mode ? after > before + 0.1f : after < before - 0.5f, "mode %d: limit %.2f -> %.2f A", mode, before, after);
+        // mode 0's 12 s rise (10 mV/frame = 0.83 mV/s) aims 36 s ahead to -20 mV effective error. The measured error
+        // is +10 mV (cell below cv_eoc), so the gain is K_UP and the cut is G*K_UP*0.020*S, S = tail_c_rate*Cbat /
+        // (cv_eoc - cv_min) = 93.33 A/V -> 0.37 A. Modes 1/2 do not detect the rise and the limit climbs.
+        constexpr float S = 0.05f * 280.f / (3.5f - 3.35f);
+        const float expectCut = 0.4f * 0.5f * 0.020f * S;
+        const float cut = before - after;
+        CHECK(mode ? after > before + 0.1f : std::fabs(cut - expectCut) < 1e-3f,
+              "mode %d: limit %.2f -> %.2f A", mode, before, after);
+    }
+}
+
+// Drive the listed cell values one 12 s frame apart, ibat 10 A, iout 30 A (no headroom cap). *before is the limit at
+// the last cell frame, *after the limit one ibat frame later: the single-step cut G*(target - ibat).
+static void driveCells(BatteryCharger &c, const float *v, int n, float *before, float *after) {
+    *before = NAN;
+    for (int s = 0, k = 0; k < n || s % 4 != 1; ++s) {
+        setWallClockUs(loopWallClockUs_ + 1'000'000ULL);
+        if (s % 4 == 0) c.batSt.updateBatCurrent(10.f);
+        if (k < n && s % 12 == 0) {
+            if (k == n - 1) *before = c.Iout_max();
+            c.batSt.setVcellHigh(v[k++]);
+        }
+        c.update(28.f, 30.f, true);
+    }
+    *after = c.Iout_max();
+}
+
+// Look-ahead gain comes from the measured error, not the sign of the forecast. Three warm frames bring the cell to
+// the target and set the preceding rise, then one frame at the target error. The frame's rise is min(its own slope,
+// the preceding one), so a 36 s look-ahead subtracts AHEAD_S*RISE = 30 mV (RISE = 0.01/12 is this 12 s fixture's
+// preceding slope; the function uses the frame's actual dt). The limit moves G*(target - ibat) on the ibat frame
+// after the cell frame.
+//   P  measured err +10 mV (below cv_eoc) -> K_UP   -> G*K_UP  *(+0.010-0.030)*S = -0.373 A
+//   Z  measured err   0 mV              -> K_DOWN -> G*K_DOWN*( 0.000-0.030)*S = -1.680 A
+//   O  measured err  -5 mV (above cv_eoc)-> K_DOWN -> G*K_DOWN*(-0.005-0.030)*S = -1.960 A
+//   G  measured err +10 mV, flat final cell (rise 0): the rise gate, not the approach gate, suppresses the
+//      forecast -> K_UP -> G*K_UP*0.010*S = +0.187 A
+// S = tail_c_rate*Cbat/(cv_eoc-cv_min) = 93.333 A/V.
+static void test_hold_lookahead_gain_from_measured_error() {
+    constexpr float S = 0.05f * 280.f / (3.5f - 3.35f), G = 0.4f, AHEAD_S = 36.f, RISE = 0.01f / 12.f;
+    const float P[] = {3.40f, 3.40f, 3.41f, 3.490f};
+    const float Z[] = {3.40f, 3.40f, 3.41f, 3.500f};
+    const float O[] = {3.40f, 3.40f, 3.41f, 3.505f};
+    const float Gf[] = {3.40f, 3.49f, 3.49f}; // flat final cell: rise 0, inside the approach gate
+    struct Case { const char *nm; const float *v; int n; bool flat; } cases[] = {
+        {"P below cv_eoc (forecast)", P, 4, false},
+        {"Z at cv_eoc (forecast)", Z, 4, false},
+        {"O above cv_eoc (forecast)", O, 4, false},
+        {"G below cv_eoc (flat, rise gate)", Gf, 3, true},
+    };
+    for (auto &cs: cases) {
+        BatteryCharger c; c.params = holdParams(); setWallClockUs(1'000'000ULL);
+        c.termCond.reset();
+        enterHold(c);
+        float before, after;
+        driveCells(c, cs.v, cs.n, &before, &after);
+        const float err = 3.5f - cs.v[cs.n - 1];
+        const float gain = err > 0 ? 0.5f : 1.5f;
+        const float eff = cs.flat ? err : err - AHEAD_S * RISE;
+        const float expect = G * gain * eff * S;
+        printf("  look-ahead gain %s: step %+.4f A (expect %+.4f)\n", cs.nm, after - before, expect);
+        CHECK(c.termCond.cvHold(), "%s: in hold", cs.nm);
+        CHECK(std::fabs((after - before) - expect) < 1e-3f, "%s: step %+.4f A != %+.4f A", cs.nm, after - before,
+              expect);
     }
 }
 
@@ -1671,6 +1734,7 @@ int main() {
     test_auto_redetect_no_flap();
     test_explicit_no_redetect();
     test_hold_rise_frame_spacing();
+    test_hold_lookahead_gain_from_measured_error();
     test_bal_low_line_no_hold_cuts_at_band();
     test_hold_no_entry_after_restart_low_line();
     test_hold_blind_decay(1, 120);
