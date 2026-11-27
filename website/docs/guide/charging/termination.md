@@ -318,11 +318,16 @@ loops run on the BMS frames:
   builds over minutes, so a cell below `cv_eoc` that still rises has no room
   left. Within 60 mV of `cv_eoc`, a cell that rose faster than 0.25 mV/s
   (3 mV per 12 s frame) on two frame pairs in a row, beyond the ohmic step of
-  the `ibat` change (2.5 mΩ), uses its voltage projected 36 s ahead at that
-  rate instead of the present one. $K$ follows the sign of this projected
+  the `ibat` change (1.5 mΩ, the cell's step within a frame), uses its voltage
+  projected 36 s ahead at that rate instead of the present one. $K$ follows the sign of this projected
   error, so a cell still below `cv_eoc` can get the downward gain. The rate is
-  taken over the frames' arrival times. A pair less than 4 s or more than 30 s
-  apart (lost frames, a burst) starts the count of two pairs again.
+  taken over the frames' arrival times. A pair less than 3 s or more than 30 s
+  apart (lost frames, a burst) starts the count of two pairs again. The 3 s
+  bound leaves room for the jitter of a BMS that sends every 4 s. A falling
+  cell is never a rise: after a current cut the ohmic step can overstate the
+  drop, and such a pair starts the count again. When `ibat` and the cell both
+  rose but the ohmic step turns the pair into a fall, the pair is skipped: no
+  look-ahead on it, and the next pair counts with the one before.
 - Current loop, on each `ibat` frame: the converter's output-current limit
   moves by 0.4 × (target − `ibat`). Upward steps are at most 2 A, and the limit
   stays at most 2 A above the converter's own output current, so it does not

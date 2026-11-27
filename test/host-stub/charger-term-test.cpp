@@ -526,6 +526,24 @@ static void test_hold_entry_40a_two_units() {
     CHECK(vlo >= 3.5f - 0.015f && vhi <= 3.5f + 0.015f, "40 A: held at cv_eoc +- 15 mV: %.3f..%.3f", vlo, vhi);
 }
 
+// The approach cut drops the cell less than the ohmic term assumes: that pair reads as a steep rise. It must not
+// carry into the recovery frames (a 400 mV look-ahead parked both units at the floor for ~40 min).
+static void test_bal_approach_recovery() {
+    BatteryCharger a, b; a.params = balParams(7200); b.params = balParams(7200); setWallClockUs(1'000'000ULL);
+    a.termCond.reset(); b.termCond.reset();
+    a.balanceNow(); b.balanceNow();
+    Plant pl;
+    topOfCharge(pl.pack, -30.f);
+    pl.pack.r0 = 0.0011f; // 11-25 spikes: 1.1 mOhm at once
+    pl.bms.periodC = 4.f, pl.bms.qV = 0.001f;
+    pl.ipv[0] = pl.ipv[1] = 25.f, pl.iload = 1.f;
+    BatteryCharger *u[2] = {&a, &b};
+    int s = 0;
+    for (; s < 3600 && !(a.termCond.cvHold() && b.termCond.cvHold()); ++s) pl.run(u, 2, 1);
+    printf("  approach recovery: both in the hold after %d s\n", s);
+    CHECK(s < 600, "approach recovery: hold after %d s", s);
+}
+
 // 11-23 14:14: fry holds (16 A) as flat reboots and runs unlimited at 20 A before its ibat smoothing is warm.
 static void test_hold_sibling_boots_unlimited() {
     BatteryCharger a, b; a.params = balParams(7200); b.params = balParams(7200); setWallClockUs(1'000'000ULL);
@@ -1676,6 +1694,7 @@ int main() {
     test_bal_stale_gap(1200);
     test_bal_stale_gap(240, false);
     test_bal_stale_resume_log();
+    test_bal_approach_recovery();
     test_bal_partial_hold_suspended();
     test_bal_rtc();
     test_cloud_dip_does_not_latch();
