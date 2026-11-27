@@ -23,6 +23,7 @@ struct PeakScan {
     // with Vmpp/Voc learned, Vin / m0 below heatCut x the sweep's share: heated since the sweep, probes above m0
     // take Vin / m0 alone (with the fallback the gap is the Vmpp/Voc spread)
     static inline float heatCut = 0.96f;
+    static inline float riseK = 1.15f; // rising light: power over the reference by this factor
     static constexpr float kVmpFallback = 0.84f;
 
     uint8_t n = 0;           // bypass-diode substrings learned from the sweeps (tracker.conf::pv_substrings), 0 = learn,
@@ -51,9 +52,11 @@ struct PeakScan {
     bool ret = false, heat = false; // heat: this scan's upward probes used Vin / m0 (heatCut)
     uint8_t nr = 0, rb = 0;
     float rv[7]{}, rp[7]{}, rDev = 0, rBest = 0, rLand = 0;
-    float voc = NAN, iEnv = 0, kVmp = kVmpFallback; // Voc at the sweep start, max PV-side current [W/V], Vmpp / Voc
+    float voc = NAN, iEnv = 0, kVmp = kVmpFallback; // Voc at the sweep start, max PV-side current seen [W/V], Vmpp / Voc
     float v0 = 0, p0 = 0, pRef = 0, vRef = 0, pS = 0;
-    float pk = 0, vPk = 0, pLo = 0; // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it
+    // sweep: running maximum (after the sweep: the MPP), its Vin, minimum after it. After the sweep pLo is the
+    // rising-light reference: the MPP, raised to the power 5 s later, at a scan's move and at a scan in rising light
+    float pk = 0, vPk = 0, pLo = 0;
     bool fall = false;
     uint32_t t0 = 0, tPhase = 0, tLast = 0, tOff = 0, tS = 0;
     MeanAccumulator acc{};
@@ -101,6 +104,7 @@ struct PeakScan {
     __attribute__((always_inline)) void onSweepMpp(float v, float p, float pMin, bool hold = false) {
         const float r = v / voc;
         if (r > 0.74f && r < 0.86f) kVmp = r;
+        pLo = p;
         if (nc <= 6 && p >= pMin && voc > 0) {
             pk = p;
             if (hold) held = true;
@@ -203,7 +207,7 @@ struct PeakScan {
             if (vin > 0 && pw / vin > iEnv) iEnv = pw / vin;
             if (pRef <= 0) { // tracking after a sweep: reference 5 s later
                 if (pRef < 0) pRef = 0, tPhase = now;
-                else if (now - tPhase > 5000) pRef = pw, vRef = vin, tOff = now;
+                else if (now - tPhase > 5000) pRef = pw, vRef = vin, tOff = now, pLo = std::max(pLo, pw);
                 return NAN;
             }
             const float vs0 = kVmp * voc / (float) n;
@@ -212,29 +216,10 @@ struct PeakScan {
             if (std::fabs(pw - pS) > 0.1f * pS) pS = pw, tS = now;
             const bool per = interval && now - tLast > interval * 1000u;
             const bool due = force || per || (now - tOff > 15000 && now - tS > kSteadyMs && now - tLast > 60000);
-            if (!due || pw < pMin) return NAN;
-            tLast = now, force = false;
-            // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
-            // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
-            const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
-            const float sv = vin / (float) m0, sh = 0.5f * (sv + vs0);
-            heat = kVmp != kVmpFallback && sv < heatCut * vs0;
-            const float shUp = heat ? sv : sh;
-            claim();
-            nc = 0;
-            for (int m = 1; m <= n; ++m) {
-                const float v = m > m0 ? probeHigh * (float) m * shUp : probeLow * (float) m * sh;
-                // unreachable, at our own peak, or a lower peak that cannot beat us even at the best current seen
-                if (m == m0 || v < vMin || v > 0.95f * voc || (m < m0 && iEnv > 0 && (float) m * sh * iEnv < pw * (1 + margin)))
-                    continue;
-                vc[nc++] = v;
-            }
-            phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
-            if (!armNear(nearDv && (nc || per), vMin, now) && !nc) {
-                phase = Idle, pRef = pw, vRef = vin;
-                return NAN;
-            }
-            acc.clear();
+            // riseK above pLo the light rose, iEnv may miss the current of brighter substrings (shade on the others):
+            // no current bound, down to pMin / 5
+            const bool rise = pw > riseK * pLo;
+            if (!due || pw < (rise ? 0.2f : 1.f) * pMin || !begin(vin, pw, d, vMin, now, per, rise, vs0)) return NAN;
         }
         const float vt = phase == Near ? rv[k] : phase == Probe || phase == Go ? (ret ? rv[k] : vc[k]) : v0;
         if (!settled && (std::fabs(vinFast - vt) < 0.01f * vt || now - tPhase > kTravelMs)) settled = true, tPhase = now;
@@ -246,6 +231,36 @@ struct PeakScan {
         }
         if (phase != Idle && now - t0 > 30000) phase = Idle, pRef = -1, ended = 4, ret = false;
         return phase == Idle ? NAN : (float) d * std::sqrt(vinFast / vt);
+    }
+
+    // a due scan: candidates, then the start; false: nothing to probe, back to tracking
+    __attribute__((noinline)) bool begin(float vin, float pw, uint16_t d, float vMin, uint32_t now, bool per, bool rise,
+                                         float vs0) {
+        tLast = now, force = false;
+        // m0 of n substrings conduct at our peak. With weaker substrings conducting a peak sits above m unshaded
+        // shares, so Vin / m0 can be high; the share from Voc misses heating and the Vmpp/Voc spread: take the mean
+        const int m0 = std::clamp((int) std::lround(vin / vs0), 1, (int) n);
+        const float sv = vin / (float) m0, sh = 0.5f * (sv + vs0);
+        heat = kVmp != kVmpFallback && sv < heatCut * vs0;
+        const float shUp = heat ? sv : sh;
+        claim();
+        nc = 0;
+        for (int m = 1; m <= n; ++m) {
+            const float v = m > m0 ? probeHigh * (float) m * shUp : probeLow * (float) m * sh;
+            // unreachable, at our own peak, or a lower peak that cannot beat us even at the best current seen
+            if (m == m0 || v < vMin || v > 0.95f * voc ||
+                (m < m0 && !rise && iEnv > 0 && (float) m * sh * iEnv < pw * (1 + margin)))
+                continue;
+            vc[nc++] = v;
+        }
+        if (rise) pLo = pw;
+        phase = Ref, v0 = vin, d0 = d, t0 = tPhase = now, settled = false, k = 0;
+        if (!armNear(nearDv && (nc || per), vMin, now) && !nc) {
+            phase = Idle, pRef = pw, vRef = vin;
+            return false;
+        }
+        acc.clear();
+        return true;
     }
 
     // on: v0 and the near probes at v0 -+ nearDv in rv 0..2 (NAN: out of range, skipped), starts them. False: off or
@@ -304,7 +319,7 @@ struct PeakScan {
             if (p > rBest) rBest = p, rb = k;
             if (++k == nr) k = rb, phase = Go;
         } else if (phase == Probe) {
-            pc[k] = p;
+            pc[k] = p, iEnv = std::max(iEnv, p / vin);
             if (++k == nc) phase = Back;
         } else if (phase == Back) {
             // the start point measured before and after: the larger one, so a light change cannot fake a gain
@@ -318,7 +333,7 @@ struct PeakScan {
             ESP_LOGI("mppt", "scan: P %.1f->%.1f W at %.1fV, %u probes, best x%.3f at %.1fV%s%s", p0, p, v0, (unsigned) nc, g,
                      vc[best], !steady ? " (light changed)" : move ? ", moving" : "", heat ? ", heat" : "");
             if (move) {
-                k = (uint8_t) best, phase = Go, pRef = pc[best], vRef = vc[best];
+                k = (uint8_t) best, phase = Go, pRef = pc[best], vRef = vc[best], pLo = std::max(pLo, pRef);
             } else {
                 phase = Idle, pRef = p, vRef = vin, ended = steady ? 1 : 3;
                 // a probe within 2 margins (clouds change the ratio): again in 60 s

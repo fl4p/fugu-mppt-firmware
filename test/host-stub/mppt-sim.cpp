@@ -48,6 +48,8 @@
 //     wx-shade2-move, wx-shade3-move  shade moves, the global maximum changes peak after the boot sweep
 //     wx-shade-walk                   a shadow walks across the substrings, the global peak moves several times
 //     wx-shade-cloud    shaded substring under the cloud series (second peak comes and goes)
+//     wx-shade-rise     dim unshaded boot sweep, then light rises on 4 of 6 substrings, 2 stay shaded: a lower-voltage
+//                       peak grows from below the tracked one to ~3x it at low power (SIM_RISE, pv_substrings=6)
 //     wx-shade-learn    wx-shade2 shade for two sweeps (learns the substrings), clear at 1900 s, back at 2000..2300 s
 //     wx-shade-gen      SIM_SHADE=k,s,mode[,k2,s0,tr]: k substrings at s, k2 at (1 + s) / 2; mode a: shade comes over
 //                       120..120 + tr s (tr 300), l: lifts, r: ramps from s0, s: static, u: unshaded boot, steps
@@ -58,7 +60,8 @@
 //     every wx run with scans: one "== PROBE" line per scan (probes vs the plant's maxima and power at the scan start;
 //     outcome from the maximum the operating point is on 5 s after the scan: ok / HIT / MISS-place / MISS-noise /
 //     WRONG / PARTIAL / light), "== PROBES" totals; probe factors below / above
-//     the operating point: SIM_SCAN_LOW, SIM_SCAN_UP (PeakScan::probeLow/High; SIM_SCAN_UP=0.97: the rule before 11-24), SIM_SCAN_HEAT (PeakScan::heatCut, 0: off)
+//     the operating point: SIM_SCAN_LOW, SIM_SCAN_UP (PeakScan::probeLow/High; SIM_SCAN_UP=0.97: the rule before 11-24), SIM_SCAN_HEAT (PeakScan::heatCut, 0: off),
+//     SIM_SCAN_RISE (PeakScan::riseK, rising-light factor; 1e9: off)
 //     wx-dawn, wx-dusk  irradiance through the start threshold; wx-dawn: no-MPP backoff doubles 30..300 s ("== NOMPP")
 //     wx-low, wx-mid    steady light rising slowly, MPP 2 -> 20 W in 30 min / 55 -> 110 W in 10 min, sensor noise
 //     wx-calfail        wx-mid with +-1.3 V bus ripple, every calibration fails: off 4 s per failure, the restart keeps the old zeros,
@@ -1809,6 +1812,14 @@ static bool wxScenario(const std::string &sc, Wx &wx) {
                                     {125 + tr, f}}
                                       : Track{{120, f0}, {120 + tr, f}};
         }
+    } else if (sc == "wx-shade-rise") {
+        // morning shade (fry 2026-11-27 08:12..08:42 UTC): dim and unshaded at the boot sweep (~18 W), then light rises on
+        // 4 of 6 substrings while 2 stay shaded; the 4-substring peak (~45 V) grows past the full-string one (~65 V, <= 30 W)
+        // to ~3x it. SIM_RISE=g0,gU,gS,t0,t1 (0.03,0.24,0.048,60,1860); pv_substrings=6
+        fry6(getenv("SIM_P") ? atof(getenv("SIM_P")) : 600.f), wx.T = 2000;
+        float g0 = 0.03f, gU = 0.24f, gS = 0.048f, t0 = 60, t1 = 1860;
+        if (const char *e = getenv("SIM_RISE")) sscanf(e, "%f,%f,%f,%f,%f", &g0, &gU, &gS, &t0, &t1);
+        for (int i = 0; i < 6; ++i) wx.sub[i] = {{t0, g0}, {t1, i < 4 ? gU : gS}};
     } else if (sc == "wx-shade-learn") {
         fry6(215), wx.T = 3400;
         wx.sub[5] = {{0, 0.70f}, {1900, 0.70f}, {1960, 1}, {2000, 1}, {2300, 0.70f}};
@@ -4457,6 +4468,7 @@ static int simMain(int argc, char **argv) {
     if (const char *e = getenv("SIM_SCAN_LOW")) PeakScan::probeLow = (float) atof(e);
     if (const char *e = getenv("SIM_SCAN_UP")) PeakScan::probeHigh = (float) atof(e);
     if (const char *e = getenv("SIM_SCAN_HEAT")) PeakScan::heatCut = (float) atof(e);
+    if (const char *e = getenv("SIM_SCAN_RISE")) PeakScan::riseK = (float) atof(e);
     if (const char *f = getenv("SIM_FINE")) sscanf(f, "%lf,%lf", &g_fineT0, &g_fineT1);
     if (const char *f = getenv("SIM_TTRACE")) sscanf(f, "%lf,%lf", &g_trkT0, &g_trkT1);
     // suffix -p0: limits.conf reverse_current_paranoia=0 (Vout-OV threshold 1.5x instead of 1.03x Vbat_max)
@@ -4596,8 +4608,8 @@ static int simMain(int argc, char **argv) {
     if (sc == "rcal-ov") setenv("SIM_CONF", "limits.conf:hv_max=77.5", 1);
     if (sc == "rcal-sun") setenv("SIM_CONF", "coil.conf:L0=80e-6", 1);
     const bool n1 = sc.size() > 3 && sc.compare(sc.size() - 3, 3, "-n1") == 0;
-    if (sc == "wx-sweep-learn-off" || sc == "wx-sweep-scan" || n1) {
-        std::string c = sc == "wx-sweep-scan" ? "tracker.conf:pv_substrings=6"
+    if (sc == "wx-sweep-learn-off" || sc == "wx-sweep-scan" || sc == "wx-shade-rise" || n1) {
+        std::string c = sc == "wx-sweep-scan" || sc == "wx-shade-rise" ? "tracker.conf:pv_substrings=6"
                         : n1                  ? "tracker.conf:pv_substrings=1"
                                               : "tracker.conf:sweep_verify=0";
         if (const char *e = getenv("SIM_CONF")) c = c + "," + e;
