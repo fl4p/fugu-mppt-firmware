@@ -391,6 +391,9 @@ Filter-design studies that used to sit beside the client are now `etc/filter-stu
   the defaults, so a changed default is ignored there; configure prints a WARNING listing such keys (mismatches a
   fresh sdkconfig already has are recorded in `<sdkconfig>.fugu-baseline` and not reported).
 - if you want to `git revert` but there are local dirty files, do a `git stash` before and `git stash pop` after
+- to bring the shared checkout up to origin/main without touching other sessions' uncommitted edits, announce it on
+  the `fugu` channel, then `etc/realign-checkout.py -n` and without `-n` (refuses unpushed commits; exit 1 = conflicts
+  left, merge results under the printed backup dir)
 - **Never ever run `git reset --hard`**
 - if you cannot find the `timeout` command, run `brew install coreutils` and try again
 - Never copy/mirror an existing `#define` that defines a constant value to another file, just because you cannot include
