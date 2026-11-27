@@ -6,7 +6,7 @@ const site = join(dirname(fileURLToPath(import.meta.url)), '..');
 const src = join(site, '..', 'etc', 'config-tool');
 const dst = join(site, 'static', 'tools');
 
-const files = ['dashboard.html', 'teledec.js', 'conf-editor.html'];
+const files = ['dashboard.html', 'teledec.js', 'pmini.js', 'conf-editor.html'];
 const missing = files.filter((f) => !existsSync(join(src, f)));
 if (missing.length) {
   console.error(`copy-tools: missing ${missing.map((f) => join(src, f)).join(', ')}`);

@@ -101,7 +101,9 @@ elf-archive/
 coredump*
 
 # STM32 port: external SDK (STM32CubeWB0), fetched on demand
-/third_party/
+/third_party/*
+!/third_party/pmini/
+!/third_party/pmini.lock.json
 *.npz
 
 _tmp_stm32

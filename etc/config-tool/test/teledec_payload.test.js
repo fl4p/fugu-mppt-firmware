@@ -86,6 +86,7 @@ test('teledec.js loads as a browser script into window.TeleDec', () => {
   const src = require('node:fs').readFileSync(require.resolve('../teledec.js'), 'utf8');
   const window = {TextDecoder};
   window.self = window;
+  vm.runInNewContext(require('node:fs').readFileSync(require.resolve('../pmini.js'), 'utf8'), window);
   vm.runInNewContext(src, window);
   assert.equal(typeof window.TeleDec.decodePayload, 'function');
   assert.equal(window.TeleDec.fmtG(123456.5), '123456');

@@ -67,6 +67,8 @@ Object.defineProperty(window, "_live",           { get: () => live, set: v => { 
 // this the page runs as if teledec.js were missing).
 function buildHtml({ teledec = false } = {}) {
   let html = fs.readFileSync(HTML_PATH, 'utf8');
+  html = html.replace('<script src="pmini.js"></script>', teledec
+    ? '<script>\n' + fs.readFileSync(path.resolve(path.dirname(HTML_PATH), 'pmini.js'), 'utf8') + '\n</script>' : '');
   const tag = '<script src="teledec.js"></script>';
   html = html.replace(tag, teledec
     ? '<script>\n' + fs.readFileSync(path.resolve(path.dirname(HTML_PATH), 'teledec.js'), 'utf8') + '\n</script>' : '');

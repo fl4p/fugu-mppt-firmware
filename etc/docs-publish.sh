@@ -142,7 +142,7 @@ done
 
 [ $wait = 1 ] || exit 0
 git diff --quiet "$base" "$new" -- website etc/config-tool/conf-editor.html etc/config-tool/dashboard.html \
-  etc/config-tool/teledec.js .github/workflows/docs.yml && { echo "no docs paths changed, no deploy to wait for"; exit 0; }
+  etc/config-tool/teledec.js etc/config-tool/pmini.js .github/workflows/docs.yml && { echo "no docs paths changed, no deploy to wait for"; exit 0; }
 for i in $(seq 1 60); do
   git fetch -q origin 2>/dev/null
   # newest run that contains the commit; a cancelled run means a newer one superseded it
