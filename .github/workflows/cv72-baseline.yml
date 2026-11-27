@@ -1,0 +1,54 @@
+name: cv72 baseline reproduce
+
+# Temporary, isolated validation branch workflow. Reproduces the cv-hold-pair /
+# cv-hold-load CI failures at two revisions on the exact runner image the failing
+# run used (ubuntu-26.04), to separate revision from toolchain/OS confound.
+# Scoped to investigate/cv72-baseline only; no source or threshold changes.
+
+on:
+  push:
+    branches: [investigate/cv72-baseline]
+  workflow_dispatch:
+
+jobs:
+  repro:
+    runs-on: ubuntu-26.04
+    strategy:
+      fail-fast: false
+      matrix:
+        rev:
+          - "283c02483291257ef877d4a91a252a4341e80755"
+          - "38ae28653dfd78013ab9d167bea81de162bc158f"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: runner and toolchain identity
+        run: |
+          echo "ImageOS=$ImageOS ImageVersion=$ImageVersion"
+          uname -m
+          cat /etc/os-release
+          ldd --version | head -1
+          which -a clang++ clang
+          clang++ --version
+          g++ --version | head -1
+          echo "requested rev: ${{ matrix.rev }}"
+      - name: build and run CV-hold scenarios
+        run: |
+          set -o pipefail
+          git checkout ${{ matrix.rev }}
+          echo "checked out SHA: $(git rev-parse HEAD)"
+          mkdir -p out
+          { echo "rev=${{ matrix.rev }}"; echo "sha=$(git rev-parse HEAD)"; \
+            echo "clang=$(clang++ --version | head -1)"; echo "os=$(head -2 /etc/os-release | tr '\n' ' ')"; \
+            echo "arch=$(uname -m)"; echo "glibc=$(ldd --version | head -1)"; } > out/env.txt
+          OUT=$PWD/out/mppt-sim bash test/host-stub/mppt-sim.sh cv-hold-pair cv-hold-load cv-hold-recloud > out/sim.log 2>&1
+          rc=$?
+          echo "RETURN_CODE=$rc" | tee out/rc.txt
+          grep -E '^== CVHOLD|^######## ' out/sim.log || true
+          exit $rc
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cv72-${{ matrix.rev }}
+          path: out/
