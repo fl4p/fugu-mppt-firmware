@@ -1,0 +1,15 @@
+[Unit]
+Description=Fugu MPPT sweep curve collector (MQTT -> JSONL archive + InfluxDB)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=10s
+User=fab
+WorkingDirectory=/home/fab/pv
+ExecStart=/home/fab/miniconda3/bin/python3 sweep_collector.py --env /home/fab/pv/fugu-tools/mqtt.env --env /home/fab/.config/fugu-sweep-collector.env --archive /home/fab/pv/sweeps --log /home/fab/pv/sweep_collector.log
+
+[Install]
+WantedBy=multi-user.target

@@ -477,6 +477,12 @@ curl -sG http://tm.fabi.me:8086/query --data-urlencode db=ha_van \
 Fields: `Ui`=Vin, `Uo`=Vout, `P`=power, `I`=Iout, `pwm_duty`=HS count, `cv_lim_idx`=active CV
 limiter, `lag`=loop latency, `mcu_temp`/`ntc_temp`, `mppt_state`, `P_max_today`=today's peak power (W). `device` is a tag (`fry`/`flat`).
 
+Every global sweep curve (since 2026-11-27) is in measurement `sweep` of the same db, written by the havan unit
+`fugu-sweep-collector` (`etc/havan/`, which fetches `sweep-curve` after each sweep): tags `device`, `src=fw`; one point per
+(V, P) pair, fields `i`, `V`, `P`, point 0 also `mpp_V`, `mpp_P`, `n`, `flag` (`""` clean, `light`) and `land`; time =
+sweep end + `i` ms. Lossless copy with the raw `sc:` lines: havan `~/pv/sweeps/<UTC date>.jsonl`. Latest fry sweep:
+`SELECT * FROM sweep WHERE device='fry' AND time > now() - 1h` (group by the second: `n` is on point 0).
+
 Find battery data in InfluxDB with `batmon()` in
 `/Users/fab/dev/pv/bat-impedance/datasets.py` (db `open_pe` on influx.fabi.me:8086, creds in its `influxdb_server.json`), use device="bat_caravan"
 
