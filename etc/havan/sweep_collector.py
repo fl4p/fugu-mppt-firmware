@@ -6,16 +6,21 @@ read-only console command `sweep-curve` to pv/log/<host>/cmd (nothing else is ev
 the `sc:` reply. Curves seen on the log without a request (e.g. a dashboard fetch) are stored too.
 
 Each curve is first appended to a daily JSONL archive (<archive>/<UTC date>.jsonl, raw lines
-included), then written to InfluxDB: one point per (V, P) pair, time = sweep end (s) + index (ms),
+included), then queued for a writer thread that writes it to InfluxDB and appends the record id
+to <UTC date>.written (ok, or rejected on a 4xx); a failed write is retried every 60 s, and records
+of the last 7 days without a mark are re-queued at start. In InfluxDB: one point per (V, P) pair, time = sweep end (s) + index (ms),
 tags device + src=fw, fields i, V, P; point 0 also mpp_V, mpp_P, n and, once the sweep has a
 verdict, flag ("" clean, else the reason) and land. Re-writing the same curve overwrites the same
-points, so `--replay FILE.jsonl` re-imports an archive idempotently.
+points, so `--replay FILE.jsonl` re-imports an archive idempotently. One collector per archive
+directory (flock); test runs: --archive <dir> --no-send --no-influx --log -.
 
 Config (environment or env files, see README.md): MQTT_USER, MQTT_PASS, MQTT_PORT,
 MQTT_COLLECTOR_HOST (default localhost), INFLUX_URL, INFLUX_DB, INFLUX_USER, INFLUX_PASS.
 """
 import argparse
+import collections
 import datetime
+import fcntl
 import json
 import logging
 import math
@@ -23,6 +28,7 @@ import os
 import queue
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -38,7 +44,9 @@ RETRIES = 2            # attempts after the first
 SWEEPING_RETRY_S = 5.0
 SWEEPING_TRIES = 6
 WRITE_RETRY_S = 60.0
-MAX_PENDING_WRITES = 200
+MAX_PENDING_WRITES = 5000  # in memory; older unwritten records stay in the archive
+KEEP_KEYS_S = 2 * 86400    # dedup memory
+RX_MAX = 20000
 
 log = logging.getLogger("sweep")
 
@@ -170,9 +178,8 @@ def _f(x):
     return repr(float(x))
 
 
-def curve_lines(device, curve, recv_ts):
-    """Line-protocol lines (ms precision) for a complete curve."""
-    base = (curve["t"] or int(recv_ts)) * 1000
+def curve_lines(device, curve, base_s):
+    """Line-protocol lines (ms precision) for a complete curve; point i at base_s + i ms."""
     tags = f"sweep,device={_tag(device)},src=fw"
     out = []
     for j, (i, V, P) in enumerate(curve["points"]):
@@ -184,8 +191,12 @@ def curve_lines(device, curve, recv_ts):
                     f += f",{k}={_f(curve[k])}"
             if "flag" in curve:
                 f += ',flag="' + curve["flag"].replace("\\", "\\\\").replace('"', '\\"') + '"'
-        out.append(f"{tags} {f} {base + i}")
+        out.append(f"{tags} {f} {base_s * 1000 + i}")
     return out
+
+
+class InfluxRejected(Exception):
+    """Influx answered 4xx: retrying the same lines cannot succeed."""
 
 
 class Influx:
@@ -195,26 +206,42 @@ class Influx:
     def write(self, lines):
         q = urllib.parse.urlencode({"db": self.db, "u": self.user, "p": self.password, "precision": "ms"})
         req = urllib.request.Request(f"{self.url}/write?{q}", data="\n".join(lines).encode(), method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as r:
-            if r.status // 100 != 2:
-                raise IOError(f"influx write HTTP {r.status}")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                if r.status // 100 != 2:
+                    raise IOError(f"influx write HTTP {r.status}")
+        except urllib.error.HTTPError as e:
+            body = e.read()[:200].decode("utf-8", "replace")
+            if 400 <= e.code < 500 and e.code not in (401, 403, 408, 429):
+                raise InfluxRejected(f"HTTP {e.code}: {body}") from None
+            raise IOError(f"HTTP {e.code}: {body}") from None
 
 
 # ---------------------------------------------------------------------------------------------
-# Archive
+# Archive: <day>.jsonl holds the curves, <day>.written the ids of the records Influx has (or rejected)
 # ---------------------------------------------------------------------------------------------
 def _num(x):
     return x if math.isfinite(x) else None
 
 
-def archive_record(device, curve, recv_ts, complete=True, reason=None):
+def archive_record(device, curve, recv_ts, base_s=None, complete=True, reason=None):
     r = {"device": device, "recv_ts": round(recv_ts, 3), "t": curve["t"], "n": curve["n"],
          "mpp_V": _num(curve["mpp_V"]), "mpp_P": _num(curve["mpp_P"]), "sweeping": curve["sweeping"],
          "flag": curve.get("flag"), "land": _num(curve["land"]) if "land" in curve else None,
          "points": [[V, P] for _, V, P in curve["points"]], "raw": curve["raw"]}
+    if base_s is not None and base_s != curve["t"]:
+        r["base_s"] = base_s  # t=0: timestamp base of the first fetch of this curve
     if not complete:
         r.update(complete=False, reason=reason)
     return r
+
+
+def record_id(rec):
+    return f"{rec['device']}:{rec['t']}:{round(rec['recv_ts'] * 1000)}"
+
+
+def record_base(rec):
+    return rec.get("base_s") or rec["t"] or int(rec["recv_ts"])
 
 
 def dedup_key(device, curve):
@@ -224,34 +251,64 @@ def dedup_key(device, curve):
     return device, 0, curve["n"], tuple(curve["points"][:3])
 
 
+def _day(ts):
+    return datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%d")
+
+
 class Archive:
     def __init__(self, path):
         self.path = path
         os.makedirs(path, exist_ok=True)
 
-    def file_for(self, ts):
-        return os.path.join(self.path, datetime.datetime.fromtimestamp(ts, datetime.timezone.utc)
-                            .strftime("%Y-%m-%d") + ".jsonl")
+    def file_for(self, ts, ext=".jsonl"):
+        return os.path.join(self.path, _day(ts) + ext)
 
-    def append(self, rec):
-        with open(self.file_for(rec["recv_ts"]), "a") as f:
-            f.write(json.dumps(rec, separators=(",", ":")) + "\n")
+    @staticmethod
+    def _append(fn, text):
+        with open(fn, "a") as f:
+            f.write(text)
             f.flush()
             os.fsync(f.fileno())
 
-    def recent_keys(self, now):
-        """{dedup key: has verdict} of the complete curves archived today and yesterday."""
-        keys = {}
-        for ts in (now - 86400, now):
-            fn = self.file_for(ts)
-            if not os.path.exists(fn):
-                continue
+    def append(self, rec):
+        self._append(self.file_for(rec["recv_ts"]), json.dumps(rec, separators=(",", ":")) + "\n")
+
+    def mark(self, rec, status):
+        """Record that Influx has rec (status ok) or refused it for good (rejected ...)."""
+        self._append(self.file_for(rec["recv_ts"], ".written"), f"{record_id(rec)} {status}\n")
+
+    def days(self, now, n):
+        """Archive files of the last n UTC days, oldest first."""
+        out = []
+        for k in range(n - 1, -1, -1):
+            fn = self.file_for(now - k * 86400)
+            if os.path.exists(fn):
+                out.append(fn)
+        return out
+
+    def scan(self, now, key_days=2, backfill_days=7):
+        """({dedup key: (has verdict, base_s, recv_ts)} of the last key_days, unwritten records of
+        the last backfill_days)."""
+        keys, unwritten = {}, []
+        files = self.days(now, max(key_days, backfill_days))
+        for fn in files:
+            wfn = fn[:-len(".jsonl")] + ".written"
+            done = set()
+            if os.path.exists(wfn):
+                done = {ln.split(" ", 1)[0] for ln in open(wfn) if ln.strip()}
+            recent = fn in files[-key_days:]
             for rec in read_jsonl(fn):
                 c = curve_from_record(rec)
-                if c:
+                if not c:
+                    continue
+                if recent:
                     k = dedup_key(rec["device"], c)
-                    keys[k] = keys.get(k, False) or "flag" in c
-        return keys
+                    had = keys.get(k)
+                    keys[k] = (bool(had and had[0]) or "flag" in c, had[1] if had else record_base(rec),
+                               rec["recv_ts"])
+                if record_id(rec) not in done:
+                    unwritten.append(rec)
+        return keys, unwritten
 
 
 def read_jsonl(fn):
@@ -277,6 +334,74 @@ def curve_from_record(rec):
     return None
 
 
+class Writer:
+    """Writes archived records to Influx in its own thread, in order; a failed write is retried
+    after a backoff before anything newer, a rejected (4xx) one is marked and dropped."""
+
+    def __init__(self, influx, archive, backoff_s=WRITE_RETRY_S, max_queue=MAX_PENDING_WRITES):
+        self.influx, self.archive, self.backoff_s, self.max_queue = influx, archive, backoff_s, max_queue
+        self.q = collections.deque()
+        self.cv = threading.Condition()
+        self.stopped = False
+        self.thread = None
+
+    def submit(self, rec, lines):
+        with self.cv:
+            self.q.append((rec, lines))
+            if len(self.q) > self.max_queue:
+                old, _ = self.q.popleft()
+                log.error("write queue full: %s dropped from memory, stays unwritten in the archive "
+                          "(written on the next start or with --replay)", record_id(old))
+            self.cv.notify()
+
+    def pending(self):
+        with self.cv:
+            return len(self.q)
+
+    def start(self):
+        self.thread = threading.Thread(target=self._run, name="influx-writer", daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        with self.cv:
+            self.stopped = True
+            self.cv.notify()
+
+    def _run(self):
+        failing = False
+        while True:
+            with self.cv:
+                while not self.q and not self.stopped:
+                    self.cv.wait()
+                if self.stopped:
+                    return
+                rec, lines = self.q[0]
+            try:
+                self.influx.write(lines)
+                status = "ok"
+            except InfluxRejected as e:
+                log.error("%s: influx rejected the curve, not retried: %s", record_id(rec), e)
+                status = "rejected"
+            except Exception as e:
+                if not failing:
+                    log.error("influx write failed (%s), retrying every %g s; %d queued", e, self.backoff_s,
+                              self.pending())
+                failing = True
+                with self.cv:
+                    self.cv.wait(self.backoff_s)
+                continue
+            if failing:
+                log.info("influx writes recovered")
+                failing = False
+            try:
+                self.archive.mark(rec, status)
+            except OSError as e:
+                log.error("%s: cannot mark written: %s", record_id(rec), e)
+            with self.cv:
+                if self.q and self.q[0][0] is rec:
+                    self.q.popleft()
+
+
 # ---------------------------------------------------------------------------------------------
 # Collector
 # ---------------------------------------------------------------------------------------------
@@ -285,17 +410,22 @@ class Device:
         self.name = name
         self.parser = SweepCurveParser()
         self.due = None        # time to send the next attempt
-        self.tries = 0         # attempts of the current request; 0 = no request open
+        self.tries = 0         # sends of the current request; 0 = no request open
+        self.fails = 0         # of these, timeouts and incomplete replies
+        self.busy = 0          # of these, sweeping=1 replies
         self.attempt_end = None
 
 
 class Collector:
-    def __init__(self, influx, archive, send, clock=time.time):
-        self.influx, self.archive, self.send, self.clock = influx, archive, send, clock
+    def __init__(self, writer, archive, send, clock=time.time):
+        self.writer, self.archive, self.send, self.clock = writer, archive, send, clock
         self.devs = {}
-        self.stored = archive.recent_keys(clock()) if archive else {}
-        self.pending = []  # (device, lines) whose Influx write failed
-        self.next_write_retry = 0
+        self.stored, unwritten = archive.scan(clock())
+        for rec in unwritten:
+            c = curve_from_record(rec)
+            log.info("%s: archived but not written, queued", record_id(rec))
+            writer.submit(rec, curve_lines(rec["device"], c, record_base(rec)))
+        self.next_prune = clock() + 3600
 
     def dev(self, name):
         if name not in self.devs:
@@ -304,7 +434,8 @@ class Collector:
 
     def schedule(self, d, delay):
         """Start a new request; a reply to an older attempt then counts as unrequested."""
-        d.due, d.tries, d.attempt_end = self.clock() + delay, 0, None
+        d.due, d.attempt_end = self.clock() + delay, None
+        d.tries = d.fails = d.busy = 0
 
     def on_line(self, host, line):
         d = self.dev(host)
@@ -326,10 +457,13 @@ class Collector:
                     self._done(d)
                 return
             if c["sweeping"]:
-                if d.tries and d.tries < SWEEPING_TRIES:  # a sweep is running: ask again later
-                    d.due, d.attempt_end = now + SWEEPING_RETRY_S, None
-                elif d.tries:
-                    self._done(d)
+                if d.tries:
+                    d.busy += 1
+                    if d.busy < SWEEPING_TRIES:  # a sweep is running: ask again later
+                        d.due, d.attempt_end = now + SWEEPING_RETRY_S, None
+                    else:
+                        log.warning("%s: still sweeping after %d asks", d.name, d.busy)
+                        self._done(d)
                 return
             if d.tries:
                 self._done(d)
@@ -337,51 +471,46 @@ class Collector:
         elif r["reason"] != "restart":
             log.warning("%s: incomplete curve (%s, %d/%d points)", d.name, r["reason"],
                         len(c["points"]) + c["dropped"], c["n"])
-            if d.tries and d.tries <= RETRIES:
+            if d.tries and d.fails < RETRIES:
+                d.fails += 1
                 d.due, d.attempt_end = now, None
             elif not c["sweeping"]:
-                self.archive.append(archive_record(d.name, c, now, False, r["reason"]))
+                self.archive.append(archive_record(d.name, c, now, complete=False, reason=r["reason"]))
                 if d.tries:
                     self._done(d)
 
     def _done(self, d):
         d.due = d.attempt_end = None
-        d.tries = 0
+        d.tries = d.fails = d.busy = 0
 
     def store(self, device, c, recv_ts):
         key = dedup_key(device, c)
         had = self.stored.get(key)
-        if had is not None and (had or "flag" not in c):
+        if had is not None and (had[0] or "flag" not in c):
             log.info("%s: curve t=%d already stored", device, c["t"])
             return
-        self.archive.append(archive_record(device, c, recv_ts))
-        self.stored[key] = "flag" in c
-        lines = curve_lines(device, c, recv_ts)
+        base = had[1] if had else (c["t"] or int(recv_ts))
+        rec = archive_record(device, c, recv_ts, base)
+        self.archive.append(rec)
+        self.stored[key] = ("flag" in c, base, recv_ts)
+        lines = curve_lines(device, c, base)
         if had is not None:  # verdict arrived after the first fetch: update point 0 only
             lines = lines[:1]
         log.info("%s: curve t=%d n=%d points=%d mpp=%.1fW@%.2fV flag=%s", device, c["t"], c["n"],
                  len(c["points"]), c["mpp_P"], c["mpp_V"], c.get("flag", "-"))
-        self.write(device, lines)
-
-    def write(self, device, lines):
-        try:
-            self.influx.write(lines)
-        except Exception as e:
-            log.error("%s: influx write failed (%s), will retry", device, e)
-            self.pending.append((device, lines))
-            del self.pending[:-MAX_PENDING_WRITES]
-            self.next_write_retry = self.clock() + WRITE_RETRY_S
+        self.writer.submit(rec, lines)
 
     def tick(self):
         now = self.clock()
         for d in self.devs.values():
             if d.attempt_end is not None and now >= d.attempt_end:
                 d.attempt_end = None
-                if d.tries > RETRIES:
+                if d.fails >= RETRIES:
                     log.warning("%s: no sweep-curve reply after %d attempts", d.name, d.tries)
                     self._done(d)
                     d.parser.cur = None
                 else:
+                    d.fails += 1
                     d.due = now
             if d.due is not None and now >= d.due:
                 d.due = None
@@ -392,12 +521,9 @@ class Collector:
                     self.send(d.name)
                 except Exception as e:
                     log.error("%s: publish failed: %s", d.name, e)
-        if self.pending and now >= self.next_write_retry:
-            todo, self.pending = self.pending, []
-            for device, lines in todo:
-                self.write(device, lines)
-            if not self.pending:
-                log.info("pending influx writes flushed")
+        if now >= self.next_prune:
+            self.next_prune = now + 3600
+            self.stored = {k: v for k, v in self.stored.items() if v[2] > now - KEEP_KEYS_S}
 
 
 def load_env(path):
@@ -415,7 +541,8 @@ def influx_from_env():
                   os.environ["INFLUX_USER"], os.environ["INFLUX_PASS"])
 
 
-def replay(files):
+def replay(files, archive=None):
+    """Re-import archived records (idempotent: same timestamps); marks them when the archive is given."""
     influx = influx_from_env()
     total = 0
     for fn in files:
@@ -423,17 +550,45 @@ def replay(files):
             c = curve_from_record(rec)
             if not c:
                 continue
-            influx.write(curve_lines(rec["device"], c, rec["recv_ts"]))
+            try:
+                influx.write(curve_lines(rec["device"], c, record_base(rec)))
+                status = "ok"
+            except InfluxRejected as e:
+                print(f"{record_id(rec)}: rejected: {e}")
+                status = "rejected"
+            if archive and os.path.dirname(os.path.abspath(fn)) == os.path.abspath(archive.path):
+                archive.mark(rec, status)
             total += 1
     print(f"replayed {total} curves")
+
+
+class _NoInflux:
+    def write(self, lines):
+        log.info("no-influx: %d lines not written", len(lines))
+        raise InfluxRejected("--no-influx")
+
+
+def lock_archive(path):
+    """Exclusive lock on the archive directory: a second collector on it refuses to start."""
+    f = open(os.path.join(path, ".lock"), "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit(f"another sweep collector holds {path}/.lock; for a test run use "
+                         f"--archive <other dir> --no-send --no-influx --log -")
+    return f
 
 
 def run(args):
     import paho.mqtt.client as mqtt
     from paho.mqtt.enums import CallbackAPIVersion
 
-    rx = queue.Queue()
-    client = mqtt.Client(CallbackAPIVersion.VERSION2, client_id=f"fugu-sweep-collector-{socket.gethostname()}")
+    archive = Archive(args.archive)
+    lock = lock_archive(args.archive)  # noqa: F841 (held for the process lifetime)
+    rx = queue.Queue(maxsize=RX_MAX)
+    dropped = [0]
+    client = mqtt.Client(CallbackAPIVersion.VERSION2,
+                         client_id=f"fugu-sweep-collector-{socket.gethostname()}-{os.urandom(3).hex()}")
     client.username_pw_set(os.environ.get("MQTT_USER", "pv"), os.environ["MQTT_PASS"])
     client.reconnect_delay_set(1, 60)
 
@@ -449,15 +604,24 @@ def run(args):
         parts = msg.topic.split("/")
         if len(parts) == 3:
             for ln in msg.payload.decode("utf-8", "replace").splitlines():
-                rx.put((parts[2], ln))
+                try:
+                    rx.put_nowait((parts[2], ln))
+                except queue.Full:
+                    dropped[0] += 1
 
     def send(host):
-        client.publish(f"{ROOT}{host}/cmd", "sweep-curve", qos=1)
+        if args.no_send:
+            log.info("no-send: sweep-curve to %s not sent", host)
+        else:
+            client.publish(f"{ROOT}{host}/cmd", "sweep-curve", qos=1)
 
     client.on_connect, client.on_disconnect, client.on_message = on_connect, on_disconnect, on_message
-    col = Collector(influx_from_env(), Archive(args.archive), send)
+    writer = Writer(_NoInflux() if args.no_influx else influx_from_env(), archive)
+    col = Collector(writer, archive, send)
+    writer.start()
     host, port = os.environ.get("MQTT_COLLECTOR_HOST", "localhost"), int(os.environ.get("MQTT_PORT", "1882"))
-    log.info("start: broker %s:%d, archive %s, %d recent curves known", host, port, args.archive, len(col.stored))
+    log.info("start: broker %s:%d, archive %s, %d recent curves known, %d unwritten queued", host, port,
+             args.archive, len(col.stored), writer.pending())
     client.connect_async(host, port, 60)
     client.loop_start()
     while True:
@@ -468,6 +632,9 @@ def run(args):
             pass
         except Exception:
             log.exception("line handling failed")
+        if dropped[0]:
+            log.error("rx queue full: %d lines dropped", dropped[0])
+            dropped[0] = 0
         try:
             col.tick()
         except Exception:
@@ -480,6 +647,8 @@ def main():
     ap.add_argument("--archive", default=os.path.expanduser("~/pv/sweeps"), help="JSONL archive directory")
     ap.add_argument("--log", default="sweep_collector.log", help="log file ('-' = stderr)")
     ap.add_argument("--replay", nargs="+", metavar="FILE", help="re-import archived JSONL files and exit")
+    ap.add_argument("--no-send", action="store_true", help="test run: never publish sweep-curve")
+    ap.add_argument("--no-influx", action="store_true", help="test run: archive only, no Influx writes")
     args = ap.parse_args()
     for e in args.env:
         load_env(os.path.expanduser(e))
@@ -489,7 +658,7 @@ def main():
     log.addHandler(h)
     log.setLevel(logging.INFO)
     if args.replay:
-        replay(args.replay)
+        replay(args.replay, Archive(args.archive))
     else:
         run(args)
 
