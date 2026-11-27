@@ -84,11 +84,11 @@ void telemetryAddPoint(TelePoint &p, uint16_t maxQueue) {
 
 bool telePminiConfigured() {
     ConfFile conf{"/littlefs/conf/tele.conf"};
-    const bool requested = conf.getLong("pmini", 0) != 0;
+    const bool requested = conf.getLong("pmini", 1) != 0;
 #ifdef CONFIG_FUGU_WITH_TELE_PMINI
     return requested;
 #else
-    if (requested) ESP_LOGW("tele", "pmini requested but not compiled; using legacy telemetry");
+    if (requested && conf.has("pmini")) ESP_LOGW("tele", "pmini requested but not compiled; using legacy telemetry");
     return false;
 #endif
 }
