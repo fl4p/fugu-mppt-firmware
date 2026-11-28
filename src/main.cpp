@@ -1146,6 +1146,7 @@ static void lfControl() {
 #endif
     mppt.ntc.read();
     mppt.ucTemp.read();
+    mppt.updateFan();
     if (sensors.Vout && sensors.Iout) {
         const float vout = sensors.Vout->ewm.avg.get();
         const float iout = sensors.Iout->ewm.avg.get();
@@ -1169,7 +1170,8 @@ static void lfControl() {
     wifiShutdownIfHot(mppt.ucTemp.lastFresh());
 
     // A stale fitted sensor trips protectLf (`temp-stale`) and blocks starts, also in manual PWM. The
-    // NaN fallbacks downstream (25 % P_max derate, fan holds its level) are only defence in depth.
+    // NaN fallbacks downstream (25 % P_max derate; the fan holds only when both sensors are invalid)
+    // are only defence in depth.
     static bool warnedStale = false;
     bool stale = mppt.tempStale();
     if (stale != warnedStale) {

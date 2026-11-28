@@ -617,6 +617,15 @@ public:
         if (ucTemp.fitted() && !ucTemp.fresh()) ucTemp.read(false);
     }
 
+    // Fan tick, run from the LF loop so it also covers manual and idle/off states. The die sensor always
+    // stands in, so a hot die is cooled even when a fitted NTC is invalid.
+    void updateFan() {
+        const float power = (sensorPhysicalI && sensorPhysicalU)
+                                ? sensorPhysicalI->ewm.avg.get() * sensorPhysicalU->ewm.avg.get()
+                                : 0.f;
+        fan.fanUpdateTemp(fmaxf(ntc.lastFresh(), ucTemp.lastFresh()), power);
+    }
+
     // Temperature start gate, 3 °C below the trip level
     [[nodiscard]] const char *tempStartBlock() const {
         if (tempStale()) return "temp-stale";

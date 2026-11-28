@@ -62,12 +62,10 @@ void MpptController::update() {
 
 
     // Chip temp stands in only for an unfitted NTC; a fitted one reading NaN keeps the 25% derate.
+    // (The fan is ticked from the LF loop so it also runs while manual/idle/off.)
     const float ntcFresh = ntc.lastFresh();
     float ntcTemp = !ntc.fitted() ? ucTemp.lastFresh()
                     : std::isnan(ntcFresh) ? ntcFresh : fmaxf(ntcFresh, ucTemp.lastFresh());
-
-    fan.fanUpdateTemp(ntcTemp, power_smooth);
-    rtcount("mppt.update.thermals");
 
     float powerLimit = limits.P_max;
     if (ntcTemp > limits.Temp_derate) {

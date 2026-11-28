@@ -113,7 +113,7 @@ These commands control the fan, LED, log levels, and ADC, and inspect sensors, m
 
 | Command | Description |
 | --- | --- |
-| `fan <float>` | Fan output, 0–100. Currently on/off only: above 10 it switches fully on. |
+| `fan <float>` | Fan output, 0–100. Currently on/off only: above 10 it switches fully on. Automatic cooling can replace this setting on the next temperature poll, including in manual PWM and while stopped. |
 | `led <RRGGBB>`, `led <RGB>` | Set the LED color in hex or short hex (e.g. `led 33ff33` or `led 3f3`). |
 | `sensor` | Dump per-sensor state (last/raw value, current-sensor zero and how many calibrations in a row kept the previous zero because it did not settle, EWM average and std, adaptive-noise-filter stats). Physical sensors add a `ripple:` line with the ripple filter state: notch on/off, its frequency and depth (`notch on f0=100.0Hz -15.0dB`), and the comb on/off with its window length in samples and the sensor's sample rate (`comb on L=4.51 fs=451.0Hz`, L = fs / f0; see `sensor.conf::ripple_filter`). `sensor avg` prints one compact line of EWM averages (`sens: vin=… iout=… …`) for fast polling. The ANF line reads `(stale)` unless the filter is enabled (it is kept off the RT path by default); since `anf on` does not currently work, it always reads `(stale)`. |
 | `anf [on\|off]` | **Currently not working:** `anf on`/`anf off` are rejected with `ERR:` (the command is registered without an argument); bare `anf` only prints the state. Intended: enable/disable the per-sample AdaptiveNoiseFilter, which feeds the noise/NSR stats in `sensor`. It's diagnostics-only and off by default to keep it out of the RT sample path; turn it on while inspecting sensor noise, off when done. |

@@ -68,7 +68,7 @@ The tests use these console commands:
 | `sweep` | force a global sweep / re-calibration |
 | `sync on\|off\|forced\|forced!` | LS rectifier mode (manual PWM only; `forced` arms the bring-up gate, `forced!` engages at once) |
 | `bf 0/1` | backflow switch (manual PWM only) |
-| `fan N` | fan duty |
+| `fan N` | fan output; automatic cooling can replace it on the next temperature poll (see [Console commands](../reference/console.md)) |
 | `set-config <file> <k> <v>` | write a conf key to flash. Most keys take effect at the next boot; `limits.conf` is read only at boot |
 | `ovset <V>` | live output-OV threshold (`0` clears it) |
 | `rt-stats`, `sensor` | timing / sensor readout for pass checks |

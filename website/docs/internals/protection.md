@@ -108,6 +108,15 @@ the side keys `hv_max`, `lv_max`, `hv_i_max` and `lv_i_max` map to these roles t
 | `temp` | NTC or MCU temperature > `temp_max`, logged as `Temp … > …°C, shutdown` | 5 s |
 | `wire-trip` | Wire-fault guard tripped (`wire_protect = 2` only), see [Output wire-fault protection](../reference/config/limits.md#output-wire-fault-protection) | until `wire-reset` or reboot |
 
+Fan control runs with the low-frequency temperature reads, including in manual PWM and while the converter
+is stopped. It uses the hotter fresh NTC or MCU reading. If only one sensor has a valid reading, that
+reading controls cooling; if neither does, the fan keeps its previous output. The `temp-stale` stop
+and start block still apply to a fitted sensor without a valid reading.
+
+The power limit treats an absent NTC differently from a failed fitted NTC. An absent NTC uses the MCU
+temperature for derating. A fitted NTC without a valid reading keeps the 25 % power cap, even when
+the MCU reading can control the fan. This cap is a fallback; it does not bypass the stale-temperature stop.
+
 ### Other stops
 
 These stops come from outside `protect()` and `protectLf()`:

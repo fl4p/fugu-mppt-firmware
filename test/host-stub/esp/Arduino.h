@@ -27,7 +27,8 @@ inline unsigned long micros() { return (unsigned long) esp_timer_get_time(); }
 inline void delay(uint32_t) {}
 inline void usleep_(uint32_t) {}
 inline void pinMode(uint8_t, uint8_t) {}
-inline void digitalWrite(uint8_t, uint8_t) {}
+inline uint8_t simPinState[64] = {}; // host tests: last digitalWrite level per pin
+inline void digitalWrite(uint8_t pin, uint8_t val) { if (pin < 64) simPinState[pin] = val; }
 inline int digitalRead(uint8_t) { return 0; }
 
 class String {

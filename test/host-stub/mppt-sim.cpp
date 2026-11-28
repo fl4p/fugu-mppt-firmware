@@ -694,6 +694,7 @@ static bool batDetect(M &m) {
 static void lfControl() {
     mppt.ntc.read();
     mppt.ucTemp.read();
+    mppt.updateFan();
     if (sensors.Vout && sensors.Iout) {
         const float vout = sensors.Vout->ewm.avg.get();
         const float iout = sensors.Iout->ewm.avg.get();
@@ -4765,6 +4766,28 @@ static int simMain(int argc, char **argv) {
         for (auto &t: g_trips) printf("==   t=%.3f [%s] %us\n", t.t, t.who.c_str(), t.sec);
         traceLine("final ");
         return 0;
+    }
+
+    if (sc == "fan-hot-ntc") {
+        // #66: a fitted NTC reading implausible (stale) with a hot die must still turn the fan on. The old
+        // fan input (the power-cap temp) is NaN for a fitted-NaN NTC, so the fan would hold its level.
+        static float ntcV = 0.f; // 0 V -> -273 C -> implausible -> NaN, stale after BAD_READS
+        mppt.ntc.setValueRef(ntcV);
+        mppt.fan.init(ConfFile{{"fan_pwm", "5"}}); // this scenario only: fan pin 5
+        g_simChipTemp = 80.f;
+        run(10, 1.0); // the NTC goes stale, the die EWMA settles above the fan threshold
+        const float die = mppt.ucTemp.lastFresh();
+        const bool pre = mppt.ntc.fitted() && !mppt.ntc.fresh() && std::isfinite(die) && die > 49.5f &&
+                         mppt.startBlockReason() != nullptr;
+        // now that the invalid state is established, force the fan off so a legacy pre-failure level cannot
+        // leave it high: only the next LF tick (hot die alone) may turn it on
+        mppt.fan.fanSet(0.f);
+        run(4, 1.0);
+        const bool fanOn = simPinState[5] == HIGH;
+        printf("\n== fan-hot-ntc: pre(ntc fitted %d stale %d, die %.1f C, blocked %d) fan %s\n",
+               (int) mppt.ntc.fitted(), (int) !mppt.ntc.fresh(), die, (int) (mppt.startBlockReason() != nullptr),
+               fanOn ? "ON" : "off");
+        return (pre && fanOn) ? 0 : 1;
     }
 
     if (sc == "idle-wake") return runIdleWake();
