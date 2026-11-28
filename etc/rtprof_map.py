@@ -3,6 +3,7 @@
 
   etc/rtprof_map.py <log> <elf> [--map <map>] [--min N | --rate R] [--lf out.lf [--merge in.lf]]
   etc/rtprof_map.py --check <in.lf> - <elf>    # list (noflash) entries the linked ELF left in flash
+  etc/rtprof_map.py --edges - <elf>            # flash functions whose address is a literal in IRAM code
 """
 import argparse, bisect, collections, glob, hashlib, os, re, shutil, subprocess, sys
 
@@ -18,6 +19,7 @@ ap.add_argument('--merge', action='append', default=[], help='existing .lf whose
 ap.add_argument('--lf', help='write ldgen mapping fragments placing these functions in IRAM (noflash)')
 ap.add_argument('--skip-archive', action='append', default=[], help='archive basename to leave out of --lf')
 ap.add_argument('--check', help='.lf to verify against the ELF instead of mapping a dump')
+ap.add_argument('--edges', action='store_true', help='list flash functions whose address is a literal in IRAM code, instead of mapping a dump')
 ap.add_argument('--unverified', action='store_true', help='accept a dump without the samples/entries/elf header')
 a = ap.parse_args()
 
@@ -43,6 +45,60 @@ if a.check:
     if not ents and not objs:
         sys.exit(f'{a.check}: no (noflash) entries found')
     sys.exit(1 if bad else 0)
+
+if a.edges:
+    # IRAM cannot call flash directly: the target address sits in a literal word that l32r loads. Scan the words of
+    # .iram0.text rather than the disassembly, which loses sync after padding and skips l32r lines.
+    import tempfile
+    fl, ir = {}, []
+    for l in subprocess.run([a.nm, '-C', '-S', '--defined-only', a.elf], capture_output=True, text=True, check=True).stdout.splitlines():
+        p = l.split(' ', 3)
+        if len(p) != 4 or p[2] not in 'tTwW':
+            continue
+        ad = int(p[0], 16)
+        if 0x42000000 <= ad < 0x44000000:
+            fl[ad] = p[3]
+        elif 0x40370000 <= ad < 0x403e0000:
+            ir.append((ad, ad + int(p[1], 16), p[3]))
+    ir.sort()
+    starts = [r[0] for r in ir]
+    oc = a.nm[:-2] + 'objcopy'
+    hdr = subprocess.run([a.nm[:-2] + 'objdump', '-h', a.elf], capture_output=True, text=True, check=True).stdout
+    m = re.search(r'\.iram0\.text\s+([0-9a-f]+)\s+([0-9a-f]+)', hdr)
+    if not m:
+        sys.exit('no .iram0.text section in the ELF')
+    base = int(m.group(2), 16)
+    with tempfile.NamedTemporaryFile() as t:
+        subprocess.run([oc, '-O', 'binary', '--only-section=.iram0.text', a.elf, t.name], check=True)
+        data = open(t.name, 'rb').read()
+    lit = {}  # literal address -> flash function
+    for o in range(0, len(data) - 3, 4):
+        w = int.from_bytes(data[o:o + 4], 'little')
+        if w in fl:
+            lit[base + o] = fl[w]
+    # callers: l32r (op0 = 1, imm16 = bytes 1-2) at pc loads ((pc + 3) & ~3) + (imm16 - 0x10000) * 4; any byte offset
+    # whose decoded target is such a literal and that lies inside an IRAM function counts
+    edges = collections.defaultdict(set)
+    for o in range(0, len(data) - 2):
+        if data[o] & 0xf != 1:
+            continue
+        pc = base + o
+        tgt = ((pc + 3) & ~3) + ((data[o + 1] | data[o + 2] << 8) - 0x10000) * 4
+        if tgt in lit:
+            k = bisect.bisect_right(starts, pc) - 1
+            if k >= 0 and pc < ir[k][1]:
+                edges[lit[tgt]].add(ir[k][2])
+    for ad, f in lit.items():
+        edges.setdefault(f, set())
+    for t in edges:
+        if not edges[t]:
+            edges[t].add('(no l32r found: address stored, not called)')
+    for t in sorted(edges):
+        src = sorted(edges[t])
+        print(f'{t}  <-  {", ".join(src[:4])}{" ..." if len(src) > 4 else ""}')
+    print(f'{len(edges)} flash functions with their address in IRAM (cold paths and stored callbacks too; '
+          f'virtual and function-pointer calls do not show)', file=sys.stderr)
+    sys.exit(0)
 
 pcs = collections.Counter()
 total = 0
@@ -72,8 +128,11 @@ for l in open(a.log, errors='replace'):
         pcs[int(m.group(1), 16)] += int(m.group(2))
 if headers > 1:
     sys.exit(f'{headers} dumps in one log: split it, counts and totals would mix')
-if declared is not None and declared != len(pcs):
+if declared is not None and declared > len(pcs):
     sys.exit(f'truncated dump: header says {declared} entries, parsed {len(pcs)}')
+if declared is not None and declared < len(pcs):
+    sys.exit(f'dump has {len(pcs)} entries, header says {declared}: the table grew during the print '
+             f'(firmware before the dump pause), or lines from another dump are mixed in')
 if not verified:
     if not a.unverified:
         sys.exit('dump has no header with an elf= sha: cannot tell that this ELF matches (--unverified to map anyway)')

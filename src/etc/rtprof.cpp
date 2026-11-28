@@ -5,19 +5,21 @@
 #include <esp_app_desc.h>
 #include <esp_attr.h>
 #include <esp_debug_helpers.h>
+#include <esp_rom_sys.h>
 #include <esp_cpu_utils.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <xtensa_context.h>
 
 #include "logging.h"
+#include <fugu_flash_chip.h>
 
 static constexpr uint32_t N = CONFIG_FUGU_RTPROF_SLOTS;
 static_assert(N >= 64 && (N & (N - 1)) == 0, "FUGU_RTPROF_SLOTS must be a power of two");
 static DRAM_ATTR uint32_t s_pc[N], s_n[N];
 static DRAM_ATTR volatile uint32_t s_samples, s_lost, s_task;
 static unsigned s_hz;
-static DRAM_ATTR volatile bool s_all;
+static DRAM_ATTR volatile bool s_all, s_flash, s_hold;
 
 static inline bool inFlash(uint32_t pc) { return s_all || (pc >= 0x42000000u && pc < 0x44000000u); }
 
@@ -31,6 +33,7 @@ static IRAM_ATTR void put(uint32_t pc) {
 }
 
 static IRAM_ATTR bool onAlarm(gptimer_handle_t, const gptimer_alarm_event_data_t *, void *) {
+    if (s_hold || (s_flash && !(fugu_flash_seq & 1))) return false;
     ++s_samples;
     auto tcb = (void **) xTaskGetCurrentTaskHandleForCore(1);
     if (!tcb) return false;
@@ -72,14 +75,24 @@ void rtprofStart(unsigned hz) {
     xTaskCreatePinnedToCore(startTask, "rtprof", 3072, nullptr, 1, nullptr, 1);
 }
 
-void rtprofClear(bool all) {
-    s_all = all;
+// lets a sample that passed the s_hold check finish (24-frame unwind) before the table is read or cleared
+static void holdOn() {
+    s_hold = true;
+    esp_rom_delay_us(200);
+}
+
+void rtprofClear(bool all, bool flash) {
+    holdOn();
+    s_all = all || flash;
+    s_flash = flash;
     memset(s_pc, 0, sizeof(s_pc));
     memset(s_n, 0, sizeof(s_n));
     s_samples = s_lost = s_task = 0;
+    s_hold = false;
 }
 
 void rtprofDump() {
+    holdOn(); // a table growing during the print no longer matches the header
     unsigned used = 0;
     for (auto p : s_pc) used += p != 0;
     char sha[9];
@@ -98,4 +111,5 @@ void rtprofDump() {
     }
     if (l) UART_LOG("rtp%s", line);
     UART_LOG("rtprof end");
+    s_hold = false;
 }

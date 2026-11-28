@@ -206,6 +206,12 @@ On the ESP32-S3 the firmware keeps the caches on during flash writes with two me
 Code or data that still lives in flash costs a slow cache miss while an erase is suspended (about 260 µs, see
 [Kernel critical sections from core 0](#kernel-critical-sections-from-core-0)).
 
+The virtual-converter simulation (`CONFIG_FUGU_WITH_VCONV`) is not in the IRAM set. In a simulated-converter build,
+about one configuration write in five stalled the loop for 14–42 ms, while 2–3 ms was typical. With the simulation
+and the libm functions it calls placed in IRAM for a test, 75 writes stayed at or below 2.5 ms. Flash lag measured on
+a simulated-converter build therefore does not carry over to a real converter.
+[`rtprof flash`](profiling.md#rtprof) shows which code runs during flash operations.
+
 `bootinfo` reports the state in its `flash-suspend:` line: the self-test result, `-> active` or `-> caches-off`, and
 `lag flash/other <a>/<b>us (<task> at <s>s[, running])`, the worst loop gap that overlapped a flash operation and the
 worst one otherwise. The bracket names the task that started the flash operation behind the first gap, the uptime
@@ -494,7 +500,8 @@ Check every change that touches the RT core against these rules:
 - Install interrupts that wake the RT loop from a task on `RT_CORE`, never through `esp_ipc_call_blocking()` to the
   same core.
 - Keep flash writes rare and short. Do not poll `get-config` on a converter under load.
-- Keep new RT-path code in IRAM on the ESP32-S3 (`main/rt_iram.lf`, regenerated with `etc/rtprof_map.py`).
+- Keep new RT-path code in IRAM on the ESP32-S3 (`main/rt_iram.lf`, regenerated with `etc/rtprof_map.py`). Check a
+  change with `etc/rtprof_map.py --edges - <elf>`: a per-iteration function in that list runs from flash.
 - Put a liveness watchdog after the operation that proves liveness, never in front of it.
 - Keep heavy log formatting off small-stack system tasks.
 - Check a change with `rtcount` maxima and `lag=`, not with means.

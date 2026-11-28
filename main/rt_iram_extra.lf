@@ -1,6 +1,6 @@
 # RT-loop code rtprof_map.py cannot place by itself: interrupt handlers and code inside critical
 # sections (rtprof samples tasks with interrupts on), assembly objects. Found with the IRAM->flash
-# call edges of the linked ELF
+# call edges of the linked ELF (etc/rtprof_map.py --edges)
 
 [mapping:rt_extra_arduino]
 archive: libespressif__arduino-esp32.a
@@ -34,6 +34,10 @@ entries:
     sensor_setup:_ZN10ADC_INA22614pollConversionEv (noflash)
     adc_esp32_cont:_ZTV14ADC_ESP32_Cont (noflash)
     adc_esp32_cont:_ZN14ADC_ESP32_Cont8inlDeltaEf (noflash)
+    mppt:_ZN14MpptController9hsShortRtEm (noflash)
+    cli:_ZNK14MpptController11hsIdleCheckEv (noflash)
+    mppt:_ZNK14MpptController11hsIdleCheckEv (noflash)
+    bflow_test:_ZNK14MpptController11hsIdleCheckEv (noflash)
 
 [mapping:rt_extra_system]
 archive: libesp_system.a
