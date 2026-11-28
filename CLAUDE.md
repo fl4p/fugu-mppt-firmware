@@ -69,7 +69,9 @@ reboots them into the new image. Confirm versions in the after-table.
 in a clean, reused detached worktree `../fugu-fleet-wt` (`build/fleet/`), refuses a dirty worktree and a default HEAD
 that is behind origin/main (pass `origin/main` or the rev; a named older rev only warns), and prints the .bin
 path, version and sha256. Builds queue on the `lock.sh` lock `fleet-wt` (`FLEET_LOCK_WAIT`, default 1800 s), so two
-sessions never build there at once; the .bin is only stable until the next build, so OTA it right after. Never ship a
+sessions never build there at once; the .bin there is only stable until the next build, so OTA it right after or
+use the copy it also keeps in `build/fleet-keep/<version>-<sha8>/` of the main checkout (bin, elf and a
+`fugu-firmware.sdkconfig.json` sidecar bound to the image's sha256, newest 12 kept), e.g. to restore a device later. Never ship a
 main-checkout build: it carries other sessions' uncommitted edits.
 
 **OTA over the MQTT console (preferred for fry/flat):** `.venv/bin/python3 etc/ota_mqtt.py --name fry,flat --bin
@@ -77,7 +79,8 @@ main-checkout build: it carries other sessions' uncommitted edits.
 the rest. It reads the broker and credentials from `etc/mqtt.env` (main checkout's as fallback), tunnels through
 `havan-ts` when the broker is not directly reachable, locks onto the exact hostname and runs pre-flight checks (also in
 `-n`): its own checkout behind origin/main in the OTA tooling or with `etc/fugu`/`etc/idf-devtools` checked out
-behind their pins (refused unless `--allow-stale-tools`; a stale checkout once lost a failed OTA's ELF), image flags, a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
+behind their pins (refused unless `--allow-stale-tools`; a stale checkout once lost a failed OTA's ELF), image flags (from the image's sha-matched sidecar, else `config/sdkconfig.json` in its build dir; a copied .bin
+without either is gate-driver UNVERIFIED), a `PENDING_VERIFY` running image, a `-dirty` image (refused for fry/flat unless `--allow-dirty` when the tree it was built in has
 uncommitted firmware inputs; non-firmware dirt does not block), conf keys the image fails setup on (renamed or role
 keys, from `get-config`; refused even with `--yes`, prints the `migrate_side_keys.py` two-step fix; an unreadable conf
 file asks), rect-cal running/unsaved, a sweep or top-balance run

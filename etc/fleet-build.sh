@@ -4,7 +4,8 @@
 #   etc/fleet-build.sh [git-rev]      default HEAD of the main checkout, refused when behind origin/main
 # Env: FLEET_WT  worktree (default <main checkout>/../fugu-fleet-wt), build dir build/fleet inside it.
 #      FLEET_LOCK_WAIT  seconds to queue for lock.sh lock fleet-wt (default 1800); no lock.sh = unlocked.
-# Prints the .bin path, version and sha256; feed it to `etc/ota_mqtt.py --bin <path>`.
+# Prints the .bin path, version and sha256; feed it to `etc/ota_mqtt.py --bin <path>`. A copy that the next
+# build does not overwrite (bin, elf, <name>.sdkconfig.json sidecar) goes to <main checkout>/build/fleet-keep/<version>-<sha8>/.
 set -eu
 main=$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)
 main=$(dirname "$main")
@@ -62,3 +63,13 @@ echo "sha256  $sha"
 python3 "$wt/etc/idf-devtools/image_layout.py" "$wt/build/fleet" | sed 's/^/layout  /'
 case $ver in *dirty*) echo "fleet-build: version is -dirty, the build modified tracked files:" >&2
     git -C "$wt" status --porcelain --ignore-submodules=none >&2; exit 1 ;; esac
+# stable copy (the shared build dir is rebuilt by the next session): bin, elf, config sidecar; newest 12 kept
+keep=$main/build/fleet-keep/$ver-${sha:0:8}
+mkdir -p "$keep"
+cp "$bin" "$keep/fugu-firmware.bin"
+cp "$wt/build/fleet/fugu-firmware.elf" "$keep/fugu-firmware.elf"
+python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import ota_common as o; o.write_build_config_sidecar(sys.argv[2], sys.argv[3])' \
+    "$wt/etc" "$keep/fugu-firmware.bin" "$wt/build/fleet/config/sdkconfig.json"
+touch "$keep"
+ls -1dt "$main"/build/fleet-keep/*/ | tail -n +13 | while read -r d; do rm -rf "$d"; done
+echo "keep    $keep/fugu-firmware.bin"

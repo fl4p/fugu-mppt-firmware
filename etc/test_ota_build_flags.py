@@ -12,7 +12,7 @@ import tempfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ota_common import (build_is_plant_sim, build_has_networking, build_gate_driver,  # noqa: E402
-                        parse_device_gate_driver, gate_driver_verdict)
+                        parse_device_gate_driver, gate_driver_verdict, write_build_config_sidecar)
 
 
 def _bin_with_config(tmp, cfg):
@@ -72,8 +72,51 @@ VERDICT_CASES = [
 ]
 
 
+MCPWM_CFG = {"FUGU_WITH_MCPWM": True, "FUGU_GATE_LEDC": False, "FUGU_WITH_VCONV": False}
+
+
+def _sidecar_case(tmp, how):
+    """A copied image in <tmp>/keep/ without its build dir; how: 'match' (sidecar of this image),
+    'other' (sidecar written for different bytes), 'none' (no sidecar), 'corrupt', 'precedence'
+    (sidecar plus another build's config/sdkconfig.json in the same dir)."""
+    src = _bin_with_config(os.path.join(tmp, 'src'), MCPWM_CFG)
+    with open(src, 'wb') as f:
+        f.write(b'image-A')
+    keep = os.path.join(tmp, 'keep')
+    os.makedirs(keep)
+    binp = os.path.join(keep, 'fugu-firmware.bin')
+    cfg = os.path.join(tmp, 'src', 'build', 'config', 'sdkconfig.json')
+    with open(binp, 'wb') as f:
+        f.write(b'image-A')
+    if how in ('match', 'other'):
+        write_build_config_sidecar(binp, cfg)
+    if how == 'other':
+        with open(binp, 'wb') as f:
+            f.write(b'image-B')
+    if how == 'precedence':  # an unbound config of another (LEDC) build sits next to the copied bin
+        write_build_config_sidecar(binp, cfg)
+        os.makedirs(os.path.join(keep, 'config'))
+        with open(os.path.join(keep, 'config', 'sdkconfig.json'), 'w') as f:
+            json.dump({"FUGU_WITH_MCPWM": False, "FUGU_GATE_LEDC": True}, f)
+    if how == 'corrupt':
+        with open(binp[:-4] + '.sdkconfig.json', 'w') as f:
+            f.write('{"bin_sha256": ')
+    return binp
+
+
+SIDECAR_CASES = [('match', 'mcpwm'), ('precedence', 'mcpwm'), ('other', None), ('none', None), ('corrupt', None)]
+
+
 def main():
     fails = 0
+    for how, want in SIDECAR_CASES:
+        with tempfile.TemporaryDirectory() as tmp:
+            binp = _sidecar_case(tmp, how)
+            got = build_gate_driver(binp)
+            got_sim = build_is_plant_sim(binp)
+        ok = got == want and got_sim == (None if want is None else False)
+        fails += not ok
+        print(f"{'PASS' if ok else 'FAIL'}  sidecar {how}: driver={got} sim={got_sim}" + ("" if ok else f"  (want {want})"))
     for label, cfg, want in DRIVER_CASES:
         with tempfile.TemporaryDirectory() as tmp:
             got = build_gate_driver(_bin_with_config(tmp, cfg))

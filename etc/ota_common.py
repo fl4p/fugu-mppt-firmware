@@ -52,16 +52,62 @@ def read_local_bootloader(bin_path):
     return dict(text=f'{text}, len {len(d)}, sha {sha}', sha=sha)
 
 
-def _build_flag(bin_path, key):
-    """Value of the sdkconfig key (CONFIG_<key> without the CONFIG_ prefix) from the sdkconfig.json
-    next to bin_path's build dir, as bool; None if the config can't be read/parsed. None means
-    'unknown' — callers must treat that as not-safe, never as the flag being off."""
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for b in iter(lambda: f.read(1 << 16), b''):
+            h.update(b)
+    return h.hexdigest()
+
+
+def build_config_sidecar(bin_path):
+    """Sidecar path for bin_path's build config: <bin without .bin>.sdkconfig.json."""
+    return os.path.splitext(bin_path)[0] + '.sdkconfig.json'
+
+
+def write_build_config_sidecar(bin_path, sdkconfig_json):
+    """Write the sidecar of bin_path: the build's sdkconfig.json bound to the image's sha256."""
+    with open(sdkconfig_json) as f:
+        cfg = json.load(f)
+    with open(build_config_sidecar(bin_path), 'w') as f:
+        json.dump({'bin_sha256': _sha256_file(bin_path), 'sdkconfig': cfg}, f)
+
+
+def build_config(bin_path):
+    """(sdkconfig dict, source path) of the build that produced bin_path: its sidecar when the
+    sidecar's bin_sha256 matches the image, else config/sdkconfig.json in the bin's build dir.
+    (None, None) when neither is readable."""
+    side = build_config_sidecar(bin_path)
+    try:
+        with open(side) as f:
+            d = json.load(f)
+        if isinstance(d, dict) and isinstance(d.get('sdkconfig'), dict) \
+                and d.get('bin_sha256') == _sha256_file(bin_path):
+            return d['sdkconfig'], side
+    except (OSError, ValueError):
+        pass
     cfg = os.path.join(os.path.dirname(bin_path), 'config', 'sdkconfig.json')
     try:
         with open(cfg) as f:
-            return bool(json.load(f).get(key))
+            return json.load(f), cfg
     except (OSError, ValueError):
-        return None
+        pass
+    return None, None
+
+
+def build_config_hint(bin_path):
+    """One line naming where the build config of bin_path was looked for."""
+    return (f"no build config for {bin_path}: neither {os.path.join(os.path.dirname(bin_path), 'config', 'sdkconfig.json')}"
+            f" nor a sidecar {build_config_sidecar(bin_path)} with this image's sha256 (copy the image from"
+            f" build/fleet-keep/, or pass the .bin inside its build dir)")
+
+
+def _build_flag(bin_path, key):
+    """Value of the sdkconfig key (CONFIG_<key> without the CONFIG_ prefix) of bin_path's build
+    (see build_config), as bool; None if the config can't be read. None means 'unknown' — callers
+    must treat that as not-safe, never as the flag being off."""
+    cfg, _ = build_config(bin_path)
+    return None if cfg is None else bool(cfg.get(key))
 
 
 def build_has_networking(bin_path):

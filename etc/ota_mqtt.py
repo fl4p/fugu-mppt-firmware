@@ -44,7 +44,8 @@ from etc.fugu.console import Console  # noqa: E402
 from etc.fugu.transport import MqttTransport  # noqa: E402
 from etc.fugu_console import (Locks, broker_endpoint, etc_file, free_port, load_env_file,  # noqa: E402
                               owner, relay_ssh_dest, run_ota, tcp_ok)
-from ota_common import (archive_elf, bootinfo_row, build_gate_driver,  # noqa: E402
+from ota_common import (archive_elf, bootinfo_row, build_config, build_config_hint, build_config_sidecar,  # noqa: E402
+                        build_gate_driver,
                         build_has_networking, build_is_plant_sim, device_driver_label,
                         gate_driver_verdict, image_is_dirty, is_current, is_pending_verify, judge,
                         parse_bootinfo, parse_device_gate_driver, print_table, read_local_app_desc,
@@ -310,7 +311,10 @@ def git(*a, cwd=REPO_ROOT):
 
 
 def firmware_dirt(bin_path):
-    """Uncommitted firmware inputs of the git tree bin_path was built in; None if not in a tree."""
+    """Uncommitted firmware inputs of the git tree bin_path was built in; None if not in a tree or
+    a copied image (config from its sidecar): the tree it sits in did not build it."""
+    if build_config(bin_path)[1] == build_config_sidecar(bin_path):
+        return None
     top = git('rev-parse', '--show-toplevel', cwd=os.path.dirname(bin_path))
     if top is None:
         return None
@@ -487,6 +491,8 @@ def guards(args, con, image, before, name=''):
         verdict = gate_driver_verdict(img, dev)
         if verdict != 'ok':
             print(f'⚠️  gate driver {verdict.upper()}: image {img or "unknown"}, device {device_driver_label(dev)}')
+            if img is None:
+                print(f'   {build_config_hint(args.bin)}')
             ok = (args.allow_driver_change or confirm('gate-driver change', args)) and ok
     return ok
 
