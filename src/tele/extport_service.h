@@ -173,7 +173,7 @@ public:
     [[nodiscard]] std::string statusDetail() const override {
         char b[48];
         if (_refused) snprintf(b, sizeof b, "refused: rx 0x%02x", _refused - 1);
-        else if (!_installed) return "off";
+        else if (!_installed) return state() == ServiceState::Failed ? "" : "off";
         else snprintf(b, sizeof b, "vedirect %lu blocks", (unsigned long) _blocks);
         return b;
     }

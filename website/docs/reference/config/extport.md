@@ -18,7 +18,7 @@ service keys. For details, see [Service architecture](../services.md#per-service
 | `enabled`   |      | bool | 0       | Start this service at boot |
 | `log_level` |      | enum | info    | Verbosity: `error`, `warn`, or `info` |
 
-`mode`, `tx_pin`, `rx_pin` and `pid` are read when the service starts (`svc rs extport`).
+`mode`, `tx_pin`, `rx_pin` and `pid` are read when the service starts (`svc rs extport`). A failed start shows `Failed` in `svc list`, with the reason in the log.
 
 ## VE.Direct output
 
