@@ -2,187 +2,139 @@
 
 # CV hold current regulation
 
-Issue [#72](https://github.com/fl4p/fugu-mppt-firmware/issues/72) concerns CV-hold
-simulation failures that depend on BMS sampling phase. The candidate changes the
-output-current controller's error reference and reduces the CV hold's per-frame
-battery-current correction. Forecast logic, PWM timing, configured converter PD
-gains, protections and simulation thresholds stay unchanged.
+Validated source `795f402e33d35784ce8e6325c15a05a333be7e13` addresses
+[issue #72](https://github.com/fl4p/fugu-mppt-firmware/issues/72) with two control
+changes. The full Linux stock suite and both platform phase grids pass.
 
-## Current-error reference
+## Control changes
 
-The old controller used `1 - Iout / smoothed_Iout_max`. Its response per ampere of
-error increased as the charger reduced its current limit: at 4 A it was ten times
-the response at 40 A. In the investigated hold this produced repeated current
-dips and a mean current below the requested limit.
+The output-current PD controller uses a fixed 40 A error reference:
+`e = (smoothed_target - measured_current) / 40 A`. Previously it divided by the
+smoothed current target, increasing its response to an ampere of error as the
+charger reduced that target. At a 4 A hold the old proportional gain was ten
+times its value at 40 A. In the investigated simulation this contributed to
+current ripple and a mean current below the commanded limit.
 
-The candidate uses `(smoothed_Iout_max - Iout) / 40 A`. Both inputs are divided by
-the named `IoutCtrlRefA`, and the smoothed controller disables relative
-normalization. Its optional constructor argument defaults to the old behavior
-for all other callers. The 40 A value is a fixed control-gain reference, independent
-of battery configuration.
+The 40 A reference preserves the old gain at a **settled** 40 A target. It is
+not a hardware maximum or a battery-current setting. Moving-target derivative
+behavior differs; the regression test checks that sequence explicitly. Other
+controllers retain their existing relative-error normalization through the
+constructor's default argument.
 
-At a constant, settled 40 A target the old and new laws agree. At a changing
-target their derivative terms differ; the new law differentiates the scaled
-ampere error. The unit regression checks that moving-target arithmetic explicitly.
-The smaller response at low limits can also change which competing limiter wins.
+The CV hold's per-current-frame correction changes from `G = 0.4` to `G = 0.25`.
+The simulated BMS can deliver the previous current frame, four seconds old,
+while delivering a current cell-voltage frame. With the fixed-reference change
+alone, some delayed-current phases produced seconds-long entry excursions while
+both converters tracked their limits. Reducing the feedback correction removed
+that recurrence in the tested case.
 
-## Diagnostic evidence
+For two units with ideal tracking, a fixed target and inactive caps, the delayed
+inner loop is `x[k+1] = x[k] + 2G*(target - x[k-1])`. Its pole magnitude is about
+0.894 at G = 0.4 and 0.707 at G = 0.25. This approximation excludes the outer
+cell loop, converter dynamics, caps and asynchronous updates; it is not a full
+stability proof.
 
-Two contributors were separated in scratch experiments: a fast current pulse
-when an LS-window clamp released the simulated gate driver's HS interlock delay,
-and current-limiter chatter superimposed on a depressed mean. Reserving an LH
-gap removed the high pulse but left a low excursion. Reducing Iout-controller
-gain removed the latter in the tested fixture.
+G = 0.2 passed the delayed phase-4 case but failed entry limits at other phases.
+A bounded G = 0.25 probe passed all five competing cases: phase 0 with/without
+extra current delay, delayed phase 4, phase 9 without delay, and delayed default
+phase 5.1. Their printed entry peaks were 3.507–3.513 V. These probes motivated
+the candidate; the complete grids determine acceptance.
 
-The fixed reference passes the two initial cases with the original charger and
-normal PWM timing. Neither the experimental LH reservation nor the earlier
-forecast gain-scheduling candidate is included.
+The existing forecast, converter gain settings, PWM timing and voltage gates
+are unchanged. The rejected forecast-gain and dead-time experiments are absent
+from the final change.
 
-| Mac `cv-hold-pair` | Hold band (V) | Entry peak (V) | Verdict |
-|---|---|---|---|
-| Unmodified `main` `2fc28a71`, phase 1 | 3.492..3.510 | 3.507 | FAIL |
-| Fixed reference, original charger, default phase | 3.500..3.502 | 3.505 | PASS |
-| Fixed reference, original charger, phase 1 | 3.499..3.501 | 3.507 | PASS |
+## Permanent regressions
 
-Re-running phase 1 on final candidate `f0ebdf43`, based on current `main`
-`2fc28a71`, also passes at 3.499..3.501 V with a 3.507 V entry peak. Its log is
-`/tmp/cv72-final-candidate-phase1.log`.
+- `pd-control-test`: equal ampere-error response at 1/4/40 A; settled-40 A
+  compatibility; exact moving-target EWMA/P/D sequence; finite zero-target
+  response; default relative normalization for other callers; limiter sign.
+- `charger-term-test`: exact steps derived from the fixture parameters:
+  -0.700 A with the look-ahead and +0.116667 A without it, within 1 mA.
+- `cv-hold-pair-lag`: cell phase 4 s, current delayed by one four-second frame.
+- `cv-hold-pair-phase0`: cell phase 0, no added current delay.
 
-Printed voltages are rounded to 1 mV; the baseline's own assertion reports a
-failure, so its printed 3.510 V is not evidence of equality to the limit.
-The baseline above was rebuilt on current `main`; initial candidate results came
-from the earlier scratch checkout. Final validation uses the candidate on current
-`main`.
-
-Local evidence: `/tmp/cv72-current-main-baseline-phase1.log`,
-`/tmp/cv72-lh/RESULTS.md`, and `/tmp/cv72-lh/logs/cand_preA_lh0_{default,phase1}.log`.
-
-## Delayed battery-current feedback
-
-The larger timing grid found residual failures with `lagI=1`: the BMS sends the
-previous current frame's value, four seconds old in this fixture, while cell
-voltage is current. Arrival timestamps do not expose that sample age.
-
-At cell phase 4 s, the fixed-reference candidate reaches 3.522028 V at 210.1279 s.
-Both converters closely track their commanded limits at that peak. Excursions
-above 3.515 V last about nine seconds and recur about 24 seconds apart. This is
-different from the earlier millisecond converter pulse.
-
-The paired diagnostic changes only the battery-current correction `G` from 0.4
-to 0.2. The delayed case then passes at 3.499..3.501 V with a 3.510 V entry peak;
-the default case also passes, at 3.498..3.503 V with a 3.508 V entry peak. The
-roughly 24-second recurrence disappears. These two cases support a candidate,
-not acceptance of the full timing grid.
-
-For two converters with ideal current tracking, a fixed target and inactive
-caps, a one-frame delay gives `x[k+1] = x[k] + 2G*(target - x[k-1])`. The pole
-magnitude falls from about 0.894 to 0.632 when G is halved. This explains why the
-old stability condition `2G < 1` did not guarantee adequate damping. It is an
-approximation, not a stability proof of the coupled cell loop, converter dynamics,
-caps or asynchronous updates. The remaining slow excursion is not explained by
-that inner-loop model.
-
-The first damping candidate retains the fixed reference and uses G = 0.2. A new
-stock `cv-hold-pair-lag` case fixes cell phase at 4 s and delays current by one
-frame, sharing the original pair's entry, band and latch assertions. Its empty
-steady-window check rejects a run with no samples after `holdAt + 300 s`.
-
-Diagnostic logs and traces: `/tmp/fugu-cv72-lag/`, including `lag_pC4.csv`,
-`g02_pC4.log` and `build_g02.log`. No instrumented getters or trace hooks are
-included in the production candidate.
-
-The wider grid rejects G = 0.2 on entry peaks despite passing every steady band.
-A bounded intermediate-gain probe at G = 0.25 passes the competing cases:
-
-| Mac cell phase / extra current delay | Entry peak (V) | Steady band (V) |
-|---|---|---|
-| 0 / none | 3.509 | 3.499..3.501 |
-| 0 / one frame | 3.513 | 3.500..3.501 |
-| 4 / one frame | 3.509 | 3.499..3.502 |
-| 9 / none | 3.507 | 3.499..3.501 |
-| 5.1 / one frame | 3.510 | 3.499..3.501 |
-
-The revised candidate uses G = 0.25 and adds a permanent phase-0 pair case
-alongside the delayed-current case. These focused results do not replace the
-full grids. Scratch source and configuration differ from the merged candidate
-only in G; evidence is in `/tmp/cv72-g025-clean/` and
-`/tmp/cv72-g025-mac-cases/`.
+Both new scenarios share the original pair's entry limit (eoc + 15 mV), steady
+band (eoc ±10 mV), hold and latch checks. All three reject an empty steady window.
+The stock list contains 191 unique scenarios, including these regressions.
 
 ## Validation
 
-- The new host regression checks equal ampere-error gain at 1/4/40 A, exact
-  smoothed-target and derivative responses, zero-target behavior, default relative
-  behavior for other callers, and the sign used by the limiter's past-limit logic.
-- Forcing the new constructor to ignore `normalize=false` in a scratch copy
-  makes five regression checks fail. The unit test does not instantiate MPPT;
-  its fixed reference is repeated locally, so integration needs simulator coverage.
-- Worker host suite: 38 PASS, one existing XFAIL (`bms-cutoff-test`).
-- Independent review of `f0ebdf43` found no blockers and reproduced the five
-  failures under the constructor mutation.
-- At `f0ebdf43`, the ESP-IDF 6.0.3 ESP32-S3 build passed. The image is `0x1b8060` bytes with 4% of
-  the smallest application partition free. No cycle-level cost measurement was
-  made; the phase-1 simulation reports zero allocations and frees in its RT loop.
-- The documentation build with a fresh cache and the cross-link check passed.
-- Linux [stock suite](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46038412150):
-  186 simulator scenarios completed without failures; host units 38 PASS and one
-  existing XFAIL. The separately pinned
-  [unit run](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46038398604)
-  confirms the same counts.
-- Linux [26-case phase/lag grid](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46038398925):
-  20 PASS, six FAIL. All 13 cases with no extra current-frame delay pass. With
-  `lagI=1` (one four-second-old current frame, not a one-second delay), phase 1
-  fails low at 3.486 V; phases 3, 4, 5, 7 and 8 exceed the entry limit, peaking at
-  3.521–3.524 V. These runs use Ubuntu 26.04, Clang 21.1.8, x86_64, glibc 2.43,
-  image `20261122.9.1`, and candidate `f0ebdf43`.
-- macOS at `f0ebdf43`: 23 PASS, three FAIL (delayed-current phases 3, 4 and 5).
-  One case reused the root's run with captured exit 0; the worker ran the other
-  25. A corresponding baseline grid has not been run, so the residual failures
-  have not been classified as pre-existing or introduced.
-- The G = 0.2 candidate passes the default pair and new delayed pair locally.
-  Restoring G = 0.4 in an isolated copy makes the same delayed-pair harness fail
-  at a 3.522 V entry peak. The focused charger and PD host tests pass.
-- After merging `main` at `d0cf88d8`, candidate `cbbb692b` passes the delayed
-  pair with entry 3.510 V and band 3.499..3.501 V. The merged G = 0.4 calibration
-  still fails at entry 3.522 V; all three exact host-step assertions also fail
-  under that mutation. The shortened run fails the empty-window guard.
-- The merged ESP32-S3 build passes (`0x1b8210` bytes, 4% partition space free),
-  as do the fresh-cache docs build, rendered-page check and cross-link check.
-  Linux [stock validation](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46044300389)
-  passes all 190 scenarios and the host units (38 PASS, one known XFAIL).
-  The [pinned unit run](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46044294907)
-  confirms those unit counts.
-- The merged Linux [phase grid](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46044294877)
-  passes 25 of 26 cases, including all 13 delayed-current cases. Cell phase 0,
-  no added current delay, fails the entry gate (printed peak 3.516 V). The
-  rounded print does not establish the exact excess above 3.515 V.
-- The merged Mac grid completes 26 fresh runs: 22 PASS, four entry failures.
-  Phase 0 fails with both current-delay settings (printed peak 3.516 V), phase
-  9 fails without extra delay (3.516 V), and default phase 5.1 fails with delay
-  (3.517 V). Every steady band passes. Thus G = 0.2 is not accepted as a
-  phase-robust fix. Evidence: `/tmp/cv72-g02-mac-grid/`. A paired phase-0 trace
-  and a bounded intermediate-gain diagnostic are being evaluated.
+All final runs use candidate `795f402e`; it includes `main` at `d0cf88d8`.
 
-### Empty-window guard review
+| Check | Result |
+|---|---|
+| Linux 26 phase/current-delay cases | 26/26 PASS: [run 46048183784](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46048183784) |
+| Linux full stock and host suite | 191 scenarios PASS; host units 38 PASS, one known XFAIL: [run 46048183356](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46048183356) |
+| Pinned Linux host units | 38 PASS, one known XFAIL, zero failures: [run 46048183647](https://github.com/fl4p/fugu-mppt-firmware/actions/runs/46048183647) |
+| macOS 26 phase/current-delay cases | 26/26 PASS, fresh runs with captured exit 0 |
+| Focused PD and charger host tests | PASS, independently reviewed |
+| Three permanent pair scenarios, macOS | PASS; printed entry peaks 3.507 / 3.509 / 3.509 V |
+| ESP-IDF 6.0.3, ESP32-S3 | PASS; image 0x1b8210 bytes, 4% application-partition space free |
+| Documentation | Fresh-cache build, cross-links, rendered values and independent source check PASS |
 
-The pair assertions now require `lo <= hi` before accepting the steady band.
-The unobserved window retains the reversed sentinels (9, 0), which fail this
-check; NaN bounds also fail the comparison. This is a nonempty-window check,
-not validation of every plant sample. Adding this requirement cannot convert an
-existing failure to a pass, and the voltage limits remain unchanged.
+The grid uses current phase 1.3 s, cell phases 0–11 s plus default 5.1 s, each
+with and without one added current-frame delay. Cell/current periods remain
+12/4 s. This is 26 cases per platform, not every possible BMS timing pattern.
+The known XFAIL is `bms-cutoff-test`. Linux uses x86_64, Clang 21.1.8,
+GCC 15.2.0 and glibc 2.43; the pinned phase image is Ubuntu 26.04
+`20261116.202.1`, and the pinned unit image is `20261122.9.1`.
 
-All three pair scenarios invoke it. A shortened `SIM_T=300` delayed-pair run fails
-with `no steady hold samples`; a full run passes. There is no result cache.
-Final validation records the candidate revision, including the simulator and
-BMS producer, alongside the controller; diagnostic and reused logs remain
-identified separately. The guard exposes missing evidence rather than relaxing
-the voltage assertions.
+Known-bad calibrations:
 
-The host benchmark could not resolve its incremental cost above noise (largest
-observed delta 0.097 ns/iteration, not a latency upper bound). The verified pass
-path is a comparison and conditional branch, executed once at simulator shutdown;
-it adds no firmware RT work. Evidence: `/tmp/cv72-needbench/README.md`.
+- Forcing the PD constructor to ignore `normalize=false` fails five checks.
+- Restoring G = 0.4 fails the delayed-pair entry gate (printed peak 3.522 V)
+  and the exact host-step assertions.
+- Restoring G = 0.2 with the final phase-0 harness exits 1 on the entry gate
+  (printed peak 3.516 V). The final G = 0.25 case passes.
+- On the final phase-0 case, `SIM_T=300` exits 1 with `no steady hold samples`.
+  The farther-tail `SIM_T=0` case also exits 1, with no hold and no steady samples.
 
-No test threshold was widened. Stock simulator cases include report-only cases;
-completion of the suite does not assert every reported statistic or every limiter
-selection transition. No hardware run or output-waveform measurement has been
-made. Issue #72 remains open; the candidate is not ready to land on `main`.
+Earlier candidates are retained as evidence, not passing acceptance results:
+fixed-reference/G = 0.4 (`f0ebdf43`) passed 20/26 Linux and 23/26 Mac cases;
+G = 0.2 (`cbbb692b`) passed 25/26 Linux and 22/26 Mac cases. All G = 0.2 steady
+bands passed; its remaining failures were entry peaks. A corresponding full
+unmodified-main phase grid was not run.
+
+## Empty-window guard review
+
+1. Missing steady samples retain reversed bounds (9, 0), so `lo <= hi` fails.
+   NaN bounds also fail the comparison. This does not validate every plant sample.
+2. The added requirement cannot turn an existing failure into a pass; the
+   original voltage limits still reject excursions beyond their bounds. Both
+   the shortened and zero-duration cases reject missing observation windows.
+3. All three pair names invoke the shared guard and are registered once. Full
+   runs pass; the shortened run provides the empty-window calibration.
+4. Validation records the code revision, simulator/BMS producers, configuration,
+   binary fingerprints and compiler. An input-only fingerprint is insufficient.
+5. There is no result cache; failed verdicts and exit codes remain in the logs.
+6. Full runs, scratch diagnostics and earlier reused evidence are identified
+   separately. The final grids use fresh cases; no probe result substitutes for one.
+7. The shortened run demonstrates the missing-evidence failure; controller
+   mutations independently demonstrate the targeted behavioral failures.
+8. No voltage threshold was relaxed. The controller response changes, and the
+   guard rejects missing evidence rather than suppressing a warning.
+
+The host benchmark could not resolve incremental guard cost above noise
+(largest observed delta 0.097 ns/iteration, not a latency upper bound). The
+verified pass path is a comparison and conditional branch once at simulator
+shutdown. It adds no firmware RT work. See `/tmp/cv72-needbench/README.md`.
+
+## Evidence and limits
+
+Final binary: `/tmp/fugu-cv72-final/out/mppt-sim`, SHA-256
+`ecd9437ffa96d494da318663db3647a42b8b49d8a4465b9f4e431bb56ad8b674`.
+Final Mac artifacts: `/tmp/cv72-final26-mac-grid/` (Apple Clang 17.0.0, arm64).
+Final Linux artifacts and per-case provenance: `/tmp/fugu-cv72-repro/final3/`
+and `/tmp/fugu-cv72-repro/landing-summary.md`.
+Build log: `/tmp/fugu-cv72-g025-build.log`. Earlier grids and diagnostics:
+`/tmp/fugu-cv72-repro/`, `/tmp/cv72-final-mac-phase/`,
+`/tmp/cv72-g02-mac-grid/`, `/tmp/cv72-g025-clean/`,
+`/tmp/cv72-g025-mac-cases/`, and `/tmp/cv72-final-knownbad-g02/`.
+
+Independent review checks the final source, shared gates, test registration and
+documentation. The unit test does not instantiate MPPT or assert which competing
+limiter wins. Stock scenarios check outcomes, but some reported statistics are
+not acceptance assertions. No hardware run or output-waveform measurement has
+been performed. These checks resolve the reproduced simulation failures within
+the tested scope.
