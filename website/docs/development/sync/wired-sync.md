@@ -1,5 +1,5 @@
 ---
-title: "Wired Clock Sync (wsync)"
+title: "Wired clock sync (wsync)"
 sidebar_position: 3
 ---
 

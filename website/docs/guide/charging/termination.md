@@ -1,10 +1,10 @@
 ---
-title: "Charge Termination"
+title: "Charge termination"
 sidebar_position: 2
 ---
 
 
-# Charge Termination
+# Charge termination
 
 `Li_ChgTerminationCondition` in `src/charger.h` implements a charge-termination
 line for LFP and other lithium chemistries, as described in

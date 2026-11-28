@@ -1,10 +1,10 @@
 ---
-title: "Serial Console"
+title: "Serial console"
 sidebar_position: 3
 description: "The console lets you control and inspect the charger while it runs."
 ---
 
-# Serial Console
+# Serial console
 
 *Original hand-written note: [doc/Console.md](https://github.com/fl4p/fugu-mppt-firmware/blob/main/doc/Console.md).*
 

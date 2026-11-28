@@ -100,7 +100,7 @@ ESP-IDF applies `sdkconfig.defaults.<target>` on top of `sdkconfig.defaults` for
   the classic ESP32.
 
 The top-level `CMakeLists.txt` then layers `sdkconfig.d/ble` for both targets. See
-[Build Options](../getting-started/build-options.md#sdkconfig-layering).
+[Build options](../getting-started/build-options.md#sdkconfig-layering).
 
 ### Bootloader (S3 only)
 

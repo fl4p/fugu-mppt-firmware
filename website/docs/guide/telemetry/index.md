@@ -40,7 +40,7 @@ svc rs mqtt
 | BLE advertising | `CONFIG_FUGU_WITH_BLE_ADV`, `ble` service on | manufacturer data in advertisements | `etc/influx_binary_proxy.py --adv` |
 | MQTT stream (build option) | `CONFIG_FUGU_WITH_TELE_MQTT` (off by default), Wi-Fi, a `tele-mqtt <0..3600>` lease | binary wire on `pv/tele/<hostname>` | [Dashboard](../../reference/dashboard.md), see [Telemetry stream](../../reference/mqtt.md#telemetry-stream) |
 
-The BLE paths need no Wi-Fi. See [Build Options](../getting-started/build-options.md) for the Kconfig flags.
+The BLE paths need no Wi-Fi. See [build options](../getting-started/build-options.md) for the Kconfig flags.
 
 ## MQTT and Home Assistant
 

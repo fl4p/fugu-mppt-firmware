@@ -1,9 +1,9 @@
 ---
-title: First Power-Up
+title: First power-up
 sidebar_position: 4
 ---
 
-# First Power-Up
+# First power-up
 
 Bring a new board up in two stages: first on a current-limited bench supply, then on the real panel and battery.
 Once the first-stage readings make sense, move on to the second stage.

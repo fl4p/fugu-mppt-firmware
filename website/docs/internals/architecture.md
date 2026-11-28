@@ -67,7 +67,7 @@ The firmware keeps configuration and state in three stores.
 |---|---|---|
 | littlefs `/littlefs/conf/*.conf` | Hardware and behaviour, see [Configuration](../reference/config/index.md) | `set-config`, FTP, [provisioning](../guide/getting-started/provisioning.md) |
 | NVS | Wi-Fi networks, hostname, runtime state | Console commands |
-| Kconfig | Compiled-in features, see [Build Options](../guide/getting-started/build-options.md) | Rebuild |
+| Kconfig | Compiled-in features, see [build options](../guide/getting-started/build-options.md) | Rebuild |
 
 ## Flash layout
 
@@ -86,7 +86,7 @@ The table maps source paths to their contents.
 | `src/buck.h`, `src/pwm/` | Converter model and gate drivers |
 | `src/adc/` | ADC backends and the sampler |
 | `src/math/` | Filters and statistics |
-| `src/charger.h` | Charge termination, see [Charge Termination](../guide/charging/termination.md) |
+| `src/charger.h` | Charge termination, see [charge termination](../guide/charging/termination.md) |
 | `src/tele/` | MQTT, telemetry, FTP, Home Assistant |
 | `src/service.h` | Service base class |
 | `src/sim/` | Virtual converter |

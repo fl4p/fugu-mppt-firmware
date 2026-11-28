@@ -40,14 +40,14 @@ The firmware supports two reference boards:
 
 ## Next steps
 
-- [Getting Started](getting-started/index.mdx) covers building, flashing, and provisioning a board.
+- [Getting started](getting-started/index.mdx) covers building, flashing, and provisioning a board.
 - The [configuration reference](../reference/config/index.md) and [console commands](../reference/console.md) cover
   tuning a device.
 - The [architecture overview](../internals/architecture.md) explains how the firmware works.
 
 :::caution
 A software or hardware failure can put the full panel voltage on the battery. Removing the battery during
-conversion causes an over-voltage transient at the output. Read [First Power-Up](getting-started/first-power-up.md)
+conversion causes an over-voltage transient at the output. Read [first power-up](getting-started/first-power-up.md)
 before connecting a panel or battery. The firmware comes without warranty ([Apache-2.0](../../../LICENSE)). Use it
 at your own risk.
 :::
