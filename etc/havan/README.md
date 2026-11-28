@@ -1,6 +1,6 @@
 *this document is an LLM generated placeholder*
 
-# Sweep curve collector (havan)
+# Fugu collectors on havan (sweep curves, near-point probes)
 
 `sweep_collector.py` stores every MPPT sweep curve into InfluxDB at full resolution. It listens on
 `pv/log/+`; when a device logs `Stop sweep` or `sweep verified|flagged:` it sends the read-only
@@ -55,7 +55,7 @@ scp etc/havan/fugu-sweep-collector.service havan-ts:/tmp/ && ssh havan-ts 'sudo 
 
 Tests: `.venv/bin/python3 -m pytest etc/test_sweep_collector.py`.
 
-# Near-point probe collector (havan)
+# Near-point probe collector
 
 `near_collector.py` keeps every `scan near:` line, the log-only probes at `Vin ± scan_near_v`
 (`tracker.conf`). It listens on the same `pv/log/+` mirror and appends one JSON object per probe to
