@@ -380,11 +380,11 @@ lists them, and they appear under "Not on device".
 
 **Console** opens a side panel below the top bar (a bottom sheet on a narrow screen) with the live device output and a command field that writes to the active connection.
 It renders the firmware's ANSI log colours, shows `ERR:` replies in amber, and follows new output unless you have
-scrolled up. See [Serial Console](console.md).
+scrolled up. See [serial console](console.md).
 
 ## Services
 
-**Services** opens a panel with the firmware's services (see `svc` in [Serial Console](console.md)), read with
+**Services** opens a panel with the firmware's services (see `svc` in [serial console](console.md)), read with
 `svc list`. It is available only while the editor is connected to the device the config was read from. Each row
 shows the service name, its state (green dot for Running, grey for Stopped, amber for Failed) and its status
 detail, with three controls:
@@ -543,7 +543,7 @@ the device again later to see it.
 
 If the connection drops or a test does not end in time, the panel reports its state as unknown and offers a check
 (`selftest`, `rect-cal status` or `sweep-curve`) instead of a result. While a test runs, service actions and pushes
-wait; while a push or a service command runs, tests wait. See [Serial Console](console.md#selftest) for the
+wait; while a push or a service command runs, tests wait. See [serial console](console.md#selftest) for the
 commands and their refusals.
 
 ## conf-tool.py (FTP)

@@ -1,9 +1,9 @@
 ---
-title: Supported Boards
+title: Supported boards
 sidebar_position: 1
 ---
 
-# Supported Boards
+# Supported boards
 
 The firmware has no compiled-in board definition. A board is supported when a folder under
 [`config/`](https://github.com/fl4p/fugu-mppt-firmware/tree/main/config) describes its pins, sensors and limits.
@@ -50,7 +50,7 @@ Fugu2 is the reference hardware. It has dual parallel high-side switches, a snub
 gate driver logic (`pwm_hi`, `pwm_li`, `pwm_sd`), a WS2812 status LED, and a battery-side backflow switch on `bflow_sd` (`bflow_bat=1`).
 
 It runs the MCPWM gate driver, the default for ESP32-S3 builds. See
-[Build Options](../getting-started/build-options.md).
+[Build options](../getting-started/build-options.md).
 
 ### Original Fugu (`fugu1`)
 

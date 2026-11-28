@@ -7,7 +7,7 @@ sidebar_position: 15
 
 `ble.conf` configures the BLE/NUS console, which is the service `ble` in `CONFIG_FUGU_WITH_BLE` builds. The service is off by default because it exposes the console.
 
-`enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys. For how services use them, see [Service Architecture](../services.md#per-service-conf-file).
+`enabled` (0/1) and `log_level` (`error`/`warn`/`info`) are the common service keys. For how services use them, see [service architecture](../services.md#per-service-conf-file).
 
 The BLE stack applies `ble_security`, `ble_passkey` and `pair_window_s` when it first starts after boot. `svc rs ble`
 only resumes advertising, so a change needs `restart`. `idle_adv_ms` is read at boot. The console masks

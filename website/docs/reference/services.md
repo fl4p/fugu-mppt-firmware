@@ -1,9 +1,9 @@
 ---
-title: "Service Architecture"
+title: "Service architecture"
 sidebar_position: 4
 ---
 
-# Service Architecture
+# Service architecture
 
 `src/service.h` is a small, systemd-lite service layer for the firmware's optional, non-real-time
 subsystems. A *service* wraps one building block (MQTT, telemetry/InfluxDB, FTP, telnet, LCD,

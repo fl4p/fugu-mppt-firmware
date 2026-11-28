@@ -119,7 +119,7 @@ When the charger can read the highest cell voltage from the BMS over MQTT, it re
 over-voltage cut-off. This avoids the voltage transient at the output that occurs when a BMS disconnects
 the battery, which it may do at any time during charging. It also shortens balancing and prevents trickle charging.
 A disconnect can still happen, for example on a BMS fault, so sensitive loads need their own over-voltage protection.
-See [Charge Termination](../guide/charging/termination.md).
+See [charge termination](../guide/charging/termination.md).
 
 ## Further reading
 

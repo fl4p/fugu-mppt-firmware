@@ -1,9 +1,9 @@
 ---
-title: Build Options
+title: Build options
 sidebar_position: 2
 ---
 
-# Build Options
+# Build options
 
 Compile-time features are Kconfig options under **"Fugu MPPT firmware"** in `idf.py menuconfig`. Runtime behaviour
 (pins, sensors, limits, charger) is set in [configuration files](../../reference/config/index.md) instead and needs no rebuild.

@@ -1,5 +1,5 @@
 ---
-title: "Beacon Clock Sync (bsync)"
+title: "Beacon clock sync (bsync)"
 sidebar_position: 1
 ---
 

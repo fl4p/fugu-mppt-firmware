@@ -139,7 +139,7 @@ Four setups run the control code without a power stage:
 - `config/lab/dry_mock` runs the firmware on any ESP32-S3 dev board with a sinusoidal mock ADC. See
   [Mock ADC](#mock-adc).
 - `CONFIG_FUGU_WITH_VCONV=y` with `config/lab/vconv_mock` closes the loop around a simulated converter. See
-  [Build Options](../guide/getting-started/build-options.md#control-loop-work-without-hardware).
+  [Build options](../guide/getting-started/build-options.md#control-loop-work-without-hardware).
 - `config/lab/wokwi_mock` runs in the [Wokwi](https://wokwi.com) simulator.
 - The host simulator `test/host-stub/mppt-sim.sh` runs the control path against the same plant in simulated time,
   without a board. See [Simulation](simulation.md#host-simulator).

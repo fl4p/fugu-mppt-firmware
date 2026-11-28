@@ -35,7 +35,7 @@ The following table compares the two methods.
 
 | | Beacon sync (`bsync`) | Wired sync (`wsync`) |
 |---|---|---|
-| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `n`, needs `FUGU_WITH_NETW` + the MCPWM gate driver, the S3 default) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [Build Options](../../guide/getting-started/build-options.md) |
+| Kconfig | `CONFIG_FUGU_WITH_BSYNC` (default `n`, needs `FUGU_WITH_NETW` + the MCPWM gate driver, the S3 default) | `CONFIG_FUGU_WITH_WSYNC` (on in this repo's `sdkconfig.defaults`; bare Kconfig default `n`; needs `FUGU_WITH_MCPWM`). See [build options](../../guide/getting-started/build-options.md) |
 | Timebase | TSF timestamps of 802.11 beacons from one shared AP, received RX-only | Pulse from a leader converter, locked to its timer TEZ |
 | Actuation | Software servo (1 Hz) trims the period by dithering it between P and P+1 | Hardware: the follower reloads its timer counter on each sync edge |
 | Relative phase | ~±1–3 µs; ±0.5 µs p2p with a dedicated beacon node | Up to one timer tick (6.25 ns) |
@@ -70,7 +70,7 @@ beacon node (a minimal ESP32-S3 softAP on a quiet channel) gives the full rate a
 
 The following pages cover beacon sync in detail:
 
-- [Beacon Clock Sync (bsync)](beacon-sync.md): mechanism, setup, measured performance
+- [Beacon clock sync (bsync)](beacon-sync.md): mechanism, setup, measured performance
 - [bsync Beacon Node](beacon-node.md): the dedicated beacon source
 
 ## Wired sync
@@ -88,7 +88,7 @@ checklist.
 
 The following page covers wired sync in detail:
 
-- [Wired Clock Sync (wsync)](wired-sync.md): configuration, coupling circuit, USB-pad variant
+- [Wired clock sync (wsync)](wired-sync.md): configuration, coupling circuit, USB-pad variant
 
 ## Combining both
 

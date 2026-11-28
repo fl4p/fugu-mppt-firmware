@@ -672,7 +672,7 @@ Vout. The sweep then starts at once and checks only for PSU or PV emulator mode,
 When a BMS cell-voltage topic is configured, the sweep at start-up and after a shutdown also waits for the BMS. It
 is skipped while termination is active and the BMS data is fresh, and it waits up to 12 s for the first termination
 decision. A fresh-to-stale BMS edge re-arms that wait at most once per 10 min, so a flapping BMS
-cannot block the sweep indefinitely. See [Charge Termination](../guide/charging/termination.md).
+cannot block the sweep indefinitely. See [charge termination](../guide/charging/termination.md).
 
 `tracker.conf::target_duty_cycle` (any value in [0, 1], including an explicit 0) skips the sweep entirely and holds a
 fixed duty (manual PWM); 0 holds the converter off.

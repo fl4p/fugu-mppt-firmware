@@ -13,7 +13,7 @@ Browser tools: [live dashboard](https://fl4p.github.io/fugu-mppt-firmware/tools/
 [config editor](https://fl4p.github.io/fugu-mppt-firmware/tools/conf-editor.html).
 
 The charger implements proper charge termination for Lithium-Batteries (e.g. LiFePo4, NCA, NCM, Sodium-Ion) as described in
-[Charge Termination](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/charging/termination/)
+[Charge termination](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/charging/termination/)
 (based on [this article](https://nordkyndesign.com/charging-marine-lithium-battery-banks)).
 
 Highlights:
@@ -115,7 +115,7 @@ Build-time features are Kconfig options (`CONFIG_FUGU_WITH_*`, under **"Fugu MPP
 | `CONFIG_FUGU_WITH_USB_MSC` |    off  | ESP32-S3 only: [USB config drive](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/usb-drive/) plus a CDC console on the USB port, instead of USB-Serial-JTAG. |
 
 All options (debug tools, profiler, simulated converter, coil measurement, ...):
-[Build Options](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/getting-started/build-options/#feature-flags).
+[Build options](https://fl4p.github.io/fugu-mppt-firmware/docs/guide/getting-started/build-options/#feature-flags).
 
 To build a non-default variant non-interactively (e.g. CI), point `SDKCONFIG_DEFAULTS` at a fragment:
 `SDKCONFIG_DEFAULTS="sdkconfig.defaults;my.frag" idf.py build` where `my.frag` has `CONFIG_FUGU_WITH_BLE=n`
