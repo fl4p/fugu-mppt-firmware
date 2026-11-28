@@ -265,7 +265,8 @@ config FUGU_WITH_RTPROF
     help
         Debug build: a 2 kHz timer ISR on core 1 counts the flash-resident return addresses of the
         interrupted stack; `rtprof` dumps them, `rtprof clear` resets, `rtprof all` resets and counts
-        IRAM/ROM addresses too. Map with etc/rtprof_map.py.
+        IRAM/ROM addresses too, `rtprof flash` counts all addresses only while a flash op runs.
+        Map with etc/rtprof_map.py.
 
 config FUGU_RTPROF_SLOTS
     int "rtprof table slots (power of two, 8 bytes each)"

@@ -89,18 +89,34 @@ python3 ../components/esp32-semihosting-profiler/sprofiler.py
 
 rtprof is a call-stack sampler for core 1, built with `CONFIG_FUGU_WITH_RTPROF=y` (default off). A 2 kHz timer ISR on
 core 1 unwinds the interrupted stack and counts every flash-resident return address in a fixed hash table
-(`CONFIG_FUGU_RTPROF_SLOTS`, default 4096 slots of 8 bytes). It needs no debugger.
+(`CONFIG_FUGU_RTPROF_SLOTS`, default 4096 slots of 8 bytes). It needs no debugger. The table is static RAM taken
+from the heap: in a build with BLE and the virtual converter, 4096 slots left about 6 KB free and Wi-Fi failed to
+allocate, while 1024 slots (8 KB) left about 31 KB.
 
-The console command has three forms:
+The console command has four forms:
 
 * `rtprof` prints `rtprof samples=… task=… lost=… entries=… elf=…`, then the table as `rtp` lines, then `rtprof end`.
+  Sampling pauses during the print, so the table matches the header.
 * `rtprof clear` resets the table.
 * `rtprof all` resets it and also counts IRAM and ROM addresses, which shows where the core waits.
+* `rtprof flash` resets it and counts all addresses, but only while a flash operation runs. It shows which code core 1
+  executes during erases and writes; flash-resident code there costs a slow cache miss per fetch. `samples` then
+  counts only those samples, so the mapper's profiled time is the flash-operation time.
 
 `etc/rtprof_map.py <log> <elf>` maps a captured dump to functions. With `--lf out.lf` it writes linker mapping
 fragments that place the sampled functions in IRAM (`noflash`); `main/rt_iram.lf` was generated this way. On the
 ESP32-S3 the RT path is already in IRAM, so rtprof sees little of it. Build with the environment variable
 `FUGU_RT_FLASH=1` to keep it in flash for a first profile of the whole path.
+
+`etc/rtprof_map.py --edges - <elf>` lists the flash functions whose address is a literal word in IRAM code, with the
+IRAM functions whose `l32r` loads it. A direct call from IRAM to flash always goes through such a literal. The list
+has gaps and extras:
+
+* Calls through a vtable or a function pointer do not show, because their target is not an IRAM literal.
+* Cold paths (error logging, one-off setup) and callbacks whose address is only stored are included.
+* A byte sequence that decodes like an `l32r` can add a spurious caller.
+
+A function the RT loop calls on every iteration should not be in the list.
 
 ## gprof
 

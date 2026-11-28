@@ -2780,9 +2780,9 @@ void setupCli() {
     cli.addBoundlessCmd("reset-lag", cmdResetLag); // reset-lag [q]: q skips the rt-stats print
 #if CONFIG_FUGU_WITH_RTPROF
     cli.addCommand("rtlog-test", [](cmd *) { g_rtLogTest = 4; }); // formatted and raw-captured RT log lines
-    cli.addBoundlessCmd("rtprof", [](cmd *c) { // rtprof [clear|all]
+    cli.addBoundlessCmd("rtprof", [](cmd *c) { // rtprof [clear|all|flash]
         const String a = Command(c).countArgs() ? Command(c).getArg(0).getValue() : String();
-        if (a == "clear" || a == "all") rtprofClear(a == "all");
+        if (a == "clear" || a == "all" || a == "flash") rtprofClear(a == "all", a == "flash");
         else rtprofDump();
     });
 #endif

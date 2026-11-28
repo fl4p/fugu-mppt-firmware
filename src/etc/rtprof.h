@@ -6,6 +6,7 @@
 // stack and counts every flash-resident return address in a fixed hash table.
 void rtprofStart(unsigned hz);
 // all: count IRAM/ROM addresses too (where the core waits), not only flash ones
-void rtprofClear(bool all = false);
-// prints "rtprof samples= ..." and the table as "pc:count" lines through UART_LOG
+// flash: all addresses, sampled only while a flash op runs
+void rtprofClear(bool all = false, bool flash = false);
+// prints "rtprof samples= ..." and the table as "pc:count" lines through UART_LOG, sampling paused
 void rtprofDump();
