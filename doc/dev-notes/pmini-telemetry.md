@@ -27,9 +27,10 @@ new lease). Each sink snapshots its mode at start. Disable with `pmini=0` and
 restart the relevant sinks. No device configuration is changed by building.
 
 The Python receiver changes live inside the `etc/fugu` git submodule:
-`teledec.py` and its new `pmini.py`. A release must include those changes and
+`teledec.py`, `pmini.py`, `_pmini_mtp2.py` and `PMINI-LICENSE`. A release must include those changes and
 update the submodule pointer; checking in only the superproject will not ship
-the Python decoder. The browser receiver is `etc/config-tool/teledec.js`.
+the Python decoder. The browser receiver requires `etc/config-tool/pmini.js` before `teledec.js`.
+See [pinned dependency details](pmini-dependency.md).
 
 ## Batching and delivery
 

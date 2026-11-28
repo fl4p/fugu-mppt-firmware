@@ -1,0 +1,32 @@
+{
+  "project": "pmini",
+  "revision": "abaf35c35aca33f19d4e780a2af12b6ac8236713",
+  "files": [
+    {
+      "source": "native/pmini_codec.cpp",
+      "path": "third_party/pmini/native/pmini_codec.cpp",
+      "sha256": "7df28085ef956e7f193289c4c46804e54ed5d811731b25b5c86ee32605c1d40a"
+    },
+    {
+      "source": "native/pmini_codec.h",
+      "path": "third_party/pmini/native/pmini_codec.h",
+      "sha256": "5937fccdc6f852121879e9db702762977f4b7d6236532a35f426f68f65a89e61"
+    },
+    {
+      "source": "tests/native_golden.cpp",
+      "path": "third_party/pmini/tests/native_golden.cpp",
+      "sha256": "4fa262c2c416ca170f12b4ecc3a1162019f6a92257289f7147105e2f905d215f"
+    },
+    {
+      "source": "LICENSE",
+      "path": "third_party/pmini/LICENSE",
+      "sha256": "5b51ad10c69a71d030633b4464292e6193b54cd35e91d7f490bc463fae7d3c3c"
+    },
+    {
+      "source": "javascript/pmini.js",
+      "path": "etc/config-tool/pmini.js",
+      "sha256": "b7172de5c3c34a40460872c204894e739a938e60361c12384ca840c63996a2aa"
+    }
+  ],
+  "repository": "https://github.com/fl4p/pmini"
+}
