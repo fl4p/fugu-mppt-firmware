@@ -40,6 +40,10 @@ question disagree. The archive is durable and is now the source of truth.
   usable discriminator.
 - The tracker's own `MPP duty` comparison (n=562, mean −1.2 counts) is self-referential — a low MPP estimate
   makes the gap look small — so it cannot settle the question either way.
+- Probe rate (the collector's first 18 h, 11-27 15:03 → 11-28 09:07 UTC): fry 28 probes, flat 8. flat is ~4× rarer
+  because its probes ride the return pass after a sweep (it is CV-limited); fry's ride the ordinary periodic scan.
+  flat had **0** clean ≥300 W samples in that window. Expect the clean ≥300 W count to grow by roughly one every few
+  clear days, not one per day — a run that finds one or two is not a broken check.
 
 ## Check (after 3+ clear days of archive)
 
